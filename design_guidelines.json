@@ -1,0 +1,178 @@
+{
+  "brand_identity": {
+    "app_name": "Restaurant Accountant AI",
+    "mission": "Empower restaurant owners with clear, actionable financial insights without the accounting jargon.",
+    "emotional_archetype": "The Performance Pro (Hospitality Edition)",
+    "tone": "Professional, Efficient, Trustworthy, Crisp, yet Warm (Hospitality)",
+    "design_philosophy": "Kitchen Precision. Everything has a place. Clean lines, high contrast for readability in busy environments, with a touch of warmth."
+  },
+  "typography": {
+    "font_family": {
+      "headings": "Manrope, sans-serif",
+      "body": "IBM Plex Sans, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "weights": {
+      "light": 300,
+      "regular": 400,
+      "medium": 500,
+      "semibold": 600,
+      "bold": 700,
+      "black": 800
+    },
+    "usage_rules": {
+      "headings": "Use Manrope. Tight tracking (-0.02em to -0.03em). Don't just use Bold; use Semibold or ExtraBold for contrast.",
+      "body": "Use IBM Plex Sans. Excellent legibility for numbers and data tables.",
+      "overline": "Uppercase, tracking-widest (0.2em), text-xs, font-semibold, muted-foreground."
+    }
+  },
+  "colors": {
+    "palette": {
+      "primary": {
+        "DEFAULT": "#0f172a", 
+        "foreground": "#ffffff",
+        "description": "Deep Navy / Obsidian - The Anchor. Used for Sidebar and Primary Actions."
+      },
+      "secondary": {
+        "DEFAULT": "#f1f5f9",
+        "foreground": "#0f172a",
+        "description": "Slate 100 - Used for secondary buttons and subtle backgrounds."
+      },
+      "accent": {
+        "DEFAULT": "#0d9488",
+        "foreground": "#ffffff",
+        "description": "Sophisticated Teal - Used for Brand highlights, active states, and success metrics. NOT generic bright teal."
+      },
+      "destructive": {
+        "DEFAULT": "#ef4444",
+        "foreground": "#ffffff"
+      },
+      "background": "#ffffff",
+      "foreground": "#0f172a",
+      "card": "#ffffff",
+      "card_foreground": "#0f172a",
+      "border": "#e2e8f0",
+      "input": "#e2e8f0",
+      "ring": "#0d9488",
+      "sidebar": {
+        "background": "#020617",
+        "foreground": "#f8fafc",
+        "border": "#1e293b",
+        "accent": "#1e293b",
+        "accent_foreground": "#f8fafc"
+      }
+    },
+    "gradients": {
+      "hero": "bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900",
+      "card_hover": "hover:bg-gradient-to-br hover:from-white hover:to-slate-50"
+    }
+  },
+  "layout": {
+    "spacing_scale": "p-1, p-2, p-4, p-6, p-8, p-12, p-16, p-24, p-32",
+    "containers": {
+      "dashboard_grid": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6",
+      "bento_grid": "grid grid-cols-1 md:grid-cols-4 gap-6 auto-rows-[minmax(180px,auto)]"
+    },
+    "sidebar": {
+      "width": "w-64",
+      "behavior": "Fixed left, h-screen. Collapsible on mobile."
+    },
+    "border_radius": {
+      "default": "rounded-lg",
+      "card": "rounded-xl",
+      "button": "rounded-md"
+    }
+  },
+  "visual_enhancers": {
+    "shadows": {
+      "card": "shadow-[0_2px_8px_rgba(0,0,0,0.04)]",
+      "card_hover": "shadow-[0_12px_24px_rgba(0,0,0,0.08)]",
+      "dropdown": "shadow-xl border border-slate-100"
+    },
+    "glassmorphism": {
+      "header": "bg-white/80 backdrop-blur-md border-b border-slate-200/50"
+    },
+    "borders": {
+      "subtle": "border border-slate-200",
+      "active": "border-l-4 border-l-teal-600"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-slate-900 text-white hover:bg-slate-800 shadow-sm font-medium",
+      "secondary": "bg-white border border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm font-medium",
+      "accent": "bg-teal-600 text-white hover:bg-teal-700 shadow-sm font-medium"
+    },
+    "cards": {
+      "base": "bg-white border border-slate-100 rounded-xl p-6 shadow-sm transition-all duration-200 hover:shadow-md",
+      "stat": "flex flex-col justify-between h-full"
+    },
+    "inputs": {
+      "base": "bg-white border border-slate-200 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all rounded-md h-10 px-3"
+    }
+  },
+  "motion": {
+    "transitions": "transition-all duration-200 ease-in-out",
+    "hover_lift": "hover:-translate-y-1",
+    "list_stagger": "animate-in fade-in slide-in-from-bottom-4 duration-500 stagger-100"
+  },
+  "assets": {
+    "logo_placeholder": "https://via.placeholder.com/40/0f172a/ffffff?text=RA",
+    "images": {
+      "restaurant_interior": "https://images.unsplash.com/photo-1761912915167-558fa68f16b7?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "chef_cooking": "https://images.unsplash.com/photo-1771257807642-9d256793ec6b?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "food_plating": "https://images.unsplash.com/photo-1628711594843-e420787a3afa?crop=entropy&cs=srgb&fm=jpg&q=85"
+    },
+    "icons": {
+      "library": "lucide-react",
+      "style": "Stroke width 1.5px or 2px. Consistent sizing (w-5 h-5)."
+    }
+  },
+  "charts": {
+    "library": "recharts",
+    "palette": [
+      "#0f172a", 
+      "#0d9488", 
+      "#f59e0b", 
+      "#64748b", 
+      "#ef4444"
+    ],
+    "style": "Minimalist. Remove grid lines where possible. Rounded corners on bars."
+  },
+  "universal_guidelines": {
+    "design_principles": [
+      "You tend to converge toward generic, 'on distribution' outputs. Avoid this.",
+      "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+      "Don't make generic centered layouts. Use grids and asymmetry.",
+      "Create depth through layered design elements with z-index hierarchy.",
+      "Use glass-morphism effects with backdrop filters (12-24px blur) for sticky headers.",
+      "You MUST NOT apply universal transition (e.g., transition: all).",
+      "You MUST NOT center align the app container (.App { text-align: center; }).",
+      "Always use modern button styles (pill-shaped or sharp rounded-md).",
+      "NEVER use AI assistant Emoji characters like 🤖 etc.",
+      "Every interaction needs micro-animations (hover, focus, active).",
+      "Use 2-3x more spacing than feels comfortable.",
+      "Subtle grain textures or noise overlays separate good from extraordinary."
+    ],
+    "component_reuse": [
+      "Prioritize using pre-existing components from src/components/ui.",
+      "Create new components that match the style and conventions of existing components.",
+      "Examine existing components to understand patterns."
+    ],
+    "export_conventions": [
+      "Components MUST use named exports (export const ComponentName = ...).",
+      "Pages MUST use default exports (export default function PageName() {...})."
+    ],
+    "toasts": "Use 'sonner' for toasts. Located in /app/frontend/src/components/ui/sonner.tsx."
+  },
+  "instructions_to_main_agent": [
+    "Install 'recharts' and 'lucide-react' if not present.",
+    "Configure Tailwind with the specified colors (Primary #0f172a, Accent #0d9488).",
+    "Implement the Sidebar layout with the dark theme (#020617).",
+    "Build the Dashboard using the 'Bento Grid' layout.",
+    "Ensure all interactive elements have 'data-testid' attributes.",
+    "Use 'Manrope' font for all headings (h1-h6) and 'IBM Plex Sans' for body text.",
+    "Create the 'Upload Center' with a distinct drag-and-drop zone using dashed borders and accent color on hover.",
+    "Ensure Charts use the specified color palette."
+  ]
+}
