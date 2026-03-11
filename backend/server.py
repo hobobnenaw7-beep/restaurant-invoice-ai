@@ -811,6 +811,136 @@ async def download_report(user=Depends(get_user), report_type: str = "weekly", d
         filename = f"report_{report_type}_{report['date_range']['start']}.xlsx"
         return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
+# ==================== PRICE INTELLIGENCE ====================
+
+@api_router.get("/prices/intelligence")
+async def price_intelligence(user=Depends(get_user)):
+    """Comprehensive price tracking: supplier comparison, trends, and alerts."""
+    rid = user["restaurant_id"]
+    now = datetime.now(timezone.utc)
+    purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+
+    # --- 1. Per-item, per-supplier price tracking ---
+    # Structure: {item_name: {supplier: [{price, date, qty}]}}
+    item_supplier_prices = {}
+    for p in purchases:
+        supplier = p.get("supplier_name", "Unknown")
+        inv_date = p.get("invoice_date", "")
+        for it in p.get("items", []):
+            name = it.get("raw_name", "Unknown")
+            price = float(it.get("unit_price", 0))
+            qty = float(it.get("quantity", 0))
+            if price > 0:
+                item_supplier_prices.setdefault(name, {}).setdefault(supplier, []).append({
+                    "price": price, "date": inv_date, "qty": qty
+                })
+
+    # --- 2. Supplier comparison table ---
+    # For each item: avg price per supplier, best supplier, potential savings
+    all_suppliers = set()
+    for p in purchases:
+        all_suppliers.add(p.get("supplier_name", "Unknown"))
+    all_suppliers = sorted(all_suppliers)
+
+    comparison_items = []
+    for item_name, suppliers_data in sorted(item_supplier_prices.items()):
+        row = {"item": item_name, "suppliers": {}, "best_supplier": None, "best_price": None, "worst_price": None}
+        for sup, entries in suppliers_data.items():
+            avg_p = round(sum(e["price"] for e in entries) / len(entries), 2)
+            latest_p = entries[-1]["price"] if entries else 0
+            total_qty = sum(e["qty"] for e in entries)
+            row["suppliers"][sup] = {"avg_price": avg_p, "latest_price": round(latest_p, 2), "purchase_count": len(entries), "total_qty": round(total_qty, 1)}
+        # Find best/worst
+        prices_list = [(sup, d["avg_price"]) for sup, d in row["suppliers"].items()]
+        if prices_list:
+            prices_list.sort(key=lambda x: x[1])
+            row["best_supplier"] = prices_list[0][0]
+            row["best_price"] = prices_list[0][1]
+            row["worst_price"] = prices_list[-1][1]
+            if len(prices_list) > 1 and prices_list[-1][1] > 0:
+                # Savings if always bought from cheapest
+                row["savings_pct"] = round((1 - prices_list[0][1] / prices_list[-1][1]) * 100, 1)
+            else:
+                row["savings_pct"] = 0
+        comparison_items.append(row)
+
+    # Sort by number of suppliers (multi-supplier items first), then by savings
+    comparison_items.sort(key=lambda x: (-len(x["suppliers"]), -(x.get("savings_pct", 0))))
+
+    # --- 3. Price trends over time ---
+    # Group prices by item and date (weekly buckets)
+    item_weekly = {}
+    for item_name, suppliers_data in item_supplier_prices.items():
+        all_entries = []
+        for entries in suppliers_data.values():
+            all_entries.extend(entries)
+        all_entries.sort(key=lambda x: x["date"])
+
+        weekly = {}
+        for e in all_entries:
+            if e["date"]:
+                try:
+                    d = datetime.strptime(e["date"], "%Y-%m-%d")
+                    week_key = (d - timedelta(days=d.weekday())).strftime("%Y-%m-%d")
+                    weekly.setdefault(week_key, []).append(e["price"])
+                except ValueError:
+                    pass
+        if weekly:
+            item_weekly[item_name] = [{"week": k, "avg_price": round(sum(v) / len(v), 2)} for k, v in sorted(weekly.items())]
+
+    # Pick top 8 items by total spend for trend charts
+    item_total_spend = {}
+    for p in purchases:
+        for it in p.get("items", []):
+            name = it.get("raw_name", "Unknown")
+            item_total_spend[name] = item_total_spend.get(name, 0) + float(it.get("total", 0))
+    top_trend_items = sorted(item_total_spend.items(), key=lambda x: -x[1])[:8]
+    price_trends = {name: item_weekly.get(name, []) for name, _ in top_trend_items if name in item_weekly}
+
+    # --- 4. Price increase alerts (>10%) ---
+    thirty_days_ago = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    sixty_days_ago = (now - timedelta(days=60)).strftime("%Y-%m-%d")
+
+    recent_avg = {}
+    older_avg = {}
+    for item_name, suppliers_data in item_supplier_prices.items():
+        recent_prices = []
+        older_prices = []
+        for entries in suppliers_data.values():
+            for e in entries:
+                if e["date"] >= thirty_days_ago:
+                    recent_prices.append(e["price"])
+                elif e["date"] >= sixty_days_ago:
+                    older_prices.append(e["price"])
+        if recent_prices:
+            recent_avg[item_name] = sum(recent_prices) / len(recent_prices)
+        if older_prices:
+            older_avg[item_name] = sum(older_prices) / len(older_prices)
+
+    price_alerts = []
+    for name, cur in recent_avg.items():
+        prev = older_avg.get(name)
+        if prev and prev > 0:
+            pct = ((cur - prev) / prev) * 100
+            if pct > 10:
+                price_alerts.append({
+                    "item": name,
+                    "current_avg": round(cur, 2),
+                    "previous_avg": round(prev, 2),
+                    "change_pct": round(pct, 1),
+                    "severity": "high" if pct > 20 else "medium",
+                })
+    price_alerts.sort(key=lambda x: -x["change_pct"])
+
+    return {
+        "suppliers": all_suppliers,
+        "comparison": comparison_items[:30],
+        "price_trends": price_trends,
+        "price_alerts": price_alerts[:15],
+        "total_items_tracked": len(item_supplier_prices),
+        "total_suppliers": len(all_suppliers),
+    }
+
 # ==================== ALERTS ====================
 
 @api_router.get("/alerts")
