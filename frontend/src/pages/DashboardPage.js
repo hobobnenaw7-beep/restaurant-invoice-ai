@@ -3,15 +3,18 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, AlertTriangle, ArrowUpRight, ArrowDownRight, Loader2, BarChart3 } from 'lucide-react';
+import {
+  TrendingUp, TrendingDown, DollarSign, ShoppingCart,
+  ArrowUpRight, ArrowDownRight, Loader2, BarChart3,
+  PackageOpen, CircleDollarSign, ChartNoAxesCombined, Zap
+} from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 function fmt(n) {
   if (n == null) return '$0';
-  if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`;
+  if (Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(1)}k`;
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
@@ -42,6 +45,64 @@ function KPI({ label, value, prev, accent, icon: Icon, testId }) {
   );
 }
 
+const alertConfig = {
+  low_stock: {
+    icon: PackageOpen,
+    label: 'Low Stock',
+    borderColor: 'border-l-amber-500',
+    bgColor: 'bg-amber-50/60',
+    iconBg: 'bg-amber-100',
+    iconColor: 'text-amber-600',
+    badgeBg: 'bg-amber-100 text-amber-700',
+  },
+  cost_increase: {
+    icon: CircleDollarSign,
+    label: 'Cost Increase',
+    borderColor: 'border-l-red-500',
+    bgColor: 'bg-red-50/60',
+    iconBg: 'bg-red-100',
+    iconColor: 'text-red-600',
+    badgeBg: 'bg-red-100 text-red-700',
+  },
+  margin_drop: {
+    icon: ChartNoAxesCombined,
+    label: 'Margin Drop',
+    borderColor: 'border-l-violet-500',
+    bgColor: 'bg-violet-50/60',
+    iconBg: 'bg-violet-100',
+    iconColor: 'text-violet-600',
+    badgeBg: 'bg-violet-100 text-violet-700',
+  },
+};
+
+function SmartAlertCard({ alert, index }) {
+  const config = alertConfig[alert.type] || alertConfig.cost_increase;
+  const Icon = config.icon;
+
+  return (
+    <div
+      className={`flex items-start gap-3 p-3.5 rounded-xl border-l-[3px] ${config.borderColor} ${config.bgColor} transition-all hover:shadow-sm`}
+      data-testid={`smart-alert-${index}`}
+    >
+      <div className={`w-8 h-8 rounded-lg ${config.iconBg} flex items-center justify-center flex-shrink-0 mt-0.5`}>
+        <Icon className={`w-4 h-4 ${config.iconColor}`} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-0.5">
+          <span className="text-xs font-bold text-navy-900 leading-tight">{alert.title}</span>
+          {alert.severity === 'high' && (
+            <Badge className="bg-red-600 text-white text-[9px] px-1.5 py-0 h-4 font-bold">HIGH</Badge>
+          )}
+        </div>
+        <p className="text-[11px] text-slate-500 leading-relaxed">{alert.detail}</p>
+      </div>
+      <Badge variant="outline" className={`text-[9px] px-1.5 py-0 h-5 font-semibold border-0 flex-shrink-0 ${config.badgeBg}`}>
+        {config.label}
+      </Badge>
+    </div>
+  );
+}
+
 function LoadingSkeleton() {
   return (
     <div className="space-y-8" data-testid="dashboard-loading">
@@ -50,6 +111,7 @@ function LoadingSkeleton() {
           <Card key={i} className="border border-slate-100"><CardContent className="p-6"><Skeleton className="h-10 w-10 rounded-xl mb-4" /><Skeleton className="h-8 w-32 mb-2" /><Skeleton className="h-3 w-20" /></CardContent></Card>
         ))}
       </div>
+      <Skeleton className="h-48 rounded-xl" />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6"><Skeleton className="h-72 rounded-xl" /><Skeleton className="h-72 rounded-xl" /></div>
     </div>
   );
@@ -109,7 +171,12 @@ export default function DashboardPage() {
   const isEmpty = !data || (data.month_sales === 0 && data.month_purchases === 0);
   if (isEmpty) return <EmptyDashboard onSeed={seedData} seeding={seeding} />;
 
-  const unreadAlerts = (data.alerts || []).filter(a => !a.is_read);
+  const smartAlerts = data.smart_alerts || [];
+  const alertCounts = {
+    low_stock: smartAlerts.filter(a => a.type === 'low_stock').length,
+    cost_increase: smartAlerts.filter(a => a.type === 'cost_increase').length,
+    margin_drop: smartAlerts.filter(a => a.type === 'margin_drop').length,
+  };
 
   return (
     <div className="space-y-8 max-w-[1400px]" data-testid="dashboard-page">
@@ -140,23 +207,44 @@ export default function DashboardPage() {
         </CardContent></Card>
       </div>
 
-      {/* Alerts banner */}
-      {unreadAlerts.length > 0 && (
-        <Card className="border-l-4 border-l-amber-400 border border-amber-100 bg-amber-50/40 shadow-none" data-testid="alerts-banner">
-          <CardContent className="p-4">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-amber-800 mb-1">{unreadAlerts.length} Active Alert{unreadAlerts.length > 1 ? 's' : ''}</p>
-                <div className="space-y-1">
-                  {unreadAlerts.slice(0, 3).map((a, i) => (
-                    <p key={i} className="text-xs text-amber-700 leading-relaxed flex items-start gap-2">
-                      <Badge variant="outline" className={`shrink-0 text-[9px] px-1.5 py-0 h-4 font-bold border ${a.severity === 'high' ? 'border-red-300 text-red-600 bg-red-50' : 'border-amber-300 text-amber-600 bg-amber-50'}`}>{a.severity}</Badge>
-                      <span>{a.message}</span>
-                    </p>
-                  ))}
+      {/* Smart Alerts Section */}
+      {smartAlerts.length > 0 && (
+        <Card className="border border-slate-200/80 shadow-sm" data-testid="smart-alerts-section">
+          <CardHeader className="pb-3 pt-5 px-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-navy-900 flex items-center justify-center">
+                  <Zap className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="font-heading text-sm font-bold text-navy-900">Smart Alerts</CardTitle>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Auto-detected from your financial data</p>
                 </div>
               </div>
+              <div className="flex gap-1.5" data-testid="alert-type-counts">
+                {alertCounts.low_stock > 0 && (
+                  <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[10px] px-2 py-0.5">
+                    <PackageOpen className="w-3 h-3 mr-1" />{alertCounts.low_stock} Stock
+                  </Badge>
+                )}
+                {alertCounts.cost_increase > 0 && (
+                  <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-[10px] px-2 py-0.5">
+                    <CircleDollarSign className="w-3 h-3 mr-1" />{alertCounts.cost_increase} Cost
+                  </Badge>
+                )}
+                {alertCounts.margin_drop > 0 && (
+                  <Badge variant="outline" className="bg-violet-50 text-violet-700 border-violet-200 text-[10px] px-2 py-0.5">
+                    <ChartNoAxesCombined className="w-3 h-3 mr-1" />{alertCounts.margin_drop} Margin
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-5">
+            <div className="space-y-2">
+              {smartAlerts.map((alert, i) => (
+                <SmartAlertCard key={i} alert={alert} index={i} />
+              ))}
             </div>
           </CardContent>
         </Card>

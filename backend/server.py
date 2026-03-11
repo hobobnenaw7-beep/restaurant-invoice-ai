@@ -145,6 +145,156 @@ async def me(user=Depends(get_user)):
     r = await db.restaurants.find_one({"id": user["restaurant_id"]}, {"_id": 0})
     return {"id": user["id"], "email": user["email"], "name": user["name"], "restaurant_id": user["restaurant_id"], "restaurant_name": r["name"] if r else ""}
 
+# ==================== SMART ALERTS ENGINE ====================
+
+async def _generate_smart_alerts(rid):
+    """Analyze financial data and generate real-time smart alerts."""
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+    month_start = now.strftime("%Y-%m-01")
+    prev_week_start = (now - timedelta(days=now.weekday() + 7)).strftime("%Y-%m-%d")
+    prev_week_end = (now - timedelta(days=now.weekday() + 1)).strftime("%Y-%m-%d")
+    prev_month = now.replace(day=1) - timedelta(days=1)
+    prev_month_start = prev_month.strftime("%Y-%m-01")
+    prev_month_end = prev_month.strftime("%Y-%m-%d")
+    two_weeks_ago = (now - timedelta(days=14)).strftime("%Y-%m-%d")
+
+    purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    sales = await db.sales.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+
+    alerts = []
+
+    # --- 1. LOW STOCK: Items purchased regularly before but not in last 10 days ---
+    recent_cutoff = (now - timedelta(days=10)).strftime("%Y-%m-%d")
+    older_cutoff = (now - timedelta(days=45)).strftime("%Y-%m-%d")
+
+    # Items purchased in last 45 days but before 10 days ago
+    older_items = set()
+    recent_items = set()
+    for p in purchases:
+        d = p.get("invoice_date", "")
+        for it in p.get("items", []):
+            name = it.get("raw_name", "Unknown")
+            if d >= older_cutoff and d < recent_cutoff:
+                older_items.add(name)
+            if d >= recent_cutoff:
+                recent_items.add(name)
+
+    missing_items = older_items - recent_items
+    for item_name in sorted(missing_items)[:5]:
+        # Find last purchase date
+        last_date = ""
+        for p in sorted(purchases, key=lambda x: x.get("invoice_date", ""), reverse=True):
+            for it in p.get("items", []):
+                if it.get("raw_name") == item_name:
+                    last_date = p.get("invoice_date", "")
+                    break
+            if last_date:
+                break
+        days_ago = (now - datetime.strptime(last_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)).days if last_date else 0
+        alerts.append({
+            "type": "low_stock",
+            "severity": "high" if days_ago > 14 else "medium",
+            "title": f"{item_name} — not ordered in {days_ago} days",
+            "detail": f"Last purchased on {last_date}. This item was being ordered regularly before.",
+            "item": item_name,
+            "days_since": days_ago,
+        })
+
+    # --- 2. COST INCREASES: Compare avg prices this week vs previous week ---
+    def avg_prices_in_range(plist, start, end):
+        prices = {}
+        for p in plist:
+            d = p.get("invoice_date", "")
+            if d >= start and d <= end:
+                for it in p.get("items", []):
+                    name = it.get("raw_name", "Unknown")
+                    price = float(it.get("unit_price", 0))
+                    if price > 0:
+                        prices.setdefault(name, []).append(price)
+        return {n: round(sum(v) / len(v), 2) for n, v in prices.items()}
+
+    cur_prices = avg_prices_in_range(purchases, two_weeks_ago, today)
+    prev_prices = avg_prices_in_range(purchases, (now - timedelta(days=42)).strftime("%Y-%m-%d"), two_weeks_ago)
+
+    for name, cur_p in cur_prices.items():
+        prev_p = prev_prices.get(name)
+        if prev_p and prev_p > 0:
+            pct = ((cur_p - prev_p) / prev_p) * 100
+            if pct > 5:
+                alerts.append({
+                    "type": "cost_increase",
+                    "severity": "high" if pct > 15 else "medium",
+                    "title": f"{name} up {pct:.1f}%",
+                    "detail": f"Price went from ${prev_p:.2f} to ${cur_p:.2f} per unit.",
+                    "item": name,
+                    "change_pct": round(pct, 1),
+                    "old_price": prev_p,
+                    "new_price": cur_p,
+                })
+
+    # Sort cost increases by severity
+    cost_alerts = [a for a in alerts if a["type"] == "cost_increase"]
+    cost_alerts.sort(key=lambda x: -x["change_pct"])
+    alerts = [a for a in alerts if a["type"] != "cost_increase"] + cost_alerts[:5]
+
+    # --- 3. PROFIT MARGIN DROP ---
+    def sum_p(df, dt=None):
+        return sum(p["total"] for p in purchases if p.get("invoice_date", "") >= df and (not dt or p.get("invoice_date", "") <= dt))
+    def sum_s(df, dt=None):
+        return sum(s["total_sales"] for s in sales if s.get("report_date", "") >= df and (not dt or s.get("report_date", "") <= dt))
+
+    # Weekly margin comparison
+    cur_week_s = sum_s(week_start)
+    cur_week_p = sum_p(week_start)
+    prev_week_s = sum_s(prev_week_start, prev_week_end)
+    prev_week_p = sum_p(prev_week_start, prev_week_end)
+
+    cur_week_margin = ((cur_week_s - cur_week_p) / cur_week_s * 100) if cur_week_s > 0 else 0
+    prev_week_margin = ((prev_week_s - prev_week_p) / prev_week_s * 100) if prev_week_s > 0 else 0
+
+    if prev_week_margin > 0 and cur_week_margin < prev_week_margin:
+        margin_drop = prev_week_margin - cur_week_margin
+        if margin_drop > 3:
+            alerts.append({
+                "type": "margin_drop",
+                "severity": "high" if margin_drop > 10 else "medium",
+                "title": f"Weekly margin dropped {margin_drop:.1f}pp",
+                "detail": f"This week: {cur_week_margin:.1f}% vs last week: {prev_week_margin:.1f}%. Review cost drivers.",
+                "current_margin": round(cur_week_margin, 1),
+                "previous_margin": round(prev_week_margin, 1),
+                "drop_pp": round(margin_drop, 1),
+            })
+
+    # Monthly margin comparison
+    cur_month_s = sum_s(month_start)
+    cur_month_p = sum_p(month_start)
+    prev_month_s = sum_s(prev_month_start, prev_month_end)
+    prev_month_p = sum_p(prev_month_start, prev_month_end)
+
+    cur_month_margin = ((cur_month_s - cur_month_p) / cur_month_s * 100) if cur_month_s > 0 else 0
+    prev_month_margin = ((prev_month_s - prev_month_p) / prev_month_s * 100) if prev_month_s > 0 else 0
+
+    if prev_month_margin > 0 and cur_month_margin < prev_month_margin:
+        margin_drop = prev_month_margin - cur_month_margin
+        if margin_drop > 3:
+            alerts.append({
+                "type": "margin_drop",
+                "severity": "high" if margin_drop > 10 else "medium",
+                "title": f"Monthly margin dropped {margin_drop:.1f}pp",
+                "detail": f"This month: {cur_month_margin:.1f}% vs last month: {prev_month_margin:.1f}%.",
+                "current_margin": round(cur_month_margin, 1),
+                "previous_margin": round(prev_month_margin, 1),
+                "drop_pp": round(margin_drop, 1),
+            })
+
+    # Sort: high severity first, then by type priority
+    type_order = {"margin_drop": 0, "cost_increase": 1, "low_stock": 2}
+    alerts.sort(key=lambda a: (0 if a["severity"] == "high" else 1, type_order.get(a["type"], 9)))
+
+    return alerts
+
 # ==================== DASHBOARD ====================
 
 @api_router.get("/dashboard/summary")
@@ -188,6 +338,7 @@ async def dashboard_summary(user=Depends(get_user)):
         weekly_trends.append({"week": f"W{8-i}", "purchases": round(sum_p(ws, we), 2), "sales": round(sum_s(ws, we), 2)})
 
     alerts = await db.alerts.find({"restaurant_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(10)
+    smart_alerts = await _generate_smart_alerts(rid)
 
     return {
         "today_sales": round(sum_s(today), 2), "today_purchases": round(sum_p(today), 2),
@@ -198,7 +349,8 @@ async def dashboard_summary(user=Depends(get_user)):
         "prev_month_sales": round(sum_s(prev_month_start, prev_month_end), 2),
         "prev_month_purchases": round(sum_p(prev_month_start, prev_month_end), 2),
         "top_items": top_items, "top_suppliers": top_suppliers,
-        "weekly_trends": weekly_trends, "alerts": alerts
+        "weekly_trends": weekly_trends, "alerts": alerts,
+        "smart_alerts": smart_alerts,
     }
 
 # ==================== UPLOAD / EXTRACT ====================
@@ -735,6 +887,15 @@ async def send_chat(data: ChatMessageIn, user=Depends(get_user)):
             item_spend[n] = item_spend.get(n, 0) + float(it.get("total", 0))
     top_items = sorted(item_spend.items(), key=lambda x: -x[1])[:10]
 
+    # Smart alerts for chat context
+    smart_alerts = await _generate_smart_alerts(rid)
+    smart_alerts_ctx = ""
+    if smart_alerts:
+        sa_lines = []
+        for sa in smart_alerts:
+            sa_lines.append(f"- [{sa['type'].upper()}] {sa['title']} — {sa['detail']}")
+        smart_alerts_ctx = "\nSMART ALERTS (active issues detected):\n" + "\n".join(sa_lines)
+
     context = f"""RESTAURANT FINANCIAL DATA (as of {now.strftime('%A, %B %d, %Y')}):
 
 WEEKLY SNAPSHOT (This Week starting {week_start}):
@@ -765,7 +926,8 @@ TOP ITEMS BY COST: {json.dumps([{"name": n, "total": round(t, 2)} for n, t in to
 RECENT PRICE CHANGES (>5%): {json.dumps(price_changes[:10]) if price_changes else "None detected"}
 ACTIVE ALERTS: {len([a for a in alerts if not a.get('is_read')])}
 RECENT PURCHASES: {json.dumps([{'date': p['invoice_date'], 'supplier': p['supplier_name'], 'total': p['total']} for p in sorted(purchases, key=lambda x: x.get('invoice_date',''), reverse=True)[:8]])}
-RECENT SALES: {json.dumps([{'date': s['report_date'], 'total': s['total_sales']} for s in sorted(sales, key=lambda x: x.get('report_date',''), reverse=True)[:8]])}"""
+RECENT SALES: {json.dumps([{'date': s['report_date'], 'total': s['total_sales']} for s in sorted(sales, key=lambda x: x.get('report_date',''), reverse=True)[:8]])}
+{smart_alerts_ctx}"""
 
     system_msg = f"""You are Restaurant Accountant AI, a senior financial analyst for restaurants. Follow these rules strictly:
 
@@ -774,7 +936,8 @@ RECENT SALES: {json.dumps([{'date': s['report_date'], 'total': s['total_sales']}
 3. PERIODS: Always reference specific time periods (this week, this month, YTD, etc.) when discussing finances. Compare to previous periods when relevant.
 4. INSIGHTS: Don't just report numbers - provide brief actionable insights (e.g., "Spending is up 12% WoW - driven mainly by produce costs").
 5. CURRENCY: Always format dollar amounts with commas (e.g., $1,234.56).
-6. If you don't have enough data to answer precisely, say so honestly and suggest what data would help.
+6. SMART ALERTS: You have access to a smart alerts system that detects low stock ingredients, cost increases, and profit margin drops. When users ask about stock, costs, margins, or alerts, reference the specific alert data provided. Be proactive about mentioning relevant alerts even if the user doesn't ask directly.
+7. If you don't have enough data to answer precisely, say so honestly and suggest what data would help.
 
 {context}"""
 
