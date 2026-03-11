@@ -1,8 +1,9 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, base64, json, re
+import os, logging, uuid, base64, json, re, io
 from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -424,40 +425,77 @@ async def delete_alias(aid: str, user=Depends(get_user)):
 
 # ==================== REPORTS ====================
 
-@api_router.get("/reports")
-async def get_reports(user=Depends(get_user), report_type: str = "weekly", date: str = ""):
-    rid = user["restaurant_id"]
-    now = datetime.now(timezone.utc)
-
+def _parse_report_dates(report_type, date, now):
     if report_type == "weekly":
         start = datetime.strptime(date, "%Y-%m-%d") if date else now - timedelta(days=now.weekday())
         start_str = start.strftime("%Y-%m-%d")
         end_str = (start + timedelta(days=6)).strftime("%Y-%m-%d")
+        # previous period
+        prev_start = (start - timedelta(days=7)).strftime("%Y-%m-%d")
+        prev_end = (start - timedelta(days=1)).strftime("%Y-%m-%d")
     elif report_type == "monthly":
         start = datetime.strptime(date[:7] + "-01", "%Y-%m-%d") if date else now.replace(day=1)
         start_str = start.strftime("%Y-%m-%d")
         end = (start.replace(month=start.month + 1, day=1) if start.month < 12 else start.replace(year=start.year + 1, month=1, day=1)) - timedelta(days=1)
         end_str = end.strftime("%Y-%m-%d")
+        prev_month = start - timedelta(days=1)
+        prev_start = prev_month.replace(day=1).strftime("%Y-%m-%d")
+        prev_end = prev_month.strftime("%Y-%m-%d")
     else:
         year = int(date) if date else now.year
         start_str, end_str = f"{year}-01-01", f"{year}-12-31"
+        prev_start, prev_end = f"{year-1}-01-01", f"{year-1}-12-31"
+    return start_str, end_str, prev_start, prev_end
+
+async def _build_report(rid, report_type, date):
+    now = datetime.now(timezone.utc)
+    start_str, end_str, prev_start, prev_end = _parse_report_dates(report_type, date, now)
 
     purchases = await db.purchases.find({"restaurant_id": rid, "invoice_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
     sales = await db.sales.find({"restaurant_id": rid, "report_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+    prev_purchases = await db.purchases.find({"restaurant_id": rid, "invoice_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
+    prev_sales = await db.sales.find({"restaurant_id": rid, "report_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
 
     total_p = round(sum(p["total"] for p in purchases), 2)
     total_s = round(sum(s["total_sales"] for s in sales), 2)
+    prev_p = round(sum(p["total"] for p in prev_purchases), 2)
+    prev_s = round(sum(s["total_sales"] for s in prev_sales), 2)
 
     sup_spend = {}
+    sup_invoice_count = {}
     for p in purchases:
         n = p.get("supplier_name", "Unknown")
         sup_spend[n] = sup_spend.get(n, 0) + p["total"]
+        sup_invoice_count[n] = sup_invoice_count.get(n, 0) + 1
 
     item_spend = {}
     for p in purchases:
         for it in p.get("items", []):
             n = it.get("raw_name", "Unknown")
             item_spend[n] = item_spend.get(n, 0) + float(it.get("total", 0))
+
+    # Price changes: compare avg unit_price in current vs previous period
+    def item_prices(plist):
+        prices = {}
+        for p in plist:
+            for it in p.get("items", []):
+                n = it.get("raw_name", "Unknown")
+                price = float(it.get("unit_price", 0))
+                qty = float(it.get("quantity", 0))
+                if price > 0:
+                    prices.setdefault(n, []).append(price)
+        return {n: round(sum(v)/len(v), 2) for n, v in prices.items()}
+
+    cur_prices = item_prices(purchases)
+    prev_prices = item_prices(prev_purchases)
+    price_changes = []
+    for name, cur_p in cur_prices.items():
+        prev_p_val = prev_prices.get(name)
+        if prev_p_val and prev_p_val > 0:
+            pct = round(((cur_p - prev_p_val) / prev_p_val) * 100, 1)
+            if abs(pct) > 0:
+                price_changes.append({"item": name, "current_price": cur_p, "previous_price": prev_p_val, "change_pct": pct})
+    price_changes.sort(key=lambda x: -abs(x["change_pct"]))
 
     daily = {}
     for p in purchases:
@@ -473,12 +511,153 @@ async def get_reports(user=Depends(get_user), report_type: str = "weekly", date:
 
     return {
         "report_type": report_type, "date_range": {"start": start_str, "end": end_str},
+        "prev_date_range": {"start": prev_start, "end": prev_end},
         "total_purchases": total_p, "total_sales": total_s, "profit": round(total_s - total_p, 2),
-        "spending_by_supplier": [{"name": n, "total": round(t, 2)} for n, t in sorted(sup_spend.items(), key=lambda x: -x[1])],
+        "prev_purchases": prev_p, "prev_sales": prev_s, "prev_profit": round(prev_s - prev_p, 2),
+        "margin_pct": round((total_s - total_p) / total_s * 100, 1) if total_s > 0 else 0,
+        "spending_by_supplier": [{"name": n, "total": round(t, 2), "invoices": sup_invoice_count.get(n, 0)} for n, t in sorted(sup_spend.items(), key=lambda x: -x[1])],
         "top_items": [{"name": n, "total": round(t, 2)} for n, t in sorted(item_spend.items(), key=lambda x: -x[1])[:10]],
+        "price_changes": price_changes[:20],
         "daily_breakdown": sorted(daily.values(), key=lambda x: x["date"]),
         "alerts": alerts, "purchase_count": len(purchases), "sales_count": len(sales)
     }
+
+@api_router.get("/reports")
+async def get_reports(user=Depends(get_user), report_type: str = "weekly", date: str = ""):
+    return await _build_report(user["restaurant_id"], report_type, date)
+
+@api_router.get("/reports/download")
+async def download_report(user=Depends(get_user), report_type: str = "weekly", date: str = "", fmt: str = "excel"):
+    report = await _build_report(user["restaurant_id"], report_type, date)
+
+    if fmt == "pdf":
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20*mm, bottomMargin=15*mm, leftMargin=15*mm, rightMargin=15*mm)
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle('Title2', parent=styles['Title'], fontSize=16, spaceAfter=6)
+        sub_style = ParagraphStyle('Sub', parent=styles['Normal'], fontSize=9, textColor=colors.grey)
+        section_style = ParagraphStyle('Section', parent=styles['Heading2'], fontSize=12, spaceBefore=14, spaceAfter=6)
+
+        elements = []
+        elements.append(Paragraph("Restaurant Financial Report", title_style))
+        elements.append(Paragraph(f"{report_type.title()} &bull; {report['date_range']['start']} to {report['date_range']['end']}", sub_style))
+        elements.append(Spacer(1, 8*mm))
+
+        # KPIs table
+        kpi_data = [['Revenue', 'Purchases', 'Profit', 'Margin'],
+                     [f"${report['total_sales']:,.2f}", f"${report['total_purchases']:,.2f}", f"${report['profit']:,.2f}", f"{report['margin_pct']}%"]]
+        t = Table(kpi_data, colWidths=[45*mm]*4)
+        t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f172a')), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTSIZE', (0,0), (-1,-1), 9), ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+            ('TOPPADDING', (0,0), (-1,-1), 6), ('BOTTOMPADDING', (0,0), (-1,-1), 6)]))
+        elements.append(t)
+
+        # Supplier table
+        if report['spending_by_supplier']:
+            elements.append(Paragraph("Spending by Supplier", section_style))
+            sup_data = [['Supplier', 'Total', 'Invoices']] + [[s['name'], f"${s['total']:,.2f}", str(s['invoices'])] for s in report['spending_by_supplier'][:10]]
+            t = Table(sup_data, colWidths=[80*mm, 45*mm, 30*mm])
+            t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')), ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')), ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4)]))
+            elements.append(t)
+
+        # Price changes
+        if report['price_changes']:
+            elements.append(Paragraph("Price Changes", section_style))
+            pc_data = [['Item', 'Previous', 'Current', 'Change']] + [[p['item'], f"${p['previous_price']:,.2f}", f"${p['current_price']:,.2f}", f"{p['change_pct']:+.1f}%"] for p in report['price_changes'][:15]]
+            t = Table(pc_data, colWidths=[60*mm, 35*mm, 35*mm, 30*mm])
+            t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), colors.HexColor('#f1f5f9')), ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')), ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4)]))
+            elements.append(t)
+
+        doc.build(elements)
+        buf.seek(0)
+        filename = f"report_{report_type}_{report['date_range']['start']}.pdf"
+        return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+    else:  # excel
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+        wb = Workbook()
+        header_font = Font(bold=True, size=10, color="FFFFFF")
+        header_fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+        thin_border = Border(bottom=Side(style='thin', color='E2E8F0'))
+
+        # Summary sheet
+        ws = wb.active
+        ws.title = "Summary"
+        ws.append(["Restaurant Financial Report"])
+        ws['A1'].font = Font(bold=True, size=14)
+        ws.append([f"{report_type.title()} Report: {report['date_range']['start']} to {report['date_range']['end']}"])
+        ws.append([])
+        ws.append(["Metric", "Current Period", "Previous Period", "Change"])
+        for col in range(1, 5):
+            cell = ws.cell(row=4, column=col)
+            cell.font = header_font
+            cell.fill = header_fill
+        def pct_chg(cur, prev):
+            return f"{((cur - prev) / prev * 100):+.1f}%" if prev else "N/A"
+        ws.append(["Revenue", report['total_sales'], report['prev_sales'], pct_chg(report['total_sales'], report['prev_sales'])])
+        ws.append(["Purchases", report['total_purchases'], report['prev_purchases'], pct_chg(report['total_purchases'], report['prev_purchases'])])
+        ws.append(["Profit", report['profit'], report['prev_profit'], pct_chg(report['profit'], report['prev_profit']) if report['prev_profit'] != 0 else "N/A"])
+        ws.append(["Margin %", f"{report['margin_pct']}%", "", ""])
+        ws.column_dimensions['A'].width = 20
+        ws.column_dimensions['B'].width = 18
+        ws.column_dimensions['C'].width = 18
+        ws.column_dimensions['D'].width = 14
+
+        # Suppliers sheet
+        ws2 = wb.create_sheet("Suppliers")
+        ws2.append(["Supplier", "Total Spent", "Invoices"])
+        for col in range(1, 4):
+            cell = ws2.cell(row=1, column=col)
+            cell.font = header_font
+            cell.fill = header_fill
+        for s in report['spending_by_supplier']:
+            ws2.append([s['name'], s['total'], s['invoices']])
+        ws2.column_dimensions['A'].width = 30
+        ws2.column_dimensions['B'].width = 15
+        ws2.column_dimensions['C'].width = 12
+
+        # Price changes sheet
+        ws3 = wb.create_sheet("Price Changes")
+        ws3.append(["Item", "Previous Price", "Current Price", "Change %"])
+        for col in range(1, 5):
+            cell = ws3.cell(row=1, column=col)
+            cell.font = header_font
+            cell.fill = header_fill
+        for p in report['price_changes']:
+            ws3.append([p['item'], p['previous_price'], p['current_price'], p['change_pct']])
+        ws3.column_dimensions['A'].width = 25
+        ws3.column_dimensions['B'].width = 15
+        ws3.column_dimensions['C'].width = 15
+        ws3.column_dimensions['D'].width = 12
+
+        # Daily breakdown
+        ws4 = wb.create_sheet("Daily Breakdown")
+        ws4.append(["Date", "Purchases", "Sales"])
+        for col in range(1, 4):
+            cell = ws4.cell(row=1, column=col)
+            cell.font = header_font
+            cell.fill = header_fill
+        for d in report['daily_breakdown']:
+            ws4.append([d['date'], round(d['purchases'], 2), round(d['sales'], 2)])
+        ws4.column_dimensions['A'].width = 15
+        ws4.column_dimensions['B'].width = 15
+        ws4.column_dimensions['C'].width = 15
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        filename = f"report_{report_type}_{report['date_range']['start']}.xlsx"
+        return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 # ==================== ALERTS ====================
 
