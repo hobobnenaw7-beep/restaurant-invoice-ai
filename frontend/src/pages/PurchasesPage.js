@@ -1,31 +1,27 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { Search, Loader2, Eye, Trash2, ChevronUp, ChevronDown, ShoppingCart } from 'lucide-react';
+import {
+  Search, Loader2, Eye, Trash2, ChevronUp, ChevronDown,
+  ShoppingCart, Plus, Upload, Sparkles, FileText, X
+} from 'lucide-react';
 
-function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '$0.00'; }
+function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 
-function TableSkeleton() {
-  return <div className="p-6 space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-12 w-full rounded-lg" />)}</div>;
-}
-
-function EmptyState() {
-  return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4"><ShoppingCart className="w-6 h-6 text-slate-300" /></div>
-      <h3 className="font-heading text-base font-bold text-navy-900 mb-1">No purchases found</h3>
-      <p className="text-sm text-slate-400 max-w-xs">Upload an invoice or adjust your filters to see purchases here.</p>
-    </div>
-  );
-}
+const emptyPurchase = () => ({
+  supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0],
+  items: [{ raw_name: '', quantity: 1, unit: 'kg', unit_price: 0, total: 0 }],
+  subtotal: 0, tax: 0, total: 0,
+});
 
 export default function PurchasesPage() {
   const { api } = useAuth();
@@ -37,6 +33,14 @@ export default function PurchasesPage() {
   const [sortBy, setSortBy] = useState('invoice_date');
   const [sortOrder, setSortOrder] = useState('desc');
   const [selected, setSelected] = useState(null);
+
+  // Add form state
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState(emptyPurchase());
+  const [saving, setSaving] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [uploadFile, setUploadFile] = useState(null);
+  const fileRef = useRef(null);
 
   const load = async () => {
     setLoading(true);
@@ -59,63 +63,150 @@ export default function PurchasesPage() {
     try { await api.delete(`/purchases/${id}`); toast.success('Deleted'); load(); } catch { toast.error('Failed'); }
   };
 
+  // Form helpers
+  const updateField = (key, val) => setForm(f => ({ ...f, [key]: val }));
+  const updateItem = (idx, key, val) => {
+    setForm(f => {
+      const items = [...f.items];
+      items[idx] = { ...items[idx], [key]: val };
+      if (key === 'quantity' || key === 'unit_price') {
+        items[idx].total = parseFloat(items[idx].quantity || 0) * parseFloat(items[idx].unit_price || 0);
+      }
+      return { ...f, items };
+    });
+  };
+  const removeItem = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { raw_name: '', quantity: 1, unit: 'kg', unit_price: 0, total: 0 }] }));
+
+  const recalcTotals = () => {
+    setForm(f => {
+      const subtotal = f.items.reduce((s, it) => s + (parseFloat(it.total) || 0), 0);
+      return { ...f, subtotal: parseFloat(subtotal.toFixed(2)), total: parseFloat((subtotal + (parseFloat(f.tax) || 0)).toFixed(2)) };
+    });
+  };
+
+  const openAddForm = () => {
+    setForm(emptyPurchase());
+    setUploadFile(null);
+    setShowAdd(true);
+  };
+
+  const handleFileSelect = (f) => {
+    if (!f) return;
+    setUploadFile(f);
+  };
+
+  const handleExtract = async () => {
+    if (!uploadFile) return;
+    setExtracting(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', uploadFile);
+      formData.append('document_type', 'purchase_invoice');
+      const res = await api.post('/upload/extract', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
+      const d = res.data.extracted_data;
+      setForm({
+        supplier_name: d.supplier_name || '', invoice_number: d.invoice_number || '',
+        invoice_date: d.invoice_date || new Date().toISOString().split('T')[0],
+        items: (d.items || []).map(it => ({ raw_name: it.raw_name || '', quantity: parseFloat(it.quantity) || 0, unit: it.unit || '', unit_price: parseFloat(it.unit_price) || 0, total: parseFloat(it.total) || 0 })),
+        subtotal: parseFloat(d.subtotal) || 0, tax: parseFloat(d.tax) || 0, total: parseFloat(d.total) || 0,
+      });
+      toast.success('Invoice data extracted! Review and save.');
+    } catch (err) {
+      toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.'));
+    } finally { setExtracting(false); }
+  };
+
+  const handleSave = async () => {
+    if (!form.supplier_name.trim()) { toast.error('Supplier name is required'); return; }
+    setSaving(true);
+    try {
+      await api.post('/purchases', form);
+      toast.success('Purchase saved');
+      setShowAdd(false);
+      load();
+    } catch (err) {
+      toast.error('Save failed: ' + (err.response?.data?.detail || ''));
+    } finally { setSaving(false); }
+  };
+
   const SI = ({ field }) => sortBy === field ? (sortOrder === 'desc' ? <ChevronDown className="w-3 h-3 inline ml-0.5" /> : <ChevronUp className="w-3 h-3 inline ml-0.5" />) : null;
 
   return (
     <div className="space-y-6 max-w-[1400px]" data-testid="purchases-page">
-      <div>
-        <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-navy-900 tracking-tight">Purchases</h1>
-        <p className="text-sm text-slate-400 mt-1">All purchase invoices</p>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="font-heading text-xl sm:text-2xl font-extrabold text-navy-900 tracking-tight">Purchases</h1>
+          <p className="text-xs text-slate-400 mt-0.5">All purchase invoices</p>
+        </div>
+        <Button onClick={openAddForm} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs" data-testid="add-purchase-btn">
+          <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Purchase
+        </Button>
       </div>
 
+      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <Input className="pl-9 h-10" placeholder="Search supplier or invoice #..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="search-purchases" />
+          <Input className="pl-9 h-9 text-sm" placeholder="Search supplier or invoice #..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="search-purchases" />
         </div>
-        <Input type="date" className="w-40 h-10" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} data-testid="date-from" />
-        <Input type="date" className="w-40 h-10" value={dateTo} onChange={(e) => setDateTo(e.target.value)} data-testid="date-to" />
+        <Input type="date" className="w-40 h-9 text-xs" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} data-testid="date-from" />
+        <Input type="date" className="w-40 h-9 text-xs" value={dateTo} onChange={(e) => setDateTo(e.target.value)} data-testid="date-to" />
       </div>
 
-      <Card className="border border-slate-100 shadow-sm overflow-hidden">
-        {loading ? <TableSkeleton /> : purchases.length === 0 ? <EmptyState /> : (
+      {/* Table */}
+      <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
+        {loading ? (
+          <div className="p-5 space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
+        ) : purchases.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4"><ShoppingCart className="w-6 h-6 text-slate-300" /></div>
+            <h3 className="font-heading text-base font-bold text-navy-900 mb-1">No purchases found</h3>
+            <p className="text-sm text-slate-400 max-w-xs mb-4">Add a purchase or upload an invoice to get started.</p>
+            <Button onClick={openAddForm} variant="outline" size="sm" className="text-xs" data-testid="empty-add-purchase-btn">
+              <Plus className="w-3.5 h-3.5 mr-1" /> Add Purchase
+            </Button>
+          </div>
+        ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                  <TableHead className="cursor-pointer text-[11px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('invoice_date')}>Date <SI field="invoice_date" /></TableHead>
-                  <TableHead className="cursor-pointer text-[11px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('supplier_name')}>Supplier <SI field="supplier_name" /></TableHead>
-                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Invoice #</TableHead>
-                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider text-center">Items</TableHead>
-                  <TableHead className="cursor-pointer text-[11px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total')}>Total <SI field="total" /></TableHead>
+                  <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('invoice_date')}>Date <SI field="invoice_date" /></TableHead>
+                  <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('supplier_name')}>Supplier <SI field="supplier_name" /></TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Invoice #</TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Items</TableHead>
+                  <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total')}>Total <SI field="total" /></TableHead>
                   <TableHead className="w-20" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {purchases.map((p, i) => (
-                  <TableRow key={p.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`}>
-                    <TableCell className="text-sm tabular-nums text-slate-600">{p.invoice_date}</TableCell>
-                    <TableCell className="text-sm font-semibold text-navy-900">{p.supplier_name}</TableCell>
-                    <TableCell><Badge variant="outline" className="text-[11px] font-mono">{p.invoice_number}</Badge></TableCell>
-                    <TableCell className="text-sm text-center text-slate-500">{p.items?.length || 0}</TableCell>
-                    <TableCell className="text-sm text-right font-bold text-navy-900 tabular-nums">{fmt(p.total)}</TableCell>
+                  <TableRow key={p.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} data-testid={`purchase-row-${i}`}>
+                    <TableCell className="text-xs tabular-nums text-slate-600">{p.invoice_date}</TableCell>
+                    <TableCell className="text-xs font-semibold text-navy-900">{p.supplier_name}</TableCell>
+                    <TableCell><Badge variant="outline" className="text-[10px] font-mono">{p.invoice_number}</Badge></TableCell>
+                    <TableCell className="text-xs text-center text-slate-500">{p.items?.length || 0}</TableCell>
+                    <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(p.total)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-0.5">
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(p)} data-testid={`view-purchase-${p.id}`}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(p.id)}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(p)} data-testid={`view-purchase-${i}`}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(p.id)} data-testid={`delete-purchase-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
                       </div>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-            <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/50">
-              <p className="text-xs text-slate-400">{purchases.length} purchase{purchases.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-navy-900">{fmt(purchases.reduce((s, p) => s + (p.total || 0), 0))}</span></p>
+            <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50">
+              <p className="text-[11px] text-slate-400">{purchases.length} purchase{purchases.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-navy-900">{fmt(purchases.reduce((s, p) => s + (p.total || 0), 0))}</span></p>
             </div>
           </div>
         )}
       </Card>
 
+      {/* View Detail Dialog */}
       <Dialog open={!!selected} onOpenChange={() => setSelected(null)}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-heading text-lg">Purchase Details</DialogTitle></DialogHeader>
@@ -123,12 +214,18 @@ export default function PurchasesPage() {
             <div className="space-y-5">
               <div className="grid grid-cols-3 gap-4">
                 {[['Supplier', selected.supplier_name], ['Invoice #', selected.invoice_number], ['Date', selected.invoice_date]].map(([l, v]) => (
-                  <div key={l}><p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">{l}</p><p className="text-sm font-semibold text-navy-900 mt-0.5">{v}</p></div>
+                  <div key={l}><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{l}</p><p className="text-sm font-semibold text-navy-900 mt-0.5">{v}</p></div>
                 ))}
               </div>
               <Separator />
               <Table>
-                <TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80"><TableHead className="text-[11px] font-bold text-slate-500 uppercase">Item</TableHead><TableHead className="text-[11px] font-bold text-slate-500 uppercase text-right">Qty</TableHead><TableHead className="text-[11px] font-bold text-slate-500 uppercase">Unit</TableHead><TableHead className="text-[11px] font-bold text-slate-500 uppercase text-right">Price</TableHead><TableHead className="text-[11px] font-bold text-slate-500 uppercase text-right">Total</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase">Item</TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Qty</TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase">Unit</TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Price</TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Total</TableHead>
+                </TableRow></TableHeader>
                 <TableBody>
                   {(selected.items || []).map((it, i) => (
                     <TableRow key={i} className={i % 2 === 0 ? '' : 'bg-slate-50/40'}>
@@ -151,6 +248,122 @@ export default function PurchasesPage() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Purchase Dialog */}
+      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-lg">Add Purchase</DialogTitle>
+          </DialogHeader>
+
+          {/* Upload section */}
+          <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-4" data-testid="purchase-upload-zone">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0">
+                <Upload className="w-4 h-4 text-teal-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                {uploadFile ? (
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <span className="text-xs font-medium text-navy-900 truncate">{uploadFile.name}</span>
+                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0" onClick={() => setUploadFile(null)}><X className="w-3 h-3" /></Button>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs font-semibold text-navy-900">Upload an invoice to auto-fill</p>
+                    <p className="text-[10px] text-slate-400">JPG, PNG, or PDF — AI will extract the data</p>
+                  </>
+                )}
+              </div>
+              <div className="flex gap-2">
+                {!uploadFile && (
+                  <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => fileRef.current?.click()} data-testid="purchase-upload-btn">
+                    Browse
+                  </Button>
+                )}
+                {uploadFile && (
+                  <Button size="sm" className="h-8 text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={handleExtract} disabled={extracting} data-testid="purchase-extract-btn">
+                    {extracting ? <><Loader2 className="w-3 h-3 animate-spin mr-1" /> Extracting...</> : <><Sparkles className="w-3 h-3 mr-1" /> Extract</>}
+                  </Button>
+                )}
+              </div>
+            </div>
+            <input ref={fileRef} type="file" className="hidden" accept="image/*,.pdf" onChange={(e) => handleFileSelect(e.target.files[0])} />
+          </div>
+
+          <Separator />
+
+          {/* Form fields */}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Supplier *</Label>
+                <Input className="mt-1 h-9 text-sm" value={form.supplier_name} onChange={(e) => updateField('supplier_name', e.target.value)} placeholder="Supplier name" data-testid="form-supplier" />
+              </div>
+              <div>
+                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Invoice #</Label>
+                <Input className="mt-1 h-9 text-sm" value={form.invoice_number} onChange={(e) => updateField('invoice_number', e.target.value)} placeholder="INV-001" data-testid="form-invoice-number" />
+              </div>
+              <div>
+                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date</Label>
+                <Input className="mt-1 h-9 text-sm" type="date" value={form.invoice_date} onChange={(e) => updateField('invoice_date', e.target.value)} data-testid="form-invoice-date" />
+              </div>
+            </div>
+
+            {/* Line items */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Line Items</Label>
+                <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={addItem} data-testid="add-line-item-btn">
+                  <Plus className="w-3 h-3 mr-1" /> Add Item
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                {form.items.map((item, i) => (
+                  <div key={i} className="grid grid-cols-12 gap-1.5 items-center bg-slate-50 rounded-lg p-2" data-testid={`line-item-${i}`}>
+                    <Input className="col-span-4 text-xs h-8" placeholder="Item name" value={item.raw_name} onChange={(e) => updateItem(i, 'raw_name', e.target.value)} />
+                    <Input className="col-span-2 text-xs h-8" type="number" placeholder="Qty" value={item.quantity || ''} onChange={(e) => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} />
+                    <Input className="col-span-1 text-xs h-8" placeholder="Unit" value={item.unit} onChange={(e) => updateItem(i, 'unit', e.target.value)} />
+                    <Input className="col-span-2 text-xs h-8" type="number" step="0.01" placeholder="Price" value={item.unit_price || ''} onChange={(e) => updateItem(i, 'unit_price', parseFloat(e.target.value) || 0)} />
+                    <div className="col-span-3 flex items-center gap-1">
+                      <span className="text-xs font-semibold text-navy-900 tabular-nums flex-1 text-right">{fmt(item.total || (item.quantity * item.unit_price) || 0)}</span>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 flex-shrink-0" onClick={() => removeItem(i)} data-testid={`remove-item-${i}`}>
+                        <Trash2 className="w-3 h-3 text-red-400" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Totals */}
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Subtotal</Label>
+                <Input className="mt-1 h-9 text-sm" type="number" step="0.01" value={form.subtotal || ''} onChange={(e) => updateField('subtotal', parseFloat(e.target.value) || 0)} data-testid="form-subtotal" />
+              </div>
+              <div>
+                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tax</Label>
+                <Input className="mt-1 h-9 text-sm" type="number" step="0.01" value={form.tax || ''} onChange={(e) => updateField('tax', parseFloat(e.target.value) || 0)} data-testid="form-tax" />
+              </div>
+              <div>
+                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total</Label>
+                <Input className="mt-1 h-9 text-sm font-bold" type="number" step="0.01" value={form.total || ''} onChange={(e) => updateField('total', parseFloat(e.target.value) || 0)} data-testid="form-total" />
+              </div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-3 pt-2">
+            <Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-purchase-btn">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />}
+              Save Purchase
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

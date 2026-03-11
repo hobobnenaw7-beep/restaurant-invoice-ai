@@ -5,13 +5,12 @@ import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  LayoutDashboard, Upload, ShoppingCart, DollarSign, Users,
+  LayoutDashboard, ShoppingCart, DollarSign, Users,
   Package, FileText, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat
 } from 'lucide-react';
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/upload', label: 'Upload Center', icon: Upload },
   { path: '/purchases', label: 'Purchases', icon: ShoppingCart },
   { path: '/sales', label: 'Sales', icon: DollarSign },
   { path: '/suppliers', label: 'Suppliers', icon: Users },

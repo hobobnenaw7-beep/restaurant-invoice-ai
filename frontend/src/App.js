@@ -5,7 +5,6 @@ import { Toaster } from "@/components/ui/sonner";
 import Layout from "@/components/Layout";
 import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
-import UploadPage from "@/pages/UploadPage";
 import PurchasesPage from "@/pages/PurchasesPage";
 import SalesPage from "@/pages/SalesPage";
 import SuppliersPage from "@/pages/SuppliersPage";
@@ -35,7 +34,6 @@ function App() {
         <Routes>
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-          <Route path="/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
           <Route path="/purchases" element={<ProtectedRoute><PurchasesPage /></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute><SalesPage /></ProtectedRoute>} />
           <Route path="/suppliers" element={<ProtectedRoute><SuppliersPage /></ProtectedRoute>} />
