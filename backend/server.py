@@ -839,7 +839,9 @@ async def price_intelligence(user=Depends(get_user)):
     # For each item: avg price per supplier, best supplier, potential savings
     all_suppliers = set()
     for p in purchases:
-        all_suppliers.add(p.get("supplier_name", "Unknown"))
+        sn = p.get("supplier_name", "").strip()
+        if sn:
+            all_suppliers.add(sn)
     all_suppliers = sorted(all_suppliers)
 
     comparison_items = []

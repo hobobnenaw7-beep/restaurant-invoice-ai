@@ -62,6 +62,10 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Dashboard "Smart Alerts" section with color-coded cards (amber=stock, red=cost, violet=margin), severity badges, type count summary
   - Chat AI enhanced with smart alerts context for answering stock/cost/margin questions
 
+- [x] **Supplier Price Comparison (March 11, 2026)**:
+  - Backend `/api/prices/intelligence` endpoint: per-item per-supplier avg prices, best supplier detection, savings %, weekly price trends, >10% price alerts
+  - Reports page: Price Trends line chart with item selector, Supplier Price Comparison matrix table with BEST labels and savings %, Price Increase Alerts banner (>10%)
+
 ## Credentials
 - Test: test@demo.com / password123
 
