@@ -9,7 +9,7 @@ import {
   Package, FileText, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat
 } from 'lucide-react';
 
-const navItems = [
+const mainNav = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/purchases', label: 'Purchases', icon: ShoppingCart },
   { path: '/sales', label: 'Sales', icon: DollarSign },
@@ -17,7 +17,6 @@ const navItems = [
   { path: '/items', label: 'Items', icon: Package },
   { path: '/reports', label: 'Reports', icon: FileText },
   { path: '/chat', label: 'Chat Assistant', icon: MessageCircle },
-  { path: '/settings', label: 'Settings', icon: Settings },
 ];
 
 export default function Layout({ children }) {
@@ -25,8 +24,28 @@ export default function Layout({ children }) {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const NavLink = ({ item }) => {
+    const isActive = location.pathname === item.path;
+    return (
+      <Link
+        to={item.path}
+        onClick={() => setMobileOpen(false)}
+        data-testid={`nav-${item.path.slice(1)}`}
+        className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 ${
+          isActive
+            ? 'bg-teal-600/15 text-teal-400'
+            : 'text-navy-400 hover:text-white hover:bg-navy-800/60'
+        }`}
+      >
+        <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
+        <span>{item.label}</span>
+      </Link>
+    );
+  };
+
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-navy-950 text-white" data-testid="sidebar">
+      {/* Logo */}
       <div className="p-5 border-b border-navy-800">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-teal-600 flex items-center justify-center flex-shrink-0">
@@ -39,47 +58,36 @@ export default function Layout({ children }) {
         </div>
       </div>
 
+      {/* Main navigation */}
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {navItems.map(item => {
-          const isActive = location.pathname === item.path;
-          return (
-            <Link
-              key={item.path}
-              to={item.path}
-              onClick={() => setMobileOpen(false)}
-              data-testid={`nav-${item.path.slice(1)}`}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 ${
-                isActive
-                  ? 'bg-teal-600/15 text-teal-400'
-                  : 'text-navy-400 hover:text-white hover:bg-navy-800/60'
-              }`}
-            >
-              <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
+        {mainNav.map(item => <NavLink key={item.path} item={item} />)}
       </nav>
 
-      <div className="p-4 border-t border-navy-800">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-8 h-8 rounded-full bg-teal-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
-            {user?.name?.charAt(0)?.toUpperCase() || 'U'}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">{user?.name || 'User'}</p>
-            <p className="text-[11px] text-navy-400 truncate">{user?.restaurant_name || ''}</p>
-          </div>
+      {/* Settings + User — pinned at bottom */}
+      <div className="border-t border-navy-800">
+        <div className="px-3 pt-3 pb-1">
+          <NavLink item={{ path: '/settings', label: 'Settings', icon: Settings }} />
         </div>
-        <Button
-          onClick={logout}
-          variant="ghost"
-          className="w-full justify-start text-navy-400 hover:text-white hover:bg-navy-800/60 h-8 text-xs"
-          data-testid="logout-btn"
-        >
-          <LogOut className="w-4 h-4 mr-2" />
-          Log out
-        </Button>
+        <div className="p-4 pt-2">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-8 h-8 rounded-full bg-teal-600 flex items-center justify-center text-xs font-bold flex-shrink-0">
+              {user?.name?.charAt(0)?.toUpperCase() || 'U'}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{user?.name || 'User'}</p>
+              <p className="text-[11px] text-navy-400 truncate">{user?.restaurant_name || ''}</p>
+            </div>
+          </div>
+          <Button
+            onClick={logout}
+            variant="ghost"
+            className="w-full justify-start text-navy-400 hover:text-white hover:bg-navy-800/60 h-8 text-xs"
+            data-testid="logout-btn"
+          >
+            <LogOut className="w-4 h-4 mr-2" />
+            Log out
+          </Button>
+        </div>
       </div>
     </div>
   );

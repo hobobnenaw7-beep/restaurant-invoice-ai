@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,8 @@ import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 import {
   Search, Loader2, Eye, Trash2, ChevronUp, ChevronDown,
-  ShoppingCart, Plus, Upload, Sparkles, FileText, X
+  ShoppingCart, Plus, Upload, Sparkles, FileText, X,
+  Camera, Image as ImageIcon, FileUp
 } from 'lucide-react';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
@@ -34,24 +35,26 @@ export default function PurchasesPage() {
   const [sortOrder, setSortOrder] = useState('desc');
   const [selected, setSelected] = useState(null);
 
-  // Add form state
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyPurchase());
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [uploadFile, setUploadFile] = useState(null);
-  const fileRef = useRef(null);
+  const [uploadPreview, setUploadPreview] = useState(null);
+  const fileImageRef = useRef(null);
+  const filePdfRef = useRef(null);
+  const fileCameraRef = useRef(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api.get('/purchases', { params: { search, date_from: dateFrom, date_to: dateTo, sort_by: sortBy, sort_order: sortOrder } });
       setPurchases(res.data);
     } catch { toast.error('Failed to load'); }
     finally { setLoading(false); }
-  };
+  }, [api, search, dateFrom, dateTo, sortBy, sortOrder]);
 
-  useEffect(() => { load(); }, [search, dateFrom, dateTo, sortBy, sortOrder]); // eslint-disable-line
+  useEffect(() => { load(); }, [load]);
 
   const toggleSort = (field) => {
     if (sortBy === field) setSortOrder(o => o === 'desc' ? 'asc' : 'desc');
@@ -63,7 +66,6 @@ export default function PurchasesPage() {
     try { await api.delete(`/purchases/${id}`); toast.success('Deleted'); load(); } catch { toast.error('Failed'); }
   };
 
-  // Form helpers
   const updateField = (key, val) => setForm(f => ({ ...f, [key]: val }));
   const updateItem = (idx, key, val) => {
     setForm(f => {
@@ -78,22 +80,28 @@ export default function PurchasesPage() {
   const removeItem = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, { raw_name: '', quantity: 1, unit: 'kg', unit_price: 0, total: 0 }] }));
 
-  const recalcTotals = () => {
-    setForm(f => {
-      const subtotal = f.items.reduce((s, it) => s + (parseFloat(it.total) || 0), 0);
-      return { ...f, subtotal: parseFloat(subtotal.toFixed(2)), total: parseFloat((subtotal + (parseFloat(f.tax) || 0)).toFixed(2)) };
-    });
-  };
-
   const openAddForm = () => {
     setForm(emptyPurchase());
     setUploadFile(null);
+    setUploadPreview(null);
     setShowAdd(true);
   };
 
-  const handleFileSelect = (f) => {
-    if (!f) return;
-    setUploadFile(f);
+  const handleFileSelect = (file) => {
+    if (!file) return;
+    setUploadFile(file);
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (e) => setUploadPreview(e.target.result);
+      reader.readAsDataURL(file);
+    } else {
+      setUploadPreview(null);
+    }
+  };
+
+  const clearFile = () => {
+    setUploadFile(null);
+    setUploadPreview(null);
   };
 
   const handleExtract = async () => {
@@ -111,7 +119,7 @@ export default function PurchasesPage() {
         items: (d.items || []).map(it => ({ raw_name: it.raw_name || '', quantity: parseFloat(it.quantity) || 0, unit: it.unit || '', unit_price: parseFloat(it.unit_price) || 0, total: parseFloat(it.total) || 0 })),
         subtotal: parseFloat(d.subtotal) || 0, tax: parseFloat(d.tax) || 0, total: parseFloat(d.total) || 0,
       });
-      toast.success('Invoice data extracted! Review and save.');
+      toast.success('Invoice data extracted! Review the fields below and save.');
     } catch (err) {
       toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.'));
     } finally { setExtracting(false); }
@@ -258,40 +266,77 @@ export default function PurchasesPage() {
             <DialogTitle className="font-heading text-lg">Add Purchase</DialogTitle>
           </DialogHeader>
 
-          {/* Upload section */}
+          {/* Upload section — multi-option */}
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-4" data-testid="purchase-upload-zone">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0">
-                <Upload className="w-4 h-4 text-teal-600" />
-              </div>
-              <div className="flex-1 min-w-0">
-                {uploadFile ? (
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                    <span className="text-xs font-medium text-navy-900 truncate">{uploadFile.name}</span>
-                    <Button size="sm" variant="ghost" className="h-5 w-5 p-0" onClick={() => setUploadFile(null)}><X className="w-3 h-3" /></Button>
+            {uploadFile ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0">
+                      {uploadFile.type.startsWith('image/') ? <ImageIcon className="w-4 h-4 text-teal-600" /> : <FileText className="w-4 h-4 text-teal-600" />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-navy-900 truncate">{uploadFile.name}</p>
+                      <p className="text-[10px] text-slate-400">{(uploadFile.size / 1024).toFixed(0)} KB &middot; {uploadFile.type.split('/')[1]?.toUpperCase()}</p>
+                    </div>
                   </div>
-                ) : (
-                  <>
-                    <p className="text-xs font-semibold text-navy-900">Upload an invoice to auto-fill</p>
-                    <p className="text-[10px] text-slate-400">JPG, PNG, or PDF — AI will extract the data</p>
-                  </>
+                  <div className="flex gap-2 flex-shrink-0">
+                    <Button size="sm" variant="outline" className="h-8 text-xs" onClick={clearFile} data-testid="purchase-clear-file-btn">
+                      <X className="w-3 h-3 mr-1" /> Remove
+                    </Button>
+                    <Button size="sm" className="h-8 text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={handleExtract} disabled={extracting} data-testid="purchase-extract-btn">
+                      {extracting ? <><Loader2 className="w-3 h-3 animate-spin mr-1" /> Extracting...</> : <><Sparkles className="w-3 h-3 mr-1" /> Extract Data</>}
+                    </Button>
+                  </div>
+                </div>
+                {uploadPreview && (
+                  <div className="rounded-lg overflow-hidden border border-slate-200 max-h-40">
+                    <img src={uploadPreview} alt="Preview" className="w-full h-full object-contain max-h-40 bg-white" />
+                  </div>
                 )}
               </div>
-              <div className="flex gap-2">
-                {!uploadFile && (
-                  <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => fileRef.current?.click()} data-testid="purchase-upload-btn">
-                    Browse
-                  </Button>
-                )}
-                {uploadFile && (
-                  <Button size="sm" className="h-8 text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={handleExtract} disabled={extracting} data-testid="purchase-extract-btn">
-                    {extracting ? <><Loader2 className="w-3 h-3 animate-spin mr-1" /> Extracting...</> : <><Sparkles className="w-3 h-3 mr-1" /> Extract</>}
-                  </Button>
-                )}
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0">
+                    <Upload className="w-4 h-4 text-teal-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-navy-900">Upload a purchase invoice</p>
+                    <p className="text-[10px] text-slate-400">AI will extract supplier, items, and totals automatically</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2" data-testid="purchase-upload-options">
+                  <button
+                    onClick={() => fileCameraRef.current?.click()}
+                    className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group"
+                    data-testid="purchase-take-photo-btn"
+                  >
+                    <Camera className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" />
+                    <span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Take Photo</span>
+                  </button>
+                  <button
+                    onClick={() => fileImageRef.current?.click()}
+                    className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group"
+                    data-testid="purchase-upload-image-btn"
+                  >
+                    <ImageIcon className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" />
+                    <span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload Image</span>
+                  </button>
+                  <button
+                    onClick={() => filePdfRef.current?.click()}
+                    className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group"
+                    data-testid="purchase-upload-pdf-btn"
+                  >
+                    <FileUp className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" />
+                    <span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload PDF</span>
+                  </button>
+                </div>
               </div>
-            </div>
-            <input ref={fileRef} type="file" className="hidden" accept="image/*,.pdf" onChange={(e) => handleFileSelect(e.target.files[0])} />
+            )}
+            <input ref={fileCameraRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
+            <input ref={fileImageRef} type="file" className="hidden" accept="image/png,image/jpeg,image/jpg,image/webp" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
+            <input ref={filePdfRef} type="file" className="hidden" accept=".pdf,application/pdf" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
           </div>
 
           <Separator />
