@@ -1,0 +1,255 @@
+import { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from 'sonner';
+import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, AlertTriangle, ArrowUpRight, ArrowDownRight, Loader2, BarChart3 } from 'lucide-react';
+import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+
+function fmt(n) {
+  if (n == null) return '$0';
+  if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`;
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+function pctChange(curr, prev) {
+  if (!prev || prev === 0) return null;
+  return ((curr - prev) / prev * 100).toFixed(1);
+}
+
+function KPI({ label, value, prev, accent, icon: Icon, testId }) {
+  const pct = pctChange(value, prev);
+  const isUp = pct > 0;
+  return (
+    <div className="flex flex-col justify-between h-full" data-testid={testId}>
+      <div className="flex items-center justify-between mb-4">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${accent ? 'bg-teal-600' : 'bg-navy-900'}`}>
+          <Icon className="w-[18px] h-[18px] text-white" strokeWidth={2} />
+        </div>
+        {pct !== null && (
+          <span className={`inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full ${isUp ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+            {isUp ? <ArrowUpRight className="w-3 h-3 mr-0.5" /> : <ArrowDownRight className="w-3 h-3 mr-0.5" />}
+            {Math.abs(pct)}%
+          </span>
+        )}
+      </div>
+      <p className="font-heading text-3xl font-extrabold tracking-tight text-navy-900">{fmt(value)}</p>
+      <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-[0.15em] mt-1">{label}</p>
+    </div>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-8" data-testid="dashboard-loading">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {[1,2,3,4,5,6].map(i => (
+          <Card key={i} className="border border-slate-100"><CardContent className="p-6"><Skeleton className="h-10 w-10 rounded-xl mb-4" /><Skeleton className="h-8 w-32 mb-2" /><Skeleton className="h-3 w-20" /></CardContent></Card>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6"><Skeleton className="h-72 rounded-xl" /><Skeleton className="h-72 rounded-xl" /></div>
+    </div>
+  );
+}
+
+function EmptyDashboard({ onSeed, seeding }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-center" data-testid="empty-dashboard">
+      <div className="w-20 h-20 rounded-2xl bg-slate-100 flex items-center justify-center mb-6">
+        <BarChart3 className="w-10 h-10 text-slate-300" />
+      </div>
+      <h2 className="font-heading text-xl font-bold text-navy-900 mb-2">No financial data yet</h2>
+      <p className="text-sm text-slate-500 max-w-sm mb-8">Upload your first invoice or load demo data to see your dashboard come to life.</p>
+      <Button onClick={onSeed} disabled={seeding} className="bg-teal-600 hover:bg-teal-700 text-white h-11 px-6 text-sm font-semibold" data-testid="seed-data-btn">
+        {seeding ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+        Load Demo Data
+      </Button>
+    </div>
+  );
+}
+
+const CustomTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 shadow-lg">
+      <p className="text-[11px] font-semibold text-slate-500 mb-1">{label}</p>
+      {payload.map((p, i) => (
+        <p key={i} className="text-xs"><span className="font-semibold" style={{ color: p.color }}>{p.name}:</span> {fmt(p.value)}</p>
+      ))}
+    </div>
+  );
+};
+
+export default function DashboardPage() {
+  const { api } = useAuth();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [seeding, setSeeding] = useState(false);
+
+  const load = async () => {
+    try { const res = await api.get('/dashboard/summary'); setData(res.data); }
+    catch { toast.error('Failed to load dashboard'); }
+    finally { setLoading(false); }
+  };
+
+  const seedData = async () => {
+    setSeeding(true);
+    try { await api.post('/seed'); toast.success('Demo data loaded!'); await load(); }
+    catch { toast.error('Failed to seed data'); }
+    finally { setSeeding(false); }
+  };
+
+  useEffect(() => { load(); }, []); // eslint-disable-line
+
+  if (loading) return <LoadingSkeleton />;
+
+  const isEmpty = !data || (data.month_sales === 0 && data.month_purchases === 0);
+  if (isEmpty) return <EmptyDashboard onSeed={seedData} seeding={seeding} />;
+
+  const unreadAlerts = (data.alerts || []).filter(a => !a.is_read);
+
+  return (
+    <div className="space-y-8 max-w-[1400px]" data-testid="dashboard-page">
+      <div>
+        <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-navy-900 tracking-tight">Dashboard</h1>
+        <p className="text-sm text-slate-400 mt-1">Your restaurant's financial pulse</p>
+      </div>
+
+      {/* Primary KPIs */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <Card className="border border-slate-100 shadow-sm"><CardContent className="p-6">
+          <KPI label="Today Sales" value={data.today_sales} prev={null} accent icon={DollarSign} testId="stat-today-sales" />
+        </CardContent></Card>
+        <Card className="border border-slate-100 shadow-sm"><CardContent className="p-6">
+          <KPI label="Today Purchases" value={data.today_purchases} prev={null} icon={ShoppingCart} testId="stat-today-purchases" />
+        </CardContent></Card>
+        <Card className="border border-slate-100 shadow-sm"><CardContent className="p-6">
+          <KPI label="This Week Sales" value={data.week_sales} prev={data.prev_week_sales} accent icon={TrendingUp} testId="stat-week-sales" />
+        </CardContent></Card>
+        <Card className="border border-slate-100 shadow-sm"><CardContent className="p-6">
+          <KPI label="This Week Purchases" value={data.week_purchases} prev={data.prev_week_purchases} icon={ShoppingCart} testId="stat-week-purchases" />
+        </CardContent></Card>
+        <Card className="border border-slate-100 shadow-sm"><CardContent className="p-6">
+          <KPI label="This Month Sales" value={data.month_sales} prev={data.prev_month_sales} accent icon={TrendingUp} testId="stat-month-sales" />
+        </CardContent></Card>
+        <Card className="border border-slate-100 shadow-sm"><CardContent className="p-6">
+          <KPI label="This Month Purchases" value={data.month_purchases} prev={data.prev_month_purchases} icon={ShoppingCart} testId="stat-month-purchases" />
+        </CardContent></Card>
+      </div>
+
+      {/* Alerts banner */}
+      {unreadAlerts.length > 0 && (
+        <Card className="border-l-4 border-l-amber-400 border border-amber-100 bg-amber-50/40 shadow-none" data-testid="alerts-banner">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-amber-800 mb-1">{unreadAlerts.length} Active Alert{unreadAlerts.length > 1 ? 's' : ''}</p>
+                <div className="space-y-1">
+                  {unreadAlerts.slice(0, 3).map((a, i) => (
+                    <p key={i} className="text-xs text-amber-700 leading-relaxed flex items-start gap-2">
+                      <Badge variant="outline" className={`shrink-0 text-[9px] px-1.5 py-0 h-4 font-bold border ${a.severity === 'high' ? 'border-red-300 text-red-600 bg-red-50' : 'border-amber-300 text-amber-600 bg-amber-50'}`}>{a.severity}</Badge>
+                      <span>{a.message}</span>
+                    </p>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Charts row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="lg:col-span-2 border border-slate-100 shadow-sm" data-testid="weekly-trends-chart">
+          <CardHeader className="pb-0 pt-5 px-6">
+            <CardTitle className="font-heading text-sm font-bold text-navy-900 uppercase tracking-wide">Weekly Sales vs Purchases</CardTitle>
+          </CardHeader>
+          <CardContent className="px-2 pb-4 pt-2">
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={data.weekly_trends || []} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                  <defs>
+                    <linearGradient id="gSales" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0d9488" stopOpacity={0.18} /><stop offset="100%" stopColor="#0d9488" stopOpacity={0} /></linearGradient>
+                    <linearGradient id="gPurch" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0f172a" stopOpacity={0.1} /><stop offset="100%" stopColor="#0f172a" stopOpacity={0} /></linearGradient>
+                  </defs>
+                  <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} dy={8} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} width={50} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area type="monotone" dataKey="sales" stroke="#0d9488" fill="url(#gSales)" strokeWidth={2.5} name="Sales" dot={false} />
+                  <Area type="monotone" dataKey="purchases" stroke="#0f172a" fill="url(#gPurch)" strokeWidth={1.5} name="Purchases" dot={false} strokeDasharray="4 4" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-slate-100 shadow-sm" data-testid="top-items-chart">
+          <CardHeader className="pb-0 pt-5 px-6">
+            <CardTitle className="font-heading text-sm font-bold text-navy-900 uppercase tracking-wide">Top Items</CardTitle>
+          </CardHeader>
+          <CardContent className="px-2 pb-4 pt-2">
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.top_items || []} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
+                  <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
+                  <YAxis dataKey="name" type="category" width={100} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#475569' }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Bar dataKey="total" fill="#0d9488" radius={[0, 6, 6, 0]} barSize={14} name="Spending" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Bottom row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="border border-slate-100 shadow-sm" data-testid="top-suppliers">
+          <CardHeader className="pb-3 pt-5 px-6">
+            <CardTitle className="font-heading text-sm font-bold text-navy-900 uppercase tracking-wide">Top Suppliers</CardTitle>
+          </CardHeader>
+          <CardContent className="px-6 pb-5">
+            <div className="space-y-2.5">
+              {(data.top_suppliers || []).map((s, i) => {
+                const maxVal = data.top_suppliers[0]?.total || 1;
+                return (
+                  <div key={i} className="group">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-medium text-navy-900">{s.name}</span>
+                      <span className="text-sm font-bold text-navy-900 tabular-nums">{fmt(s.total)}</span>
+                    </div>
+                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-teal-500 rounded-full transition-all duration-500" style={{ width: `${(s.total / maxVal * 100)}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+              {!data.top_suppliers?.length && <p className="text-sm text-slate-400 py-6 text-center">No supplier data yet</p>}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-slate-100 shadow-sm" data-testid="recent-alerts">
+          <CardHeader className="pb-3 pt-5 px-6">
+            <CardTitle className="font-heading text-sm font-bold text-navy-900 uppercase tracking-wide">Recent Alerts</CardTitle>
+          </CardHeader>
+          <CardContent className="px-6 pb-5">
+            <div className="space-y-2">
+              {(data.alerts || []).slice(0, 5).map((a, i) => (
+                <div key={i} className={`flex items-start gap-3 p-3 rounded-lg ${a.severity === 'high' ? 'bg-red-50/60' : a.severity === 'medium' ? 'bg-amber-50/60' : 'bg-slate-50'}`}>
+                  <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${a.severity === 'high' ? 'bg-red-500' : a.severity === 'medium' ? 'bg-amber-500' : 'bg-slate-400'}`} />
+                  <p className="text-xs text-slate-600 leading-relaxed">{a.message}</p>
+                </div>
+              ))}
+              {!data.alerts?.length && <p className="text-sm text-slate-400 py-6 text-center">No alerts</p>}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

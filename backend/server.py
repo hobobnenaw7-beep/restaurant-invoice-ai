@@ -1,88 +1,653 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
+import os, logging, uuid, base64, json, re
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
-
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone, timedelta
+from passlib.context import CryptContext
+from jose import jwt, JWTError
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
 app = FastAPI()
-
-# Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+SECRET_KEY = os.environ.get("JWT_SECRET", "fallback-secret")
+ALGORITHM = "HS256"
+security = HTTPBearer(auto_error=False)
+LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-class StatusCheckCreate(BaseModel):
-    client_name: str
-
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
-async def root():
-    return {"message": "Hello World"}
-
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
-
-# Include the router in the main app
-app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ==================== MODELS ====================
+
+class UserRegister(BaseModel):
+    email: str
+    password: str
+    name: str
+    restaurant_name: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class PurchaseCreate(BaseModel):
+    supplier_name: str
+    supplier_id: Optional[str] = None
+    invoice_number: str
+    invoice_date: str
+    items: List[Dict[str, Any]]
+    subtotal: float
+    tax: float
+    total: float
+
+class PurchaseUpdate(BaseModel):
+    supplier_name: Optional[str] = None
+    supplier_id: Optional[str] = None
+    invoice_number: Optional[str] = None
+    invoice_date: Optional[str] = None
+    items: Optional[List[Dict[str, Any]]] = None
+    subtotal: Optional[float] = None
+    tax: Optional[float] = None
+    total: Optional[float] = None
+
+class SalesCreate(BaseModel):
+    report_date: str
+    total_sales: float
+    items: Optional[List[Dict[str, Any]]] = []
+
+class SalesUpdate(BaseModel):
+    report_date: Optional[str] = None
+    total_sales: Optional[float] = None
+    items: Optional[List[Dict[str, Any]]] = None
+
+class SupplierCreate(BaseModel):
+    name: str
+    contact_person: Optional[str] = ""
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+    address: Optional[str] = ""
+
+class CanonicalItemCreate(BaseModel):
+    name: str
+    category: Optional[str] = ""
+
+class ItemAliasCreate(BaseModel):
+    canonical_item_id: str
+    alias_name: str
+
+class ChatMessageIn(BaseModel):
+    message: str
+
+class SettingsUpdate(BaseModel):
+    name: Optional[str] = None
+    restaurant_name: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+
+# ==================== AUTH UTILITIES ====================
+
+def hash_pw(pw):
+    return pwd_context.hash(pw)
+
+def verify_pw(pw, h):
+    return pwd_context.verify(pw, h)
+
+def make_token(uid):
+    return jwt.encode({"user_id": uid, "exp": datetime.now(timezone.utc) + timedelta(days=7)}, SECRET_KEY, algorithm=ALGORITHM)
+
+async def get_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if not credentials:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        user = await db.users.find_one({"id": payload.get("user_id")}, {"_id": 0})
+        if not user:
+            raise HTTPException(401, "User not found")
+        return user
+    except JWTError:
+        raise HTTPException(401, "Invalid token")
+
+# ==================== AUTH ROUTES ====================
+
+@api_router.post("/auth/register")
+async def register(data: UserRegister):
+    if await db.users.find_one({"email": data.email}):
+        raise HTTPException(400, "Email already registered")
+    rid = str(uuid.uuid4())
+    await db.restaurants.insert_one({"id": rid, "name": data.restaurant_name, "address": "", "phone": "", "created_at": datetime.now(timezone.utc).isoformat()})
+    uid = str(uuid.uuid4())
+    await db.users.insert_one({"id": uid, "email": data.email, "password_hash": hash_pw(data.password), "name": data.name, "restaurant_id": rid, "created_at": datetime.now(timezone.utc).isoformat()})
+    return {"token": make_token(uid), "user": {"id": uid, "email": data.email, "name": data.name, "restaurant_id": rid, "restaurant_name": data.restaurant_name}}
+
+@api_router.post("/auth/login")
+async def login(data: UserLogin):
+    u = await db.users.find_one({"email": data.email}, {"_id": 0})
+    if not u or not verify_pw(data.password, u["password_hash"]):
+        raise HTTPException(401, "Invalid credentials")
+    r = await db.restaurants.find_one({"id": u["restaurant_id"]}, {"_id": 0})
+    return {"token": make_token(u["id"]), "user": {"id": u["id"], "email": u["email"], "name": u["name"], "restaurant_id": u["restaurant_id"], "restaurant_name": r["name"] if r else ""}}
+
+@api_router.get("/auth/me")
+async def me(user=Depends(get_user)):
+    r = await db.restaurants.find_one({"id": user["restaurant_id"]}, {"_id": 0})
+    return {"id": user["id"], "email": user["email"], "name": user["name"], "restaurant_id": user["restaurant_id"], "restaurant_name": r["name"] if r else ""}
+
+# ==================== DASHBOARD ====================
+
+@api_router.get("/dashboard/summary")
+async def dashboard_summary(user=Depends(get_user)):
+    rid = user["restaurant_id"]
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+    month_start = now.strftime("%Y-%m-01")
+    prev_week_start = (now - timedelta(days=now.weekday() + 7)).strftime("%Y-%m-%d")
+    prev_week_end = (now - timedelta(days=now.weekday() + 1)).strftime("%Y-%m-%d")
+    prev_month = now.replace(day=1) - timedelta(days=1)
+    prev_month_start = prev_month.strftime("%Y-%m-01")
+    prev_month_end = prev_month.strftime("%Y-%m-%d")
+
+    purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    sales = await db.sales.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+
+    def sum_p(df, dt=None):
+        return sum(p["total"] for p in purchases if p.get("invoice_date", "") >= df and (not dt or p.get("invoice_date", "") <= dt))
+    def sum_s(df, dt=None):
+        return sum(s["total_sales"] for s in sales if s.get("report_date", "") >= df and (not dt or s.get("report_date", "") <= dt))
+
+    item_spend = {}
+    for p in purchases:
+        for it in p.get("items", []):
+            n = it.get("raw_name", "Unknown")
+            item_spend[n] = item_spend.get(n, 0) + float(it.get("total", 0))
+    top_items = [{"name": n, "total": round(t, 2)} for n, t in sorted(item_spend.items(), key=lambda x: -x[1])[:5]]
+
+    sup_spend = {}
+    for p in purchases:
+        n = p.get("supplier_name", "Unknown")
+        sup_spend[n] = sup_spend.get(n, 0) + p["total"]
+    top_suppliers = [{"name": n, "total": round(t, 2)} for n, t in sorted(sup_spend.items(), key=lambda x: -x[1])[:5]]
+
+    weekly_trends = []
+    for i in range(7, -1, -1):
+        ws = (now - timedelta(weeks=i, days=now.weekday())).strftime("%Y-%m-%d")
+        we = (now - timedelta(weeks=i, days=now.weekday() - 6)).strftime("%Y-%m-%d")
+        weekly_trends.append({"week": f"W{8-i}", "purchases": round(sum_p(ws, we), 2), "sales": round(sum_s(ws, we), 2)})
+
+    alerts = await db.alerts.find({"restaurant_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(10)
+
+    return {
+        "today_sales": round(sum_s(today), 2), "today_purchases": round(sum_p(today), 2),
+        "week_sales": round(sum_s(week_start), 2), "week_purchases": round(sum_p(week_start), 2),
+        "month_sales": round(sum_s(month_start), 2), "month_purchases": round(sum_p(month_start), 2),
+        "prev_week_sales": round(sum_s(prev_week_start, prev_week_end), 2),
+        "prev_week_purchases": round(sum_p(prev_week_start, prev_week_end), 2),
+        "prev_month_sales": round(sum_s(prev_month_start, prev_month_end), 2),
+        "prev_month_purchases": round(sum_p(prev_month_start, prev_month_end), 2),
+        "top_items": top_items, "top_suppliers": top_suppliers,
+        "weekly_trends": weekly_trends, "alerts": alerts
+    }
+
+# ==================== UPLOAD / EXTRACT ====================
+
+@api_router.post("/upload/extract")
+async def extract_document(file: UploadFile = File(...), document_type: str = Form(...), user=Depends(get_user)):
+    try:
+        content = await file.read()
+        mime = file.content_type or "image/jpeg"
+
+        if "pdf" in mime.lower():
+            import fitz
+            pdf_doc = fitz.open(stream=content, filetype="pdf")
+            page = pdf_doc[0]
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            img_bytes = pix.tobytes("png")
+            pdf_doc.close()
+            b64 = base64.b64encode(img_bytes).decode()
+        else:
+            b64 = base64.b64encode(content).decode()
+
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+
+        if document_type == "purchase_invoice":
+            prompt = """Extract from this purchase invoice image. Return ONLY valid JSON:
+{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{"raw_name":"","quantity":0,"unit":"","unit_price":0,"total":0}],"subtotal":0,"tax":0,"total":0}
+If a field is unreadable, use reasonable defaults. Return ONLY the JSON object."""
+        else:
+            prompt = """Extract from this sales report image. Return ONLY valid JSON:
+{"report_date":"YYYY-MM-DD","total_sales":0,"items":[{"menu_item":"","quantity":0,"revenue":0}]}
+If a field is unreadable, use reasonable defaults. Return ONLY the JSON object."""
+
+        chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant documents. Extract data accurately and return valid JSON only.").with_model("openai", "gpt-5.2")
+        image_content = ImageContent(image_base64=b64)
+        user_msg = UserMessage(text=prompt, file_contents=[image_content])
+        response = await chat.send_message(user_msg)
+
+        json_match = re.search(r'\{[\s\S]*\}', response)
+        if json_match:
+            extracted = json.loads(json_match.group())
+        else:
+            extracted = {"error": "Could not parse extraction results"}
+
+        return {"extracted_data": extracted, "document_type": document_type}
+    except Exception as e:
+        logger.error(f"Extraction error: {e}")
+        raise HTTPException(500, f"Extraction failed: {str(e)}")
+
+# ==================== PURCHASES CRUD ====================
+
+@api_router.get("/purchases")
+async def list_purchases(user=Depends(get_user), search: str = "", supplier: str = "", date_from: str = "", date_to: str = "", sort_by: str = "invoice_date", sort_order: str = "desc"):
+    query = {"restaurant_id": user["restaurant_id"]}
+    if search:
+        query["$or"] = [{"supplier_name": {"$regex": search, "$options": "i"}}, {"invoice_number": {"$regex": search, "$options": "i"}}]
+    if supplier:
+        query["supplier_name"] = {"$regex": supplier, "$options": "i"}
+    if date_from:
+        query.setdefault("invoice_date", {})["$gte"] = date_from
+    if date_to:
+        query.setdefault("invoice_date", {})["$lte"] = date_to
+    return await db.purchases.find(query, {"_id": 0}).sort(sort_by, -1 if sort_order == "desc" else 1).to_list(1000)
+
+@api_router.get("/purchases/{pid}")
+async def get_purchase(pid: str, user=Depends(get_user)):
+    p = await db.purchases.find_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Not found")
+    return p
+
+@api_router.post("/purchases")
+async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["restaurant_id"] = user["restaurant_id"]
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.purchases.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.put("/purchases/{pid}")
+async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)):
+    update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(400, "No data")
+    result = await db.purchases.update_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(404, "Not found")
+    return await db.purchases.find_one({"id": pid}, {"_id": 0})
+
+@api_router.delete("/purchases/{pid}")
+async def delete_purchase(pid: str, user=Depends(get_user)):
+    result = await db.purchases.delete_one({"id": pid, "restaurant_id": user["restaurant_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"status": "deleted"}
+
+# ==================== SALES CRUD ====================
+
+@api_router.get("/sales")
+async def list_sales(user=Depends(get_user), search: str = "", date_from: str = "", date_to: str = "", sort_by: str = "report_date", sort_order: str = "desc"):
+    query = {"restaurant_id": user["restaurant_id"]}
+    if date_from:
+        query.setdefault("report_date", {})["$gte"] = date_from
+    if date_to:
+        query.setdefault("report_date", {})["$lte"] = date_to
+    return await db.sales.find(query, {"_id": 0}).sort(sort_by, -1 if sort_order == "desc" else 1).to_list(1000)
+
+@api_router.get("/sales/{sid}")
+async def get_sale(sid: str, user=Depends(get_user)):
+    s = await db.sales.find_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Not found")
+    return s
+
+@api_router.post("/sales")
+async def create_sale(data: SalesCreate, user=Depends(get_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["restaurant_id"] = user["restaurant_id"]
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.sales.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.put("/sales/{sid}")
+async def update_sale(sid: str, data: SalesUpdate, user=Depends(get_user)):
+    update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(400, "No data")
+    await db.sales.update_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    return await db.sales.find_one({"id": sid}, {"_id": 0})
+
+@api_router.delete("/sales/{sid}")
+async def delete_sale(sid: str, user=Depends(get_user)):
+    result = await db.sales.delete_one({"id": sid, "restaurant_id": user["restaurant_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"status": "deleted"}
+
+# ==================== SUPPLIERS CRUD ====================
+
+@api_router.get("/suppliers")
+async def list_suppliers(user=Depends(get_user), search: str = ""):
+    query = {"restaurant_id": user["restaurant_id"]}
+    if search:
+        query["name"] = {"$regex": search, "$options": "i"}
+    suppliers = await db.suppliers.find(query, {"_id": 0}).to_list(1000)
+    purchases = await db.purchases.find({"restaurant_id": user["restaurant_id"]}, {"_id": 0, "supplier_name": 1, "total": 1}).to_list(10000)
+    for s in suppliers:
+        s["total_spending"] = round(sum(p["total"] for p in purchases if p.get("supplier_name") == s["name"]), 2)
+        s["invoice_count"] = sum(1 for p in purchases if p.get("supplier_name") == s["name"])
+    return suppliers
+
+@api_router.post("/suppliers")
+async def create_supplier(data: SupplierCreate, user=Depends(get_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["restaurant_id"] = user["restaurant_id"]
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.suppliers.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.put("/suppliers/{sid}")
+async def update_supplier(sid: str, data: SupplierCreate, user=Depends(get_user)):
+    await db.suppliers.update_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"$set": data.model_dump()})
+    return await db.suppliers.find_one({"id": sid}, {"_id": 0})
+
+@api_router.delete("/suppliers/{sid}")
+async def delete_supplier(sid: str, user=Depends(get_user)):
+    result = await db.suppliers.delete_one({"id": sid, "restaurant_id": user["restaurant_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"status": "deleted"}
+
+# ==================== ITEMS & ALIASES ====================
+
+@api_router.get("/items")
+async def list_items(user=Depends(get_user), search: str = ""):
+    query = {"restaurant_id": user["restaurant_id"]}
+    if search:
+        query["name"] = {"$regex": search, "$options": "i"}
+    items = await db.canonical_items.find(query, {"_id": 0}).to_list(1000)
+    for item in items:
+        item["aliases"] = await db.item_aliases.find({"canonical_item_id": item["id"], "restaurant_id": user["restaurant_id"]}, {"_id": 0}).to_list(100)
+    return items
+
+@api_router.post("/items")
+async def create_item(data: CanonicalItemCreate, user=Depends(get_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["restaurant_id"] = user["restaurant_id"]
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.canonical_items.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.put("/items/{iid}")
+async def update_item(iid: str, data: CanonicalItemCreate, user=Depends(get_user)):
+    await db.canonical_items.update_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"$set": data.model_dump()})
+    return await db.canonical_items.find_one({"id": iid}, {"_id": 0})
+
+@api_router.delete("/items/{iid}")
+async def delete_item(iid: str, user=Depends(get_user)):
+    await db.canonical_items.delete_one({"id": iid, "restaurant_id": user["restaurant_id"]})
+    await db.item_aliases.delete_many({"canonical_item_id": iid})
+    return {"status": "deleted"}
+
+@api_router.post("/aliases")
+async def create_alias(data: ItemAliasCreate, user=Depends(get_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["restaurant_id"] = user["restaurant_id"]
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.item_aliases.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.delete("/aliases/{aid}")
+async def delete_alias(aid: str, user=Depends(get_user)):
+    await db.item_aliases.delete_one({"id": aid, "restaurant_id": user["restaurant_id"]})
+    return {"status": "deleted"}
+
+# ==================== REPORTS ====================
+
+@api_router.get("/reports")
+async def get_reports(user=Depends(get_user), report_type: str = "weekly", date: str = ""):
+    rid = user["restaurant_id"]
+    now = datetime.now(timezone.utc)
+
+    if report_type == "weekly":
+        start = datetime.strptime(date, "%Y-%m-%d") if date else now - timedelta(days=now.weekday())
+        start_str = start.strftime("%Y-%m-%d")
+        end_str = (start + timedelta(days=6)).strftime("%Y-%m-%d")
+    elif report_type == "monthly":
+        start = datetime.strptime(date[:7] + "-01", "%Y-%m-%d") if date else now.replace(day=1)
+        start_str = start.strftime("%Y-%m-%d")
+        end = (start.replace(month=start.month + 1, day=1) if start.month < 12 else start.replace(year=start.year + 1, month=1, day=1)) - timedelta(days=1)
+        end_str = end.strftime("%Y-%m-%d")
+    else:
+        year = int(date) if date else now.year
+        start_str, end_str = f"{year}-01-01", f"{year}-12-31"
+
+    purchases = await db.purchases.find({"restaurant_id": rid, "invoice_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+    sales = await db.sales.find({"restaurant_id": rid, "report_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+
+    total_p = round(sum(p["total"] for p in purchases), 2)
+    total_s = round(sum(s["total_sales"] for s in sales), 2)
+
+    sup_spend = {}
+    for p in purchases:
+        n = p.get("supplier_name", "Unknown")
+        sup_spend[n] = sup_spend.get(n, 0) + p["total"]
+
+    item_spend = {}
+    for p in purchases:
+        for it in p.get("items", []):
+            n = it.get("raw_name", "Unknown")
+            item_spend[n] = item_spend.get(n, 0) + float(it.get("total", 0))
+
+    daily = {}
+    for p in purchases:
+        d = p.get("invoice_date", "")
+        daily.setdefault(d, {"date": d, "purchases": 0, "sales": 0})
+        daily[d]["purchases"] += p["total"]
+    for s in sales:
+        d = s.get("report_date", "")
+        daily.setdefault(d, {"date": d, "purchases": 0, "sales": 0})
+        daily[d]["sales"] += s["total_sales"]
+
+    alerts = await db.alerts.find({"restaurant_id": rid}, {"_id": 0}).to_list(100)
+
+    return {
+        "report_type": report_type, "date_range": {"start": start_str, "end": end_str},
+        "total_purchases": total_p, "total_sales": total_s, "profit": round(total_s - total_p, 2),
+        "spending_by_supplier": [{"name": n, "total": round(t, 2)} for n, t in sorted(sup_spend.items(), key=lambda x: -x[1])],
+        "top_items": [{"name": n, "total": round(t, 2)} for n, t in sorted(item_spend.items(), key=lambda x: -x[1])[:10]],
+        "daily_breakdown": sorted(daily.values(), key=lambda x: x["date"]),
+        "alerts": alerts, "purchase_count": len(purchases), "sales_count": len(sales)
+    }
+
+# ==================== ALERTS ====================
+
+@api_router.get("/alerts")
+async def list_alerts(user=Depends(get_user)):
+    return await db.alerts.find({"restaurant_id": user["restaurant_id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+
+@api_router.put("/alerts/{aid}/read")
+async def mark_alert_read(aid: str, user=Depends(get_user)):
+    await db.alerts.update_one({"id": aid, "restaurant_id": user["restaurant_id"]}, {"$set": {"is_read": True}})
+    return {"status": "ok"}
+
+# ==================== CHAT ====================
+
+@api_router.get("/chat/messages")
+async def get_chat_messages(user=Depends(get_user)):
+    return await db.chat_messages.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(100)
+
+@api_router.post("/chat")
+async def send_chat(data: ChatMessageIn, user=Depends(get_user)):
+    rid = user["restaurant_id"]
+    user_msg = {"id": str(uuid.uuid4()), "user_id": user["id"], "restaurant_id": rid, "role": "user", "content": data.message, "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.chat_messages.insert_one(user_msg)
+    user_msg.pop("_id", None)
+
+    purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    sales = await db.sales.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    suppliers = await db.suppliers.find({"restaurant_id": rid}, {"_id": 0}).to_list(100)
+    alerts = await db.alerts.find({"restaurant_id": rid}, {"_id": 0}).to_list(50)
+    now = datetime.now(timezone.utc)
+
+    # Build period-based summaries
+    week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+    month_start = now.strftime("%Y-%m-01")
+    year_start = now.strftime("%Y-01-01")
+    prev_week_start = (now - timedelta(days=now.weekday() + 7)).strftime("%Y-%m-%d")
+    prev_week_end = (now - timedelta(days=now.weekday() + 1)).strftime("%Y-%m-%d")
+    prev_month = now.replace(day=1) - timedelta(days=1)
+    prev_month_start = prev_month.strftime("%Y-%m-01")
+    prev_month_end = prev_month.strftime("%Y-%m-%d")
+
+    def sum_p(df, dt=None):
+        return sum(p["total"] for p in purchases if p.get("invoice_date", "") >= df and (not dt or p.get("invoice_date", "") <= dt))
+    def sum_s(df, dt=None):
+        return sum(s["total_sales"] for s in sales if s.get("report_date", "") >= df and (not dt or s.get("report_date", "") <= dt))
+
+    # Item price tracking for alerts
+    item_prices = {}
+    for p in sorted(purchases, key=lambda x: x.get("invoice_date", "")):
+        for it in p.get("items", []):
+            name = it.get("raw_name", "Unknown")
+            price = float(it.get("unit_price", 0))
+            if price > 0:
+                item_prices.setdefault(name, []).append({"price": price, "date": p.get("invoice_date", "")})
+
+    price_changes = []
+    for name, prices in item_prices.items():
+        if len(prices) >= 2:
+            old, new = prices[-2]["price"], prices[-1]["price"]
+            if old > 0:
+                pct = ((new - old) / old) * 100
+                if abs(pct) > 5:
+                    price_changes.append({"item": name, "old": old, "new": new, "change_pct": round(pct, 1)})
+
+    sup_spend = {}
+    for p in purchases:
+        n = p.get("supplier_name", "Unknown")
+        sup_spend[n] = sup_spend.get(n, 0) + p["total"]
+    top_suppliers = sorted(sup_spend.items(), key=lambda x: -x[1])[:5]
+
+    item_spend = {}
+    for p in purchases:
+        for it in p.get("items", []):
+            n = it.get("raw_name", "Unknown")
+            item_spend[n] = item_spend.get(n, 0) + float(it.get("total", 0))
+    top_items = sorted(item_spend.items(), key=lambda x: -x[1])[:10]
+
+    context = f"""RESTAURANT FINANCIAL DATA (as of {now.strftime('%A, %B %d, %Y')}):
+
+WEEKLY SNAPSHOT (This Week starting {week_start}):
+- Purchases: ${sum_p(week_start):,.2f} | Sales: ${sum_s(week_start):,.2f}
+- Gross Margin: ${sum_s(week_start) - sum_p(week_start):,.2f}
+
+PREVIOUS WEEK ({prev_week_start} to {prev_week_end}):
+- Purchases: ${sum_p(prev_week_start, prev_week_end):,.2f} | Sales: ${sum_s(prev_week_start, prev_week_end):,.2f}
+
+MONTHLY SNAPSHOT (This Month starting {month_start}):
+- Purchases: ${sum_p(month_start):,.2f} | Sales: ${sum_s(month_start):,.2f}
+- Gross Margin: ${sum_s(month_start) - sum_p(month_start):,.2f}
+
+PREVIOUS MONTH ({prev_month_start} to {prev_month_end}):
+- Purchases: ${sum_p(prev_month_start, prev_month_end):,.2f} | Sales: ${sum_s(prev_month_start, prev_month_end):,.2f}
+
+YEAR-TO-DATE ({year_start}):
+- Total Purchases: ${sum_p(year_start):,.2f} | Total Sales: ${sum_s(year_start):,.2f}
+- Net Margin: ${sum_s(year_start) - sum_p(year_start):,.2f}
+
+ALL-TIME OVERVIEW:
+- {len(purchases)} purchase invoices totaling ${sum(p['total'] for p in purchases):,.2f}
+- {len(sales)} sales reports totaling ${sum(s['total_sales'] for s in sales):,.2f}
+- {len(suppliers)} active suppliers
+
+TOP SUPPLIERS BY SPEND: {json.dumps([{"name": n, "total": round(t, 2)} for n, t in top_suppliers])}
+TOP ITEMS BY COST: {json.dumps([{"name": n, "total": round(t, 2)} for n, t in top_items])}
+RECENT PRICE CHANGES (>5%): {json.dumps(price_changes[:10]) if price_changes else "None detected"}
+ACTIVE ALERTS: {len([a for a in alerts if not a.get('is_read')])}
+RECENT PURCHASES: {json.dumps([{'date': p['invoice_date'], 'supplier': p['supplier_name'], 'total': p['total']} for p in sorted(purchases, key=lambda x: x.get('invoice_date',''), reverse=True)[:8]])}
+RECENT SALES: {json.dumps([{'date': s['report_date'], 'total': s['total_sales']} for s in sorted(sales, key=lambda x: x.get('report_date',''), reverse=True)[:8]])}"""
+
+    system_msg = f"""You are Restaurant Accountant AI, a senior financial analyst for restaurants. Follow these rules strictly:
+
+1. STYLE: Be concise and data-driven. Lead with key numbers. Use short paragraphs and bullet points.
+2. FORMAT: Use **bold** for key figures and metrics. Use bullet points for lists. Keep responses under 200 words unless the question requires detail.
+3. PERIODS: Always reference specific time periods (this week, this month, YTD, etc.) when discussing finances. Compare to previous periods when relevant.
+4. INSIGHTS: Don't just report numbers - provide brief actionable insights (e.g., "Spending is up 12% WoW - driven mainly by produce costs").
+5. CURRENCY: Always format dollar amounts with commas (e.g., $1,234.56).
+6. If you don't have enough data to answer precisely, say so honestly and suggest what data would help.
+
+{context}"""
+
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage as LlmUserMessage
+        chat = LlmChat(api_key=LLM_KEY, session_id=f"chat-{user['id']}-{uuid.uuid4()}", system_message=system_msg).with_model("openai", "gpt-5.2")
+        response = await chat.send_message(LlmUserMessage(text=data.message))
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        response = f"I'm having trouble connecting to the AI service right now. Please try again later."
+
+    asst_msg = {"id": str(uuid.uuid4()), "user_id": user["id"], "restaurant_id": rid, "role": "assistant", "content": response, "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.chat_messages.insert_one(asst_msg)
+    asst_msg.pop("_id", None)
+    return {"user_message": user_msg, "assistant_message": asst_msg}
+
+@api_router.delete("/chat/messages")
+async def clear_chat(user=Depends(get_user)):
+    await db.chat_messages.delete_many({"user_id": user["id"]})
+    return {"status": "cleared"}
+
+# ==================== SETTINGS ====================
+
+@api_router.get("/settings")
+async def get_settings(user=Depends(get_user)):
+    r = await db.restaurants.find_one({"id": user["restaurant_id"]}, {"_id": 0})
+    return {"user": {"id": user["id"], "email": user["email"], "name": user["name"]}, "restaurant": r}
+
+@api_router.put("/settings")
+async def update_settings(data: SettingsUpdate, user=Depends(get_user)):
+    if data.name:
+        await db.users.update_one({"id": user["id"]}, {"$set": {"name": data.name}})
+    if data.restaurant_name:
+        await db.restaurants.update_one({"id": user["restaurant_id"]}, {"$set": {"name": data.restaurant_name}})
+    if data.address is not None:
+        await db.restaurants.update_one({"id": user["restaurant_id"]}, {"$set": {"address": data.address}})
+    if data.phone is not None:
+        await db.restaurants.update_one({"id": user["restaurant_id"]}, {"$set": {"phone": data.phone}})
+    return await get_settings(user)
+
+# ==================== SEED ====================
+
+@api_router.post("/seed")
+async def seed_data(user=Depends(get_user)):
+    from seed_data import generate_seed_data
+    await generate_seed_data(db, user["restaurant_id"])
+    return {"status": "Seed data created successfully"}
+
+# ==================== APP SETUP ====================
+
+app.include_router(api_router)
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','), allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
