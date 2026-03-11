@@ -57,6 +57,11 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Added "Add Sale" button on Sales page with dialog: upload zone + manual form + menu items CRUD
   - AI extraction (GPT-5.2 Vision) available inline via Browse → Extract flow
 
+- [x] **Smart Alerts System (March 11, 2026)**:
+  - Real-time alert engine detecting: low stock ingredients, cost increases (>5%), profit margin drops (>3pp)
+  - Dashboard "Smart Alerts" section with color-coded cards (amber=stock, red=cost, violet=margin), severity badges, type count summary
+  - Chat AI enhanced with smart alerts context for answering stock/cost/margin questions
+
 ## Credentials
 - Test: test@demo.com / password123
 
