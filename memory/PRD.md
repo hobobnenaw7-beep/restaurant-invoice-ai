@@ -66,6 +66,11 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Backend `/api/prices/intelligence` endpoint: per-item per-supplier avg prices, best supplier detection, savings %, weekly price trends, >10% price alerts
   - Reports page: Price Trends line chart with item selector, Supplier Price Comparison matrix table with BEST labels and savings %, Price Increase Alerts banner (>10%)
 
+- [x] **Layout & Multi-Upload Enhancement (March 11, 2026)**:
+  - Sidebar: 7 main nav items (Dashboard, Purchases, Sales, Suppliers, Items, Reports, Chat Assistant) + Settings pinned at bottom
+  - Upload Center removed as standalone page
+  - Purchases/Sales Add dialogs: 3 upload options (Take Photo with camera capture, Upload Image, Upload PDF), file preview for images, Extract Data via OCR/AI, manual form fields
+
 ## Credentials
 - Test: test@demo.com / password123
 
