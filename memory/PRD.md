@@ -43,6 +43,14 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Clear conversation functionality
   - Message persistence via MongoDB
 
+- [x] **Reports Page — Enhanced (March 11, 2026)**:
+  - Weekly/Monthly/Yearly tabs with date picker
+  - 4 KPI cards (Revenue, Purchases, Profit, Gross Margin) with % change vs previous period
+  - Revenue vs Purchases trend chart (area chart)
+  - Supplier Spending table (name, total, invoices, avg/invoice)
+  - Price Changes table (item, previous, current, % change with directional arrows)
+  - PDF download (reportlab) and Excel download (openpyxl) with multi-sheet reports
+
 ## Credentials
 - Test: test@demo.com / password123
 
@@ -53,6 +61,5 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - Enhance CRUD UI on Purchases/Sales/Suppliers pages
 
 ### P2
-- Flesh out Reports page with charts (weekly/monthly/yearly)
 - Implement Settings page functionality
 - Refactoring: extract backend routes into separate files
