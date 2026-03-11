@@ -51,6 +51,12 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Price Changes table (item, previous, current, % change with directional arrows)
   - PDF download (reportlab) and Excel download (openpyxl) with multi-sheet reports
 
+- [x] **Upload Center Removed — Inline Upload (March 11, 2026)**:
+  - Removed Upload Center page, route, and sidebar link
+  - Added "Add Purchase" button on Purchases page with dialog: upload zone + manual form + line items CRUD
+  - Added "Add Sale" button on Sales page with dialog: upload zone + manual form + menu items CRUD
+  - AI extraction (GPT-5.2 Vision) available inline via Browse → Extract flow
+
 ## Credentials
 - Test: test@demo.com / password123
 
