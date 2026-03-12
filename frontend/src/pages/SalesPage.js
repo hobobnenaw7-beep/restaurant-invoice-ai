@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import {
   Loader2, Eye, Trash2, ChevronUp, ChevronDown,
   DollarSign, Plus, Upload, Sparkles, FileText, X,
-  Camera, Image as ImageIcon, FileUp
+  Camera, Image as ImageIcon, FileUp, Sheet
 } from 'lucide-react';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
@@ -42,6 +42,7 @@ export default function SalesPage() {
   const fileImageRef = useRef(null);
   const filePdfRef = useRef(null);
   const fileCameraRef = useRef(null);
+  const fileExcelRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,6 +100,11 @@ export default function SalesPage() {
     setUploadPreview(null);
   };
 
+  const isExcelFile = (f) => {
+    const name = (f?.name || '').toLowerCase();
+    return name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv');
+  };
+
   const handleExtract = async () => {
     if (!uploadFile) return;
     setExtracting(true);
@@ -106,14 +112,16 @@ export default function SalesPage() {
       const formData = new FormData();
       formData.append('file', uploadFile);
       formData.append('document_type', 'sales_report');
-      const res = await api.post('/upload/extract', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
+      const endpoint = isExcelFile(uploadFile) ? '/upload/parse-excel' : '/upload/extract';
+      const res = await api.post(endpoint, formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
       const d = res.data.extracted_data;
       setForm({
         report_date: d.report_date || new Date().toISOString().split('T')[0],
         total_sales: parseFloat(d.total_sales) || 0,
         items: (d.items || []).map(it => ({ menu_item: it.menu_item || '', quantity: parseFloat(it.quantity) || 0, revenue: parseFloat(it.revenue) || 0 })),
       });
-      toast.success('Sales data extracted! Review the fields below and save.');
+      const msg = res.data.message || `Extracted ${res.data.row_count || 'all'} items. Review and save.`;
+      toast.success(msg);
     } catch (err) {
       toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.'));
     } finally { setExtracting(false); }
@@ -248,11 +256,11 @@ export default function SalesPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0">
-                      {uploadFile.type.startsWith('image/') ? <ImageIcon className="w-4 h-4 text-teal-600" /> : <FileText className="w-4 h-4 text-teal-600" />}
+                      {uploadFile.type.startsWith('image/') ? <ImageIcon className="w-4 h-4 text-teal-600" /> : isExcelFile(uploadFile) ? <Sheet className="w-4 h-4 text-teal-600" /> : <FileText className="w-4 h-4 text-teal-600" />}
                     </div>
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-navy-900 truncate">{uploadFile.name}</p>
-                      <p className="text-[10px] text-slate-400">{(uploadFile.size / 1024).toFixed(0)} KB &middot; {uploadFile.type.split('/')[1]?.toUpperCase()}</p>
+                      <p className="text-[10px] text-slate-400">{(uploadFile.size / 1024).toFixed(0)} KB &middot; {isExcelFile(uploadFile) ? uploadFile.name.split('.').pop().toUpperCase() : uploadFile.type.split('/')[1]?.toUpperCase()}</p>
                     </div>
                   </div>
                   <div className="flex gap-2 flex-shrink-0">
@@ -281,7 +289,7 @@ export default function SalesPage() {
                     <p className="text-[10px] text-slate-400">AI will extract date, items, and totals automatically</p>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-2" data-testid="sale-upload-options">
+                <div className="grid grid-cols-4 gap-2" data-testid="sale-upload-options">
                   <button
                     onClick={() => fileCameraRef.current?.click()}
                     className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group"
@@ -306,12 +314,21 @@ export default function SalesPage() {
                     <FileUp className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" />
                     <span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload PDF</span>
                   </button>
+                  <button
+                    onClick={() => fileExcelRef.current?.click()}
+                    className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group"
+                    data-testid="sale-upload-excel-btn"
+                  >
+                    <Sheet className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" />
+                    <span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload Excel</span>
+                  </button>
                 </div>
               </div>
             )}
             <input ref={fileCameraRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
             <input ref={fileImageRef} type="file" className="hidden" accept="image/png,image/jpeg,image/jpg,image/webp" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
             <input ref={filePdfRef} type="file" className="hidden" accept=".pdf,application/pdf" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
+            <input ref={fileExcelRef} type="file" className="hidden" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" onChange={(e) => handleFileSelect(e.target.files?.[0])} data-testid="sale-excel-input" />
           </div>
 
           <Separator />

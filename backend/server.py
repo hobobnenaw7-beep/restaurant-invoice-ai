@@ -355,6 +355,159 @@ async def dashboard_summary(user=Depends(get_user)):
 
 # ==================== UPLOAD / EXTRACT ====================
 
+@api_router.post("/upload/parse-excel")
+async def parse_excel(file: UploadFile = File(...), document_type: str = Form("purchase_invoice"), user=Depends(get_user)):
+    """Parse Excel/CSV files and extract purchase or sales data."""
+    import openpyxl, csv as csv_mod
+    try:
+        content = await file.read()
+        fname = (file.filename or "").lower()
+        rows = []
+
+        if fname.endswith('.csv'):
+            text = content.decode('utf-8', errors='replace')
+            reader = csv_mod.reader(text.strip().splitlines())
+            for r in reader:
+                rows.append(r)
+        elif fname.endswith('.xlsx') or fname.endswith('.xls'):
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            ws = wb.active
+            for r in ws.iter_rows(values_only=True):
+                rows.append([str(c) if c is not None else '' for c in r])
+            wb.close()
+        else:
+            raise HTTPException(400, "Unsupported file type. Use .xlsx, .xls, or .csv")
+
+        if len(rows) < 2:
+            raise HTTPException(400, "File has no data rows")
+
+        # Normalize headers
+        headers_raw = [str(h).strip().lower().replace(' ', '_') for h in rows[0]]
+        col_map = {}
+        for i, h in enumerate(headers_raw):
+            for key, aliases in {
+                'supplier': ['supplier', 'supplier_name', 'vendor', 'vendor_name', 'from'],
+                'date': ['date', 'invoice_date', 'inv_date', 'purchase_date', 'order_date', 'report_date'],
+                'invoice_number': ['invoice', 'invoice_number', 'inv_no', 'invoice_no', 'inv_number', 'invoice#', 'inv#', 'ref', 'reference'],
+                'item_name': ['item', 'item_name', 'product', 'product_name', 'description', 'raw_name', 'name', 'menu_item', 'ingredient'],
+                'quantity': ['quantity', 'qty', 'count'],
+                'unit': ['unit', 'uom', 'measure', 'unit_of_measure'],
+                'unit_price': ['price', 'unit_price', 'unit_cost', 'cost', 'rate'],
+                'total': ['total', 'line_total', 'subtotal', 'ext_price', 'extended_price', 'revenue', 'amount'],
+            }.items():
+                if h in aliases and key not in col_map:
+                    col_map[key] = i
+
+        data_rows = rows[1:]
+
+        def safe_float(val):
+            try:
+                s = str(val).replace('$', '').replace(',', '').strip()
+                return float(s) if s else 0
+            except (ValueError, TypeError):
+                return 0
+
+        def safe_date(val):
+            s = str(val).strip()
+            for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%m-%d-%Y', '%d-%m-%Y', '%Y/%m/%d']:
+                try:
+                    return datetime.strptime(s[:10], fmt).strftime('%Y-%m-%d')
+                except (ValueError, TypeError):
+                    continue
+            return datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+        if document_type == "purchase_invoice":
+            # Group by supplier + date + invoice to create purchases
+            items_parsed = []
+            for row in data_rows:
+                if len(row) <= max(col_map.values(), default=0):
+                    row.extend([''] * (max(col_map.values(), default=0) + 1 - len(row)))
+                item_name = row[col_map['item_name']].strip() if 'item_name' in col_map else ''
+                if not item_name:
+                    continue
+                qty = safe_float(row[col_map['quantity']]) if 'quantity' in col_map else 1
+                up = safe_float(row[col_map['unit_price']]) if 'unit_price' in col_map else 0
+                tot = safe_float(row[col_map['total']]) if 'total' in col_map else (qty * up)
+                if tot == 0 and qty > 0 and up > 0:
+                    tot = qty * up
+                if up == 0 and tot > 0 and qty > 0:
+                    up = tot / qty
+
+                items_parsed.append({
+                    "supplier": row[col_map['supplier']].strip() if 'supplier' in col_map else '',
+                    "date": safe_date(row[col_map['date']]) if 'date' in col_map else datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+                    "invoice_number": row[col_map['invoice_number']].strip() if 'invoice_number' in col_map else '',
+                    "raw_name": item_name,
+                    "quantity": qty,
+                    "unit": row[col_map['unit']].strip() if 'unit' in col_map else '',
+                    "unit_price": round(up, 2),
+                    "total": round(tot, 2),
+                })
+
+            # Group into purchases by supplier+date+invoice
+            groups = {}
+            for it in items_parsed:
+                key = (it['supplier'] or 'Unknown', it['date'], it['invoice_number'])
+                groups.setdefault(key, []).append(it)
+
+            if not groups and items_parsed:
+                groups[('Unknown', items_parsed[0]['date'], '')] = items_parsed
+
+            # If only one group or no grouping columns, return single purchase
+            if len(groups) <= 1:
+                all_items = [it for items in groups.values() for it in items]
+                first = all_items[0] if all_items else {}
+                subtotal = round(sum(it['total'] for it in all_items), 2)
+                return {"extracted_data": {
+                    "supplier_name": first.get('supplier', ''),
+                    "invoice_date": first.get('date', datetime.now(timezone.utc).strftime('%Y-%m-%d')),
+                    "invoice_number": first.get('invoice_number', ''),
+                    "items": [{"raw_name": it['raw_name'], "quantity": it['quantity'], "unit": it['unit'], "unit_price": it['unit_price'], "total": it['total']} for it in all_items],
+                    "subtotal": subtotal, "tax": 0, "total": subtotal,
+                }, "document_type": document_type, "row_count": len(all_items)}
+            else:
+                # Multiple purchases - return first one and indicate more
+                first_key = list(groups.keys())[0]
+                first_items = groups[first_key]
+                subtotal = round(sum(it['total'] for it in first_items), 2)
+                return {"extracted_data": {
+                    "supplier_name": first_key[0],
+                    "invoice_date": first_key[1],
+                    "invoice_number": first_key[2],
+                    "items": [{"raw_name": it['raw_name'], "quantity": it['quantity'], "unit": it['unit'], "unit_price": it['unit_price'], "total": it['total']} for it in first_items],
+                    "subtotal": subtotal, "tax": 0, "total": subtotal,
+                }, "document_type": document_type, "row_count": len(items_parsed), "purchase_groups": len(groups),
+                   "message": f"Found {len(groups)} purchases with {len(items_parsed)} total items. Showing the first purchase."}
+        else:
+            # Sales report
+            items_parsed = []
+            for row in data_rows:
+                if len(row) <= max(col_map.values(), default=0):
+                    row.extend([''] * (max(col_map.values(), default=0) + 1 - len(row)))
+                item_name = row[col_map['item_name']].strip() if 'item_name' in col_map else ''
+                if not item_name:
+                    continue
+                qty = safe_float(row[col_map['quantity']]) if 'quantity' in col_map else 1
+                revenue = safe_float(row[col_map['total']]) if 'total' in col_map else 0
+                items_parsed.append({"menu_item": item_name, "quantity": qty, "revenue": round(revenue, 2)})
+
+            total_sales = round(sum(it['revenue'] for it in items_parsed), 2)
+            report_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            if 'date' in col_map and data_rows:
+                report_date = safe_date(data_rows[0][col_map['date']])
+
+            return {"extracted_data": {
+                "report_date": report_date,
+                "total_sales": total_sales,
+                "items": items_parsed,
+            }, "document_type": document_type, "row_count": len(items_parsed)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Excel parse error: {e}")
+        raise HTTPException(500, f"Failed to parse file: {str(e)}")
+
 @api_router.post("/upload/extract")
 async def extract_document(file: UploadFile = File(...), document_type: str = Form(...), user=Depends(get_user)):
     try:
