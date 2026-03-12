@@ -80,7 +80,7 @@ function RawMaterialsTab({ api }) {
   };
 
   const handleSave = async () => {
-    if (!form.supplier_name.trim()) { toast.error('Supplier name is required'); return; }
+    if (!form.supplier_name.trim()) { toast.error('Vendor name is required'); return; }
     setSaving(true);
     try { await api.post('/purchases', form); toast.success('Saved'); setShowAdd(false); load(); }
     catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
@@ -90,7 +90,7 @@ function RawMaterialsTab({ api }) {
   return (
     <div className="space-y-4" data-testid="raw-materials-tab">
       <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" /><Input className="pl-9 h-9 text-sm" placeholder="Search supplier or invoice..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="search-raw-materials" /></div>
+        <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" /><Input className="pl-9 h-9 text-sm" placeholder="Search vendor or invoice..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="search-raw-materials" /></div>
         <Input type="date" className="w-36 h-9 text-xs" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
         <Input type="date" className="w-36 h-9 text-xs" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
         <Button onClick={openAdd} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs" data-testid="add-raw-material-btn"><Plus className="w-3.5 h-3.5 mr-1.5" /> Add</Button>
@@ -102,7 +102,7 @@ function RawMaterialsTab({ api }) {
         : <div className="overflow-x-auto">
           <Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
             <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('invoice_date')}>Date <SI field="invoice_date" /></TableHead>
-            <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('supplier_name')}>Supplier <SI field="supplier_name" /></TableHead>
+            <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('supplier_name')}>Vendor <SI field="supplier_name" /></TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Invoice #</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Items</TableHead>
             <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total')}>Total <SI field="total" /></TableHead>
@@ -131,7 +131,7 @@ function RawMaterialsTab({ api }) {
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-heading text-lg">Purchase Details</DialogTitle></DialogHeader>
           {selected && <div className="space-y-5">
-            <div className="grid grid-cols-3 gap-4">{[['Supplier', selected.supplier_name], ['Invoice #', selected.invoice_number], ['Date', selected.invoice_date]].map(([l, v]) => <div key={l}><p className="text-[10px] font-bold text-slate-400 uppercase">{l}</p><p className="text-sm font-semibold text-navy-900 mt-0.5">{v}</p></div>)}</div>
+            <div className="grid grid-cols-3 gap-4">{[['Vendor', selected.supplier_name], ['Invoice #', selected.invoice_number], ['Date', selected.invoice_date]].map(([l, v]) => <div key={l}><p className="text-[10px] font-bold text-slate-400 uppercase">{l}</p><p className="text-sm font-semibold text-navy-900 mt-0.5">{v}</p></div>)}</div>
             <Separator />
             <Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80"><TableHead className="text-[10px] font-bold text-slate-500 uppercase">Item</TableHead><TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Qty</TableHead><TableHead className="text-[10px] font-bold text-slate-500 uppercase">Unit</TableHead><TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Price</TableHead><TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Total</TableHead></TableRow></TableHeader><TableBody>
               {(selected.items || []).map((it, i) => <TableRow key={i} className={i % 2 === 0 ? '' : 'bg-slate-50/40'}><TableCell className="text-sm font-medium">{it.raw_name}</TableCell><TableCell className="text-sm text-right tabular-nums">{it.quantity}</TableCell><TableCell className="text-sm text-slate-500">{it.unit}</TableCell><TableCell className="text-sm text-right tabular-nums">{fmt(it.unit_price)}</TableCell><TableCell className="text-sm text-right font-semibold tabular-nums">{fmt(it.total)}</TableCell></TableRow>)}
@@ -147,7 +147,7 @@ function RawMaterialsTab({ api }) {
           <DialogHeader><DialogTitle className="font-heading text-lg">Add Raw Material Purchase</DialogTitle></DialogHeader>
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-4" data-testid="raw-material-upload-zone">
             {uploadFile ? <div className="space-y-3"><div className="flex items-center justify-between"><div className="flex items-center gap-2.5 min-w-0"><div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0">{uploadFile.type.startsWith('image/') ? <ImageIcon className="w-4 h-4 text-teal-600" /> : isExcelFile(uploadFile) ? <Sheet className="w-4 h-4 text-teal-600" /> : <FileText className="w-4 h-4 text-teal-600" />}</div><div className="min-w-0"><p className="text-xs font-semibold text-navy-900 truncate">{uploadFile.name}</p><p className="text-[10px] text-slate-400">{(uploadFile.size / 1024).toFixed(0)} KB</p></div></div><div className="flex gap-2 flex-shrink-0"><Button size="sm" variant="outline" className="h-8 text-xs" onClick={clearFile}><X className="w-3 h-3 mr-1" /> Remove</Button><Button size="sm" className="h-8 text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={handleExtract} disabled={extracting} data-testid="raw-material-extract-btn">{extracting ? <><Loader2 className="w-3 h-3 animate-spin mr-1" /> Extracting...</> : <><Sparkles className="w-3 h-3 mr-1" /> Extract Data</>}</Button></div></div>{uploadPreview && <div className="rounded-lg overflow-hidden border border-slate-200 max-h-40"><img src={uploadPreview} alt="Preview" className="w-full h-full object-contain max-h-40 bg-white" /></div>}</div>
-            : <div className="space-y-3"><div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0"><Upload className="w-4 h-4 text-teal-600" /></div><div><p className="text-xs font-semibold text-navy-900">Upload a purchase invoice</p><p className="text-[10px] text-slate-400">AI will extract supplier, items, and totals</p></div></div>
+            : <div className="space-y-3"><div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0"><Upload className="w-4 h-4 text-teal-600" /></div><div><p className="text-xs font-semibold text-navy-900">Upload a purchase invoice</p><p className="text-[10px] text-slate-400">AI will extract vendor, items, and totals</p></div></div>
               <div className="grid grid-cols-4 gap-2" data-testid="raw-material-upload-options">
                 <button onClick={() => fileCameraRef.current?.click()} className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group" data-testid="rm-take-photo-btn"><Camera className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" /><span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Take Photo</span></button>
                 <button onClick={() => fileImageRef.current?.click()} className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group" data-testid="rm-upload-image-btn"><ImageIcon className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" /><span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload Image</span></button>
@@ -162,7 +162,7 @@ function RawMaterialsTab({ api }) {
           <Separator />
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Supplier *</Label><Input className="mt-1 h-9 text-sm" value={form.supplier_name} onChange={(e) => updateField('supplier_name', e.target.value)} placeholder="Supplier name" data-testid="form-supplier" /></div>
+              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Vendor *</Label><Input className="mt-1 h-9 text-sm" value={form.supplier_name} onChange={(e) => updateField('supplier_name', e.target.value)} placeholder="Vendor name" data-testid="form-vendor" /></div>
               <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Invoice #</Label><Input className="mt-1 h-9 text-sm" value={form.invoice_number} onChange={(e) => updateField('invoice_number', e.target.value)} placeholder="INV-001" data-testid="form-invoice-number" /></div>
               <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date</Label><Input className="mt-1 h-9 text-sm" type="date" value={form.invoice_date} onChange={(e) => updateField('invoice_date', e.target.value)} data-testid="form-invoice-date" /></div>
             </div>

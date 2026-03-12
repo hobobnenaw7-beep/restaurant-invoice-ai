@@ -12,9 +12,9 @@ import { Search, Plus, Edit, Trash2, Loader2, Users } from 'lucide-react';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}` : '$0'; }
 
-export default function SuppliersPage() {
+export default function VendorsPage() {
   const { api } = useAuth();
-  const [suppliers, setSuppliers] = useState([]);
+  const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -24,7 +24,7 @@ export default function SuppliersPage() {
 
   const load = async () => {
     setLoading(true);
-    try { const res = await api.get('/suppliers', { params: { search } }); setSuppliers(res.data); }
+    try { const res = await api.get('/suppliers', { params: { search } }); setVendors(res.data); }
     catch { toast.error('Failed to load'); }
     finally { setLoading(false); }
   };
@@ -46,42 +46,42 @@ export default function SuppliersPage() {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this supplier?')) return;
+    if (!window.confirm('Delete this vendor?')) return;
     try { await api.delete(`/suppliers/${id}`); toast.success('Deleted'); load(); } catch { toast.error('Failed'); }
   };
 
   return (
-    <div className="space-y-6 max-w-[1400px]" data-testid="suppliers-page">
+    <div className="space-y-6 max-w-[1400px]" data-testid="vendors-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-navy-900 tracking-tight">Suppliers</h1>
+          <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-navy-900 tracking-tight">Vendors</h1>
           <p className="text-sm text-slate-400 mt-1">Manage vendors and track spending</p>
         </div>
-        <Button onClick={openNew} className="bg-navy-900 hover:bg-navy-800 text-white h-10 px-5" data-testid="add-supplier-btn">
-          <Plus className="w-4 h-4 mr-2" /> Add Supplier
+        <Button onClick={openNew} className="bg-navy-900 hover:bg-navy-800 text-white h-10 px-5" data-testid="add-vendor-btn">
+          <Plus className="w-4 h-4 mr-2" /> Add Vendor
         </Button>
       </div>
 
       <div className="relative max-w-sm">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        <Input className="pl-9 h-10" placeholder="Search suppliers..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="search-suppliers" />
+        <Input className="pl-9 h-10" placeholder="Search vendors..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="search-vendors" />
       </div>
 
       <Card className="border border-slate-100 shadow-sm overflow-hidden">
         {loading ? (
           <div className="p-6 space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-14 w-full rounded-lg" />)}</div>
-        ) : suppliers.length === 0 ? (
+        ) : vendors.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4"><Users className="w-6 h-6 text-slate-300" /></div>
-            <h3 className="font-heading text-base font-bold text-navy-900 mb-1">No suppliers yet</h3>
-            <p className="text-sm text-slate-400">Add your first supplier to start tracking.</p>
+            <h3 className="font-heading text-base font-bold text-navy-900 mb-1">No vendors yet</h3>
+            <p className="text-sm text-slate-400">Add your first vendor to start tracking.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Supplier</TableHead>
+                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Vendor</TableHead>
                   <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Contact</TableHead>
                   <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Phone</TableHead>
                   <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider text-right">Total Spent</TableHead>
@@ -90,7 +90,7 @@ export default function SuppliersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {suppliers.map((s, i) => (
+                {vendors.map((s, i) => (
                   <TableRow key={s.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`}>
                     <TableCell>
                       <div className="flex items-center gap-3">
@@ -118,9 +118,9 @@ export default function SuppliersPage() {
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle className="font-heading text-lg">{editing ? 'Edit Supplier' : 'New Supplier'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-heading text-lg">{editing ? 'Edit Vendor' : 'New Vendor'}</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
-            <div><Label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Name</Label><Input className="mt-1.5 h-10" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="input-supplier-name" /></div>
+            <div><Label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Vendor Name</Label><Input className="mt-1.5 h-10" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="input-vendor-name" /></div>
             <div><Label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Contact Person</Label><Input className="mt-1.5 h-10" value={form.contact_person} onChange={(e) => setForm({ ...form, contact_person: e.target.value })} /></div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Phone</Label><Input className="mt-1.5 h-10" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
@@ -130,7 +130,7 @@ export default function SuppliersPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving || !form.name} className="bg-teal-600 hover:bg-teal-700 text-white" data-testid="save-supplier-btn">
+            <Button onClick={handleSave} disabled={saving || !form.name} className="bg-teal-600 hover:bg-teal-700 text-white" data-testid="save-vendor-btn">
               {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null} Save
             </Button>
           </DialogFooter>

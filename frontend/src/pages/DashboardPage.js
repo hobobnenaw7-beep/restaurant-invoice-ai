@@ -296,9 +296,9 @@ export default function DashboardPage() {
 
       {/* Bottom row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="border border-slate-100 shadow-sm" data-testid="top-suppliers">
+        <Card className="border border-slate-100 shadow-sm" data-testid="top-vendors">
           <CardHeader className="pb-3 pt-5 px-6">
-            <CardTitle className="font-heading text-sm font-bold text-navy-900 uppercase tracking-wide">Top Suppliers</CardTitle>
+            <CardTitle className="font-heading text-sm font-bold text-navy-900 uppercase tracking-wide">Top Vendors</CardTitle>
           </CardHeader>
           <CardContent className="px-6 pb-5">
             <div className="space-y-2.5">
@@ -316,7 +316,7 @@ export default function DashboardPage() {
                   </div>
                 );
               })}
-              {!data.top_suppliers?.length && <p className="text-sm text-slate-400 py-6 text-center">No supplier data yet</p>}
+              {!data.top_suppliers?.length && <p className="text-sm text-slate-400 py-6 text-center">No vendor data yet</p>}
             </div>
           </CardContent>
         </Card>

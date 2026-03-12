@@ -13,9 +13,9 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 1. JWT email/password authentication
 2. Dashboard with summary cards, top 5 lists, price alerts, weekly/monthly comparisons
 3. Upload Center for image/PDF invoices and sales reports
-4. Purchase Invoice extraction flow (supplier, date, items, totals)
+4. Purchase Invoice extraction flow (vendor, date, items, totals)
 5. Sales Report extraction flow (date, total, items)
-6. Pages: Dashboard, Purchases, Sales, Suppliers, Items, Reports, Chat, Settings
+6. Pages: Dashboard, Expenses, Sales, Vendors, Items, Reports, Chat, Settings
 7. Item normalization (raw names → canonical items)
 8. Weekly/Monthly/Yearly reports with financial metrics
 9. Alerts for price/spending changes
@@ -27,64 +27,40 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 ## What's Been Implemented
 - [x] Full-stack scaffolding (FastAPI + React + MongoDB)
 - [x] JWT authentication (register/login/me)
-- [x] All pages created (Dashboard, Upload, Purchases, Sales, Suppliers, Items, Reports, Chat, Settings)
+- [x] All pages created (Dashboard, Expenses, Sales, Vendors, Items, Reports, Chat, Settings)
 - [x] Database seeding with realistic demo data
 - [x] Premium SaaS UI/UX (dark sidebar, light content, Manrope + IBM Plex Sans fonts)
-- [x] CRUD endpoints for purchases, sales, suppliers, items, aliases
+- [x] CRUD endpoints for purchases, sales, vendors, items, aliases
 - [x] Dashboard summary with period comparisons and top lists
 - [x] Reports endpoint (weekly/monthly/yearly)
 - [x] Real OCR document extraction via GPT-5.2 Vision (upload endpoint)
-- [x] **Chat Assistant — Enhanced (March 11, 2026)**:
-  - Categorized quick questions (This Week, Monthly, Yearly, Insights)
-  - Real GPT-5.2 integration with rich financial context
-  - Financial analyst-style responses (bold metrics, bullets, period comparisons)
-  - Formatted message rendering (markdown bold, bullets, numbered lists)
-  - Follow-up quick question chips
-  - Clear conversation functionality
-  - Message persistence via MongoDB
-
-- [x] **Reports Page — Enhanced (March 11, 2026)**:
-  - Weekly/Monthly/Yearly tabs with date picker
-  - 4 KPI cards (Revenue, Purchases, Profit, Gross Margin) with % change vs previous period
-  - Revenue vs Purchases trend chart (area chart)
-  - Supplier Spending table (name, total, invoices, avg/invoice)
-  - Price Changes table (item, previous, current, % change with directional arrows)
-  - PDF download (reportlab) and Excel download (openpyxl) with multi-sheet reports
-
-- [x] **Upload Center Removed — Inline Upload (March 11, 2026)**:
-  - Removed Upload Center page, route, and sidebar link
-  - Added "Add Purchase" button on Purchases page with dialog: upload zone + manual form + line items CRUD
-  - Added "Add Sale" button on Sales page with dialog: upload zone + manual form + menu items CRUD
-  - AI extraction (GPT-5.2 Vision) available inline via Browse → Extract flow
-
-- [x] **Smart Alerts System (March 11, 2026)**:
-  - Real-time alert engine detecting: low stock ingredients, cost increases (>5%), profit margin drops (>3pp)
-  - Dashboard "Smart Alerts" section with color-coded cards (amber=stock, red=cost, violet=margin), severity badges, type count summary
-  - Chat AI enhanced with smart alerts context for answering stock/cost/margin questions
-
-- [x] **Supplier Price Comparison (March 11, 2026)**:
-  - Backend `/api/prices/intelligence` endpoint: per-item per-supplier avg prices, best supplier detection, savings %, weekly price trends, >10% price alerts
-  - Reports page: Price Trends line chart with item selector, Supplier Price Comparison matrix table with BEST labels and savings %, Price Increase Alerts banner (>10%)
-
-- [x] **Layout & Multi-Upload Enhancement (March 11, 2026)**:
-  - Sidebar: 7 main nav items (Dashboard, Purchases, Sales, Suppliers, Items, Reports, Chat Assistant) + Settings pinned at bottom
-  - Upload Center removed as standalone page
-  - Purchases/Sales Add dialogs: 3 upload options (Take Photo with camera capture, Upload Image, Upload PDF), file preview for images, Extract Data via OCR/AI, manual form fields
-
-- [x] **Excel Upload Support (March 12, 2026)**:
-  - Backend `/api/upload/parse-excel` endpoint: parses .xlsx, .xls, .csv files with smart column header mapping (supports spaces, aliases like "Item Name", "Qty", "Vendor")
-  - Auto-groups multi-supplier CSVs into separate purchases, calculates totals from qty*price
-  - 4th upload button "Upload Excel" added to both Purchases and Sales dialogs, consistent UI
+- [x] Chat Assistant with GPT-5.2 integration
+- [x] Reports Page with KPI cards, trend charts, vendor spending, price intelligence
+- [x] Inline Upload (removed standalone Upload Center)
+- [x] Smart Alerts System on Dashboard
+- [x] Vendor Price Comparison on Reports page
+- [x] Excel/CSV Upload Support
+- [x] Expenses page refactor (Raw Materials, Salaries, Other Expenses tabs)
+- [x] **Suppliers → Vendors Rename (March 12, 2026)**:
+  - Renamed "Suppliers" to "Vendors" across all user-facing UI
+  - Sidebar nav, page title, description, buttons, table headers, form labels, search placeholders
+  - Updated Dashboard "Top Vendors" card, Reports "Vendor Spending" table, Chat quick questions
+  - Backend API endpoints unchanged (`/api/suppliers`) — only UI labels changed
 
 ## Credentials
-- Test: test@demo.com / password123
+- Test: demo@test.com / testpassword
 
 ## Prioritized Backlog
 
+### P0
+- Verify and complete Expenses page refactor (3-tab CRUD, dashboard totals)
+- Implement Real OCR/Document Extraction (OpenAI GPT-5.2 Vision)
+
 ### P1
+- Implement Real Chat Assistant Backend (GPT-5.2 with financial data context)
 - Build Item Normalization UI
-- Enhance CRUD UI on Purchases/Sales/Suppliers pages
 
 ### P2
 - Implement Settings page functionality
+- Enhance CRUD UI on Vendors/Items pages
 - Refactoring: extract backend routes into separate files

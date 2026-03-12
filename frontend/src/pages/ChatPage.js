@@ -29,7 +29,7 @@ const questionCategories = [
     color: 'blue',
     questions: [
       "Compare this month to last month",
-      "Which supplier costs me the most this month?",
+      "Which vendor costs me the most this month?",
       "What's my monthly gross margin?",
     ],
   },
@@ -49,7 +49,7 @@ const questionCategories = [
     color: 'rose',
     questions: [
       "Which items have increased in price recently?",
-      "Who is my most cost-effective supplier?",
+      "Who is my most cost-effective vendor?",
       "Where can I cut costs without hurting quality?",
     ],
   },
@@ -214,7 +214,7 @@ export default function ChatPage() {
                     What would you like to know?
                   </h3>
                   <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                    Ask about your purchases, sales, suppliers, or trends. Tap a question below or type your own.
+                    Ask about your purchases, sales, vendors, or trends. Tap a question below or type your own.
                   </p>
                 </div>
 

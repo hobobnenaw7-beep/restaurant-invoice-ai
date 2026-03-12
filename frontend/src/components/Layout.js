@@ -13,7 +13,7 @@ const mainNav = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/expenses', label: 'Expenses', icon: Receipt },
   { path: '/sales', label: 'Sales', icon: DollarSign },
-  { path: '/suppliers', label: 'Suppliers', icon: Users },
+  { path: '/vendors', label: 'Vendors', icon: Users },
   { path: '/items', label: 'Items', icon: Package },
   { path: '/reports', label: 'Reports', icon: FileText },
   { path: '/chat', label: 'Chat Assistant', icon: MessageCircle },

@@ -144,7 +144,7 @@ export default function ReportsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="font-heading text-xl sm:text-2xl font-extrabold text-navy-900 tracking-tight">Financial Reports</h1>
-          <p className="text-xs text-slate-400 mt-0.5">Performance snapshot with supplier price intelligence</p>
+          <p className="text-xs text-slate-400 mt-0.5">Performance snapshot with vendor price intelligence</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" className="h-8 text-xs border-slate-200" onClick={() => handleDownload('pdf')} disabled={!!downloading || !report} data-testid="download-pdf-btn">
@@ -233,26 +233,26 @@ export default function ReportsPage() {
             </Card>
           )}
 
-          {/* Existing Supplier & Price Tables */}
+          {/* Existing Vendor & Price Tables */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Supplier Spending Table */}
-            <Card className="border border-slate-200/80 shadow-sm" data-testid="supplier-table">
+            {/* Vendor Spending Table */}
+            <Card className="border border-slate-200/80 shadow-sm" data-testid="vendor-table">
               <CardHeader className="pb-2 pt-4 px-5">
-                <CardTitle className="font-heading text-sm font-bold text-navy-900">Supplier Spending</CardTitle>
+                <CardTitle className="font-heading text-sm font-bold text-navy-900">Vendor Spending</CardTitle>
               </CardHeader>
               <CardContent className="px-0 pb-2">
                 {report.spending_by_supplier?.length > 0 ? (
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead><tr className="border-b border-slate-100">
-                        <th className="text-left font-semibold text-slate-400 uppercase tracking-wider px-5 py-2 text-[10px]">Supplier</th>
+                        <th className="text-left font-semibold text-slate-400 uppercase tracking-wider px-5 py-2 text-[10px]">Vendor</th>
                         <th className="text-right font-semibold text-slate-400 uppercase tracking-wider px-5 py-2 text-[10px]">Total</th>
                         <th className="text-right font-semibold text-slate-400 uppercase tracking-wider px-5 py-2 text-[10px]">Invoices</th>
                         <th className="text-right font-semibold text-slate-400 uppercase tracking-wider px-5 py-2 text-[10px]">Avg/Invoice</th>
                       </tr></thead>
                       <tbody>
                         {report.spending_by_supplier.map((s, i) => (
-                          <tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors" data-testid={`supplier-row-${i}`}>
+                          <tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors" data-testid={`vendor-row-${i}`}>
                             <td className="px-5 py-2.5 font-medium text-navy-900">{s.name}</td>
                             <td className="px-5 py-2.5 text-right font-semibold text-navy-900">{fmtFull(s.total)}</td>
                             <td className="px-5 py-2.5 text-right text-slate-500">{s.invoices}</td>
@@ -262,7 +262,7 @@ export default function ReportsPage() {
                       </tbody>
                     </table>
                   </div>
-                ) : <p className="text-xs text-slate-400 px-5 py-4">No supplier data for this period.</p>}
+                ) : <p className="text-xs text-slate-400 px-5 py-4">No vendor data for this period.</p>}
               </CardContent>
             </Card>
 
@@ -326,7 +326,7 @@ export default function ReportsPage() {
             <div>
               <h2 className="font-heading text-base font-extrabold text-navy-900 tracking-tight">Price Intelligence</h2>
               <p className="text-[10px] text-slate-400">
-                Tracking {priceData.total_items_tracked} items across {priceData.total_suppliers} suppliers
+                Tracking {priceData.total_items_tracked} items across {priceData.total_suppliers} vendors
               </p>
             </div>
           </div>
@@ -413,14 +413,14 @@ export default function ReportsPage() {
             </Card>
           )}
 
-          {/* Supplier Comparison Table */}
+          {/* Vendor Comparison Table */}
           {priceData.comparison?.length > 0 && (
-            <Card className="border border-slate-200/80 shadow-sm" data-testid="supplier-comparison-table">
+            <Card className="border border-slate-200/80 shadow-sm" data-testid="vendor-comparison-table">
               <CardHeader className="pb-2 pt-4 px-5">
                 <div className="flex items-center justify-between">
                   <CardTitle className="font-heading text-sm font-bold text-navy-900">
-                    Supplier Price Comparison
-                    <span className="text-[10px] font-normal text-slate-400 ml-2">Average price per item by supplier</span>
+                    Vendor Price Comparison
+                    <span className="text-[10px] font-normal text-slate-400 ml-2">Average price per item by vendor</span>
                   </CardTitle>
                   <Badge variant="outline" className="text-[10px] border-slate-200 text-slate-500">
                     <Package className="w-3 h-3 mr-1" /> {priceData.comparison.length} items
