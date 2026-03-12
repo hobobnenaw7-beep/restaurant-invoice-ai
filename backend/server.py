@@ -91,6 +91,20 @@ class ItemAliasCreate(BaseModel):
 class ChatMessageIn(BaseModel):
     message: str
 
+class SalaryCreate(BaseModel):
+    employee_name: str
+    position: Optional[str] = ""
+    amount: float
+    payment_date: str
+    notes: Optional[str] = ""
+
+class OtherExpenseCreate(BaseModel):
+    title: str
+    category: str
+    amount: float
+    expense_date: str
+    notes: Optional[str] = ""
+
 class SettingsUpdate(BaseModel):
     name: Optional[str] = None
     restaurant_name: Optional[str] = None
@@ -312,11 +326,17 @@ async def dashboard_summary(user=Depends(get_user)):
 
     purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
     sales = await db.sales.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    salaries = await db.salaries.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    other_exp = await db.other_expenses.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
 
     def sum_p(df, dt=None):
         return sum(p["total"] for p in purchases if p.get("invoice_date", "") >= df and (not dt or p.get("invoice_date", "") <= dt))
     def sum_s(df, dt=None):
         return sum(s["total_sales"] for s in sales if s.get("report_date", "") >= df and (not dt or s.get("report_date", "") <= dt))
+    def sum_sal(df, dt=None):
+        return sum(s["amount"] for s in salaries if s.get("payment_date", "") >= df and (not dt or s.get("payment_date", "") <= dt))
+    def sum_oe(df, dt=None):
+        return sum(e["amount"] for e in other_exp if e.get("expense_date", "") >= df and (not dt or e.get("expense_date", "") <= dt))
 
     item_spend = {}
     for p in purchases:
@@ -348,6 +368,12 @@ async def dashboard_summary(user=Depends(get_user)):
         "prev_week_purchases": round(sum_p(prev_week_start, prev_week_end), 2),
         "prev_month_sales": round(sum_s(prev_month_start, prev_month_end), 2),
         "prev_month_purchases": round(sum_p(prev_month_start, prev_month_end), 2),
+        "month_raw_materials": round(sum_p(month_start), 2),
+        "month_salaries": round(sum_sal(month_start), 2),
+        "month_other_expenses": round(sum_oe(month_start), 2),
+        "prev_month_raw_materials": round(sum_p(prev_month_start, prev_month_end), 2),
+        "prev_month_salaries": round(sum_sal(prev_month_start, prev_month_end), 2),
+        "prev_month_other_expenses": round(sum_oe(prev_month_start, prev_month_end), 2),
         "top_items": top_items, "top_suppliers": top_suppliers,
         "weekly_trends": weekly_trends, "alerts": alerts,
         "smart_alerts": smart_alerts,
@@ -597,6 +623,64 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
 @api_router.delete("/purchases/{pid}")
 async def delete_purchase(pid: str, user=Depends(get_user)):
     result = await db.purchases.delete_one({"id": pid, "restaurant_id": user["restaurant_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"status": "deleted"}
+
+# ==================== SALARIES CRUD ====================
+
+@api_router.get("/salaries")
+async def list_salaries(user=Depends(get_user), date_from: str = "", date_to: str = "", sort_by: str = "payment_date", sort_order: str = "desc"):
+    query = {"restaurant_id": user["restaurant_id"]}
+    if date_from:
+        query.setdefault("payment_date", {})["$gte"] = date_from
+    if date_to:
+        query.setdefault("payment_date", {})["$lte"] = date_to
+    return await db.salaries.find(query, {"_id": 0}).sort(sort_by, -1 if sort_order == "desc" else 1).to_list(1000)
+
+@api_router.post("/salaries")
+async def create_salary(data: SalaryCreate, user=Depends(get_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["restaurant_id"] = user["restaurant_id"]
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.salaries.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.delete("/salaries/{sid}")
+async def delete_salary(sid: str, user=Depends(get_user)):
+    result = await db.salaries.delete_one({"id": sid, "restaurant_id": user["restaurant_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"status": "deleted"}
+
+# ==================== OTHER EXPENSES CRUD ====================
+
+@api_router.get("/other-expenses")
+async def list_other_expenses(user=Depends(get_user), category: str = "", date_from: str = "", date_to: str = "", sort_by: str = "expense_date", sort_order: str = "desc"):
+    query = {"restaurant_id": user["restaurant_id"]}
+    if category:
+        query["category"] = category
+    if date_from:
+        query.setdefault("expense_date", {})["$gte"] = date_from
+    if date_to:
+        query.setdefault("expense_date", {})["$lte"] = date_to
+    return await db.other_expenses.find(query, {"_id": 0}).sort(sort_by, -1 if sort_order == "desc" else 1).to_list(1000)
+
+@api_router.post("/other-expenses")
+async def create_other_expense(data: OtherExpenseCreate, user=Depends(get_user)):
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["restaurant_id"] = user["restaurant_id"]
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    await db.other_expenses.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.delete("/other-expenses/{eid}")
+async def delete_other_expense(eid: str, user=Depends(get_user)):
+    result = await db.other_expenses.delete_one({"id": eid, "restaurant_id": user["restaurant_id"]})
     if result.deleted_count == 0:
         raise HTTPException(404, "Not found")
     return {"status": "deleted"}
