@@ -71,6 +71,11 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Upload Center removed as standalone page
   - Purchases/Sales Add dialogs: 3 upload options (Take Photo with camera capture, Upload Image, Upload PDF), file preview for images, Extract Data via OCR/AI, manual form fields
 
+- [x] **Excel Upload Support (March 12, 2026)**:
+  - Backend `/api/upload/parse-excel` endpoint: parses .xlsx, .xls, .csv files with smart column header mapping (supports spaces, aliases like "Item Name", "Qty", "Vendor")
+  - Auto-groups multi-supplier CSVs into separate purchases, calculates totals from qty*price
+  - 4th upload button "Upload Excel" added to both Purchases and Sales dialogs, consistent UI
+
 ## Credentials
 - Test: test@demo.com / password123
 
