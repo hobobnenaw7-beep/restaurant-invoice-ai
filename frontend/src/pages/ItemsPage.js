@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Card } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,7 +9,156 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus } from 'lucide-react';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+
+function fmt(n) { return n != null ? `$${Number(n).toFixed(2)}` : '$0.00'; }
+
+function PriceHistoryDialog({ item, api, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!item) return;
+    setLoading(true);
+    api.get(`/items/${item.id}/price-history`)
+      .then(res => setData(res.data))
+      .catch(() => toast.error('Failed to load price history'))
+      .finally(() => setLoading(false));
+  }, [item, api]);
+
+  if (!item) return null;
+
+  const trend = data?.trend || [];
+  const records = data?.records || [];
+  const summary = data?.summary || {};
+
+  // Compute price change for badge
+  let changePct = null;
+  if (trend.length >= 2) {
+    const first = trend[0].avg_price;
+    const last = trend[trend.length - 1].avg_price;
+    if (first > 0) changePct = ((last - first) / first * 100).toFixed(1);
+  }
+
+  return (
+    <Dialog open={!!item} onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-heading text-lg flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-teal-600" />
+            Price History — <span className="text-teal-600">{item.name}</span>
+          </DialogTitle>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="space-y-3 py-4">{[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
+        ) : records.length === 0 ? (
+          <div className="flex flex-col items-center py-12 text-center">
+            <TrendingUp className="w-10 h-10 text-slate-300 mb-3" />
+            <h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No price data yet</h3>
+            <p className="text-xs text-slate-400">Purchase invoices containing this item will populate the price history.</p>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {/* Summary KPIs */}
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-slate-50 rounded-lg p-3 text-center">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Avg Price</p>
+                <p className="text-lg font-bold text-navy-900 tabular-nums mt-0.5">{fmt(summary.avg_price)}</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-3 text-center">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Min</p>
+                <p className="text-lg font-bold text-emerald-600 tabular-nums mt-0.5">{fmt(summary.min_price)}</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-3 text-center">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Max</p>
+                <p className="text-lg font-bold text-red-500 tabular-nums mt-0.5">{fmt(summary.max_price)}</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-3 text-center">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Trend</p>
+                <div className="flex items-center justify-center gap-1 mt-0.5">
+                  {changePct !== null ? (
+                    <>
+                      {parseFloat(changePct) > 0 ? <ArrowUp className="w-4 h-4 text-red-500" /> : parseFloat(changePct) < 0 ? <ArrowDown className="w-4 h-4 text-emerald-600" /> : <Minus className="w-4 h-4 text-slate-400" />}
+                      <span className={`text-lg font-bold tabular-nums ${parseFloat(changePct) > 0 ? 'text-red-500' : parseFloat(changePct) < 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
+                        {Math.abs(parseFloat(changePct))}%
+                      </span>
+                    </>
+                  ) : <span className="text-lg font-bold text-slate-400">—</span>}
+                </div>
+              </div>
+            </div>
+
+            {/* Price Trend Chart */}
+            {trend.length >= 2 && (
+              <Card className="border border-slate-200/80 shadow-sm">
+                <CardHeader className="pb-2 pt-4 px-5">
+                  <CardTitle className="font-heading text-sm font-bold text-navy-900">Price Trend</CardTitle>
+                </CardHeader>
+                <CardContent className="px-2 pb-3">
+                  <div className="h-52" data-testid="price-trend-chart">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trend} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} tickFormatter={(d) => { const parts = d.split('-'); return `${parts[1]}/${parts[2]}`; }} />
+                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} tickFormatter={(v) => `$${v}`} width={50} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }}
+                          formatter={(val) => [`$${val}`, 'Avg Price']}
+                          labelFormatter={(d) => `Date: ${d}`}
+                        />
+                        <Line type="monotone" dataKey="avg_price" stroke="#0d9488" strokeWidth={2} dot={{ r: 3, fill: '#0d9488' }} activeDot={{ r: 5 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Price History Table */}
+            <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
+              <CardHeader className="pb-2 pt-4 px-5">
+                <CardTitle className="font-heading text-sm font-bold text-navy-900">
+                  Purchase Records
+                  <span className="text-[10px] font-normal text-slate-400 ml-2">{records.length} entries</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-0 pb-2">
+                <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-slate-50/80 hover:bg-slate-50/80 sticky top-0">
+                        <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date</TableHead>
+                        <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vendor</TableHead>
+                        <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Item Name</TableHead>
+                        <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right">Price</TableHead>
+                        <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right">Qty</TableHead>
+                        <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Unit</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {records.slice().reverse().map((r, i) => (
+                        <TableRow key={i} className={`${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`} data-testid={`price-record-${i}`}>
+                          <TableCell className="text-xs tabular-nums text-slate-600">{r.date}</TableCell>
+                          <TableCell className="text-xs font-medium text-navy-900">{r.vendor}</TableCell>
+                          <TableCell className="text-xs text-slate-500">{r.raw_name}</TableCell>
+                          <TableCell className="text-xs text-right font-semibold text-navy-900 tabular-nums">{fmt(r.unit_price)}</TableCell>
+                          <TableCell className="text-xs text-right tabular-nums text-slate-600">{r.quantity}</TableCell>
+                          <TableCell className="text-xs text-slate-500">{r.unit}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export default function ItemsPage() {
   const { api } = useAuth();
@@ -18,6 +167,7 @@ export default function ItemsPage() {
   const [search, setSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [aliasDialog, setAliasDialog] = useState(null);
+  const [priceItem, setPriceItem] = useState(null);
   const [form, setForm] = useState({ name: '', category: '' });
   const [aliasName, setAliasName] = useState('');
   const [editing, setEditing] = useState(null);
@@ -64,7 +214,6 @@ export default function ItemsPage() {
     try { await api.delete(`/aliases/${aliasId}`); load(); } catch { toast.error('Failed'); }
   };
 
-  // Keep alias dialog synced with latest item data
   const currentAliasItem = items.find(i => i.id === aliasDialog?.id);
 
   return (
@@ -101,7 +250,7 @@ export default function ItemsPage() {
                   <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Item Name</TableHead>
                   <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Category</TableHead>
                   <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Aliases</TableHead>
-                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider text-right w-40">Actions</TableHead>
+                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider text-right w-48">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -127,6 +276,9 @@ export default function ItemsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-slate-500 hover:text-teal-700" onClick={() => setPriceItem(item)} data-testid={`price-history-${item.id}`}>
+                          <TrendingUp className="w-3 h-3 mr-1" /> Prices
+                        </Button>
                         <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-slate-500 hover:text-teal-700" onClick={() => { setAliasDialog(item); setAliasName(''); }} data-testid={`manage-aliases-${item.id}`}>
                           <Tag className="w-3 h-3 mr-1" /> Aliases
                         </Button>
@@ -142,6 +294,7 @@ export default function ItemsPage() {
         </Card>
       )}
 
+      {/* Add/Edit Item Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle className="font-heading text-lg">{editing ? 'Edit Item' : 'New Item'}</DialogTitle></DialogHeader>
@@ -158,6 +311,7 @@ export default function ItemsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Aliases Dialog */}
       <Dialog open={!!aliasDialog} onOpenChange={() => setAliasDialog(null)}>
         <DialogContent>
           <DialogHeader><DialogTitle className="font-heading text-lg">Aliases for <span className="text-teal-600">{aliasDialog?.name}</span></DialogTitle></DialogHeader>
@@ -178,6 +332,9 @@ export default function ItemsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Price History Dialog */}
+      <PriceHistoryDialog item={priceItem} api={api} onClose={() => setPriceItem(null)} />
     </div>
   );
 }

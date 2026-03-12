@@ -812,6 +812,61 @@ async def delete_alias(aid: str, user=Depends(get_user)):
     await db.item_aliases.delete_one({"id": aid, "restaurant_id": user["restaurant_id"]})
     return {"status": "deleted"}
 
+# ==================== ITEM PRICE HISTORY ====================
+
+@api_router.get("/items/{item_id}/price-history")
+async def item_price_history(item_id: str, user=Depends(get_user)):
+    """Get price history for a canonical item by scanning all purchases matching its name + aliases."""
+    rid = user["restaurant_id"]
+    item = await db.canonical_items.find_one({"id": item_id, "restaurant_id": rid}, {"_id": 0})
+    if not item:
+        raise HTTPException(404, "Item not found")
+
+    # Collect all names to match: canonical name + all aliases
+    names = {item["name"].lower()}
+    aliases = await db.item_aliases.find({"canonical_item_id": item_id, "restaurant_id": rid}, {"_id": 0}).to_list(200)
+    for a in aliases:
+        names.add(a["alias_name"].lower())
+
+    # Scan purchases for matching line items
+    purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0, "supplier_name": 1, "invoice_date": 1, "items": 1}).to_list(10000)
+
+    records = []
+    for p in purchases:
+        vendor = p.get("supplier_name", "Unknown")
+        date = p.get("invoice_date", "")
+        for it in p.get("items", []):
+            raw = it.get("raw_name", "").lower()
+            if raw in names:
+                records.append({
+                    "vendor": vendor,
+                    "date": date,
+                    "unit_price": round(float(it.get("unit_price", 0)), 2),
+                    "quantity": float(it.get("quantity", 0)),
+                    "unit": it.get("unit", ""),
+                    "raw_name": it.get("raw_name", ""),
+                })
+
+    records.sort(key=lambda x: x["date"])
+
+    # Build trend data: average price per date
+    date_prices = {}
+    for r in records:
+        date_prices.setdefault(r["date"], []).append(r["unit_price"])
+    trend = [{"date": d, "avg_price": round(sum(ps) / len(ps), 2)} for d, ps in sorted(date_prices.items())]
+
+    # Summary stats
+    all_prices = [r["unit_price"] for r in records if r["unit_price"] > 0]
+    summary = {
+        "total_records": len(records),
+        "avg_price": round(sum(all_prices) / len(all_prices), 2) if all_prices else 0,
+        "min_price": round(min(all_prices), 2) if all_prices else 0,
+        "max_price": round(max(all_prices), 2) if all_prices else 0,
+        "vendors": list(set(r["vendor"] for r in records)),
+    }
+
+    return {"item_name": item["name"], "records": records, "trend": trend, "summary": summary}
+
 # ==================== REPORTS ====================
 
 def _parse_report_dates(report_type, date, now):
