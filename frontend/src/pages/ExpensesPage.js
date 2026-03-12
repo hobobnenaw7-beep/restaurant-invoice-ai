@@ -24,6 +24,61 @@ function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { m
 
 const OTHER_CATEGORIES = ['Rent', 'Electricity', 'Water', 'Gas', 'Maintenance', 'Equipment', 'Insurance', 'Marketing', 'Other'];
 
+// ======================== ITEM AUTOCOMPLETE ========================
+function ItemAutocomplete({ value, onChange, knownItems, index }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(value || '');
+  const wrapperRef = useRef(null);
+
+  useEffect(() => { setQuery(value || ''); }, [value]);
+
+  useEffect(() => {
+    const handler = (e) => { if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const q = query.toLowerCase().trim();
+  const filtered = q ? knownItems.filter(n => n.toLowerCase().includes(q)).slice(0, 8) : knownItems.slice(0, 8);
+  const exactMatch = knownItems.some(n => n.toLowerCase() === q);
+
+  return (
+    <div ref={wrapperRef} className="relative col-span-4">
+      <Input
+        className="text-xs h-8 w-full"
+        placeholder="Item name"
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        data-testid={`line-item-name-${index}`}
+      />
+      {open && (filtered.length > 0 || (q && !exactMatch)) && (
+        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+          {filtered.map((name) => (
+            <button
+              key={name}
+              type="button"
+              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-teal-50 transition-colors ${name.toLowerCase() === q ? 'bg-teal-50 font-semibold text-teal-700' : 'text-navy-900'}`}
+              onMouseDown={(e) => { e.preventDefault(); setQuery(name); onChange(name); setOpen(false); }}
+              data-testid={`item-option-${name}`}
+            >
+              {name}
+            </button>
+          ))}
+          {q && !exactMatch && (
+            <>
+              {filtered.length > 0 && <div className="border-t border-slate-100" />}
+              <div className="px-3 py-1.5 text-[10px] text-slate-400 italic">
+                Use "{query}" as new item
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ======================== RAW MATERIALS TAB ========================
 function RawMaterialsTab({ api }) {
   const [items, setItems] = useState([]);
@@ -44,6 +99,7 @@ function RawMaterialsTab({ api }) {
   const filePdfRef = useRef(null);
   const fileCameraRef = useRef(null);
   const fileExcelRef = useRef(null);
+  const [knownItems, setKnownItems] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,7 +117,18 @@ function RawMaterialsTab({ api }) {
   const removeItem = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, { raw_name: '', quantity: 1, unit: 'kg', unit_price: 0, total: 0 }] }));
 
-  const openAdd = () => { setForm({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [{ raw_name: '', quantity: 1, unit: 'kg', unit_price: 0, total: 0 }], subtotal: 0, tax: 0, total: 0 }); setUploadFile(null); setUploadPreview(null); setShowAdd(true); };
+  const openAdd = () => {
+    setForm({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [{ raw_name: '', quantity: 1, unit: 'kg', unit_price: 0, total: 0 }], subtotal: 0, tax: 0, total: 0 });
+    setUploadFile(null); setUploadPreview(null); setShowAdd(true);
+    api.get('/items').then(res => {
+      const names = [];
+      (res.data || []).forEach(item => {
+        names.push(item.name);
+        (item.aliases || []).forEach(a => names.push(a.alias_name));
+      });
+      setKnownItems([...new Set(names)].sort());
+    }).catch(() => {});
+  };
   const handleFileSelect = (f) => { if (!f) return; setUploadFile(f); if (f.type.startsWith('image/')) { const r = new FileReader(); r.onload = (e) => setUploadPreview(e.target.result); r.readAsDataURL(f); } else setUploadPreview(null); };
   const clearFile = () => { setUploadFile(null); setUploadPreview(null); };
   const isExcelFile = (f) => { const n = (f?.name || '').toLowerCase(); return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv'); };
@@ -170,7 +237,7 @@ function RawMaterialsTab({ api }) {
               <div className="flex items-center justify-between mb-2"><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Line Items</Label><Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={addItem} data-testid="add-line-item-btn"><Plus className="w-3 h-3 mr-1" /> Add Item</Button></div>
               <div className="space-y-1.5">{form.items.map((item, i) => (
                 <div key={i} className="grid grid-cols-12 gap-1.5 items-center bg-slate-50 rounded-lg p-2" data-testid={`line-item-${i}`}>
-                  <Input className="col-span-4 text-xs h-8" placeholder="Item name" value={item.raw_name} onChange={(e) => updateItem(i, 'raw_name', e.target.value)} />
+                  <ItemAutocomplete value={item.raw_name} onChange={(v) => updateItem(i, 'raw_name', v)} knownItems={knownItems} index={i} />
                   <Input className="col-span-2 text-xs h-8" type="number" placeholder="Qty" value={item.quantity || ''} onChange={(e) => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} />
                   <Input className="col-span-1 text-xs h-8" placeholder="Unit" value={item.unit} onChange={(e) => updateItem(i, 'unit', e.target.value)} />
                   <Input className="col-span-2 text-xs h-8" type="number" step="0.01" placeholder="Price" value={item.unit_price || ''} onChange={(e) => updateItem(i, 'unit_price', parseFloat(e.target.value) || 0)} />

@@ -52,6 +52,11 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Columns: Item Name, Category, Aliases (badges, max 4 shown), Actions (Aliases, Edit, Delete)
   - Compact, scannable rows ideal for accounting/admin use
 
+- [x] **Item Name Autocomplete in Expenses Form (March 12, 2026)**:
+  - Replaced plain text input with searchable autocomplete dropdown in Add Raw Material Purchase form
+  - Fetches canonical items + aliases from Items database when dialog opens
+  - Type-to-filter with dropdown suggestions; select existing or type new item freely
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
