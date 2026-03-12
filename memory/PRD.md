@@ -57,6 +57,12 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Fetches canonical items + aliases from Items database when dialog opens
   - Type-to-filter with dropdown suggestions; select existing or type new item freely
 
+- [x] **Price Tracking System (March 12, 2026)**:
+  - Backend `GET /api/items/{item_id}/price-history` — computes price history from purchases by matching canonical name + aliases
+  - Returns records (vendor, date, unit_price, qty, unit), trend (avg price per date), and summary stats (avg/min/max/vendors)
+  - Frontend: "Prices" button on each item row → opens Price History dialog with 4 KPI cards, Recharts line chart, and scrollable purchase records table
+  - Tested: 100% pass rate (8/8 backend, all frontend features verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
