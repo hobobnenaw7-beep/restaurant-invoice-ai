@@ -47,6 +47,11 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Updated Dashboard "Top Vendors" card, Reports "Vendor Spending" table, Chat quick questions
   - Backend API endpoints unchanged (`/api/suppliers`) — only UI labels changed
 
+- [x] **Items Page List View (March 12, 2026)**:
+  - Converted card/grid layout to structured table/list layout
+  - Columns: Item Name, Category, Aliases (badges, max 4 shown), Actions (Aliases, Edit, Delete)
+  - Compact, scannable rows ideal for accounting/admin use
+
 ## Credentials
 - Test: demo@test.com / testpassword
 

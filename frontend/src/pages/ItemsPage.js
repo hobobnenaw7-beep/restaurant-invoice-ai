@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
@@ -84,7 +85,7 @@ export default function ItemsPage() {
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{[1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-40 rounded-xl" />)}</div>
+        <Card className="border border-slate-100 shadow-sm overflow-hidden"><div className="p-6 space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-12 w-full rounded-lg" />)}</div></Card>
       ) : items.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4"><Package className="w-6 h-6 text-slate-300" /></div>
@@ -92,33 +93,53 @@ export default function ItemsPage() {
           <p className="text-sm text-slate-400">Add items to start normalizing invoice data.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {items.map((item) => (
-            <Card key={item.id} className="border border-slate-100 shadow-sm hover:shadow-md transition-shadow duration-200">
-              <CardContent className="p-5">
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h3 className="text-sm font-bold text-navy-900">{item.name}</h3>
-                    {item.category && <Badge variant="outline" className="mt-1.5 text-[10px] font-semibold">{item.category}</Badge>}
-                  </div>
-                  <div className="flex gap-0.5">
-                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(item)}><Edit className="w-3.5 h-3.5 text-slate-500" /></Button>
-                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(item.id)}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-1.5 mb-4 min-h-[28px]">
-                  {(item.aliases || []).map((a) => (
-                    <Badge key={a.id} variant="secondary" className="text-[10px] bg-teal-50 text-teal-700 font-medium">{a.alias_name}</Badge>
-                  ))}
-                  {(!item.aliases?.length) && <span className="text-[11px] text-slate-300 italic">No aliases</span>}
-                </div>
-                <Button size="sm" variant="outline" className="w-full text-xs h-8" onClick={() => { setAliasDialog(item); setAliasName(''); }} data-testid={`manage-aliases-${item.id}`}>
-                  <Tag className="w-3 h-3 mr-1.5" /> Manage Aliases
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <Card className="border border-slate-100 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Item Name</TableHead>
+                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Category</TableHead>
+                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Aliases</TableHead>
+                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider text-right w-40">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((item, i) => (
+                  <TableRow key={item.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} data-testid={`item-row-${item.id}`}>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-navy-900 text-white flex items-center justify-center text-[11px] font-bold flex-shrink-0">{item.name?.charAt(0)}</div>
+                        <span className="text-sm font-semibold text-navy-900">{item.name}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {item.category ? <Badge variant="outline" className="text-[10px] font-semibold">{item.category}</Badge> : <span className="text-xs text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1 max-w-md">
+                        {(item.aliases || []).slice(0, 4).map((a) => (
+                          <Badge key={a.id} variant="secondary" className="text-[10px] bg-teal-50 text-teal-700 font-medium">{a.alias_name}</Badge>
+                        ))}
+                        {(item.aliases?.length || 0) > 4 && <Badge variant="secondary" className="text-[10px] bg-slate-100 text-slate-500 font-medium">+{item.aliases.length - 4}</Badge>}
+                        {!item.aliases?.length && <span className="text-[11px] text-slate-300 italic">None</span>}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-slate-500 hover:text-teal-700" onClick={() => { setAliasDialog(item); setAliasName(''); }} data-testid={`manage-aliases-${item.id}`}>
+                          <Tag className="w-3 h-3 mr-1" /> Aliases
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(item)} data-testid={`edit-item-${item.id}`}><Edit className="w-3.5 h-3.5 text-slate-500" /></Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(item.id)} data-testid={`delete-item-${item.id}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
