@@ -139,7 +139,22 @@ export default function SalesPage() {
     const doSave = async () => {
       setSaving(true);
       try {
-        await api.post('/sales', payload);
+        const res = await api.post('/sales', payload);
+        // Auto-save uploaded file to Records Library
+        if (uploadFile && res.data?.id) {
+          try {
+            const fd = new FormData();
+            fd.append('file', uploadFile);
+            fd.append('folder', 'sales');
+            fd.append('transaction_type', 'sale');
+            fd.append('transaction_id', res.data.id);
+            fd.append('transaction_date', payload.date_from || payload.report_date || '');
+            fd.append('transaction_amount', payload.total_sales || 0);
+            fd.append('transaction_notes', '');
+            fd.append('vendor_name', '');
+            await api.post('/records/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+          } catch { /* silent — file archive is best-effort */ }
+        }
         toast.success('Sale saved');
         setShowAdd(false);
         load();

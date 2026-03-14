@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   LayoutDashboard, Receipt, DollarSign, Users,
-  Package, FileText, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat
+  Package, FileText, FolderArchive, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat
 } from 'lucide-react';
 
 const mainNav = [
@@ -16,6 +16,7 @@ const mainNav = [
   { path: '/vendors', label: 'Vendors', icon: Users },
   { path: '/items', label: 'Items', icon: Package },
   { path: '/reports', label: 'Reports', icon: FileText },
+  { path: '/records', label: 'Records Library', icon: FolderArchive },
   { path: '/chat', label: 'Chat Assistant', icon: MessageCircle },
 ];
 

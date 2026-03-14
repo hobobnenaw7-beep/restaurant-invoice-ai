@@ -152,7 +152,25 @@ function RawMaterialsTab({ api }) {
     if (!form.supplier_name.trim()) { toast.error('Vendor name is required'); return; }
     const doSave = async () => {
       setSaving(true);
-      try { await api.post('/purchases', form); toast.success('Saved'); setShowAdd(false); load(); }
+      try {
+        const res = await api.post('/purchases', form);
+        // Auto-save uploaded file to Records Library
+        if (uploadFile && res.data?.id) {
+          try {
+            const fd = new FormData();
+            fd.append('file', uploadFile);
+            fd.append('folder', 'expenses');
+            fd.append('transaction_type', 'raw_material');
+            fd.append('transaction_id', res.data.id);
+            fd.append('transaction_date', form.invoice_date || '');
+            fd.append('transaction_amount', form.total || 0);
+            fd.append('transaction_notes', `Invoice #${form.invoice_number || 'N/A'}`);
+            fd.append('vendor_name', form.supplier_name || '');
+            await api.post('/records/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+          } catch { /* silent — file archive is best-effort */ }
+        }
+        toast.success('Saved'); setShowAdd(false); load();
+      }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
     };
