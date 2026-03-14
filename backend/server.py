@@ -1235,6 +1235,76 @@ async def price_intelligence(user=Depends(get_user)):
         "total_suppliers": len(all_suppliers),
     }
 
+# ==================== VENDOR PRICE COMPARISON ====================
+
+@api_router.get("/prices/vendor-comparison")
+async def vendor_price_comparison(user=Depends(get_user)):
+    """Per-item, per-vendor latest price comparison with best vendor highlighted."""
+    rid = user["restaurant_id"]
+    purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0, "supplier_name": 1, "invoice_date": 1, "items": 1}).to_list(10000)
+
+    # Resolve canonical names: build alias->canonical mapping
+    canonical = await db.canonical_items.find({"restaurant_id": rid}, {"_id": 0}).to_list(1000)
+    aliases = await db.item_aliases.find({"restaurant_id": rid}, {"_id": 0}).to_list(5000)
+    alias_to_canonical = {}
+    for a in aliases:
+        for c in canonical:
+            if c["id"] == a["canonical_item_id"]:
+                alias_to_canonical[a["alias_name"].lower()] = c["name"]
+                break
+    for c in canonical:
+        alias_to_canonical[c["name"].lower()] = c["name"]
+
+    # Structure: {canonical_name: {vendor: [{price, date, raw_name}]}}
+    item_vendor_prices = {}
+    for p in purchases:
+        vendor = p.get("supplier_name", "Unknown")
+        inv_date = p.get("invoice_date", "")
+        for it in p.get("items", []):
+            raw = it.get("raw_name", "")
+            price = float(it.get("unit_price", 0))
+            if price <= 0:
+                continue
+            canon = alias_to_canonical.get(raw.lower(), raw)
+            item_vendor_prices.setdefault(canon, {}).setdefault(vendor, []).append({
+                "price": price, "date": inv_date, "raw_name": raw,
+                "quantity": float(it.get("quantity", 0)), "unit": it.get("unit", ""),
+            })
+
+    items_out = []
+    for item_name, vendors_data in sorted(item_vendor_prices.items()):
+        vendors_list = []
+        for vendor_name, entries in sorted(vendors_data.items()):
+            entries.sort(key=lambda x: x["date"], reverse=True)
+            latest = entries[0]
+            avg = round(sum(e["price"] for e in entries) / len(entries), 2)
+            vendors_list.append({
+                "vendor": vendor_name,
+                "latest_price": round(latest["price"], 2),
+                "latest_date": latest["date"],
+                "avg_price": avg,
+                "purchase_count": len(entries),
+                "unit": latest.get("unit", ""),
+            })
+
+        vendors_list.sort(key=lambda x: x["latest_price"])
+        best_vendor = vendors_list[0]["vendor"] if vendors_list else None
+        best_price = vendors_list[0]["latest_price"] if vendors_list else 0
+        worst_price = vendors_list[-1]["latest_price"] if len(vendors_list) > 1 else best_price
+        savings_pct = round((1 - best_price / worst_price) * 100, 1) if worst_price > 0 and len(vendors_list) > 1 else 0
+
+        items_out.append({
+            "item": item_name,
+            "vendors": vendors_list,
+            "best_vendor": best_vendor,
+            "best_price": best_price,
+            "savings_pct": savings_pct,
+            "vendor_count": len(vendors_list),
+        })
+
+    items_out.sort(key=lambda x: (-x["vendor_count"], -x["savings_pct"]))
+    return {"items": items_out, "total_items": len(items_out)}
+
 # ==================== ALERTS ====================
 
 @api_router.get("/alerts")

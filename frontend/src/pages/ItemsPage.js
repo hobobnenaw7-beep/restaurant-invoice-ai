@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus, Scale, Award } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 
 function fmt(n) { return n != null ? `$${Number(n).toFixed(2)}` : '$0.00'; }
@@ -160,6 +160,94 @@ function PriceHistoryDialog({ item, api, onClose }) {
   );
 }
 
+// ======================== VENDOR PRICE COMPARISON ========================
+function VendorComparison({ api }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('');
+
+  useEffect(() => {
+    api.get('/prices/vendor-comparison')
+      .then(res => setData(res.data))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [api]);
+
+  if (loading) return <Card className="border border-slate-100 shadow-sm"><div className="p-6 space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}</div></Card>;
+  if (!data?.items?.length) return null;
+
+  const q = filter.toLowerCase().trim();
+  const filtered = q ? data.items.filter(it => it.item.toLowerCase().includes(q)) : data.items;
+
+  return (
+    <div className="space-y-4" data-testid="vendor-comparison-section">
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-lg bg-navy-900 flex items-center justify-center flex-shrink-0">
+          <Scale className="w-4 h-4 text-white" />
+        </div>
+        <div>
+          <h2 className="font-heading text-base font-extrabold text-navy-900 tracking-tight">Vendor Price Comparison</h2>
+          <p className="text-[10px] text-slate-400">Latest prices per vendor for each item — lowest price highlighted</p>
+        </div>
+      </div>
+
+      {data.items.length > 6 && (
+        <div className="relative max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Input className="pl-9 h-9 text-sm" placeholder="Filter items..." value={filter} onChange={(e) => setFilter(e.target.value)} data-testid="filter-comparison" />
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {filtered.map((item) => (
+          <Card key={item.item} className="border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow" data-testid={`comparison-card-${item.item}`}>
+            <CardHeader className="pb-2 pt-4 px-5">
+              <div className="flex items-center justify-between">
+                <CardTitle className="font-heading text-sm font-bold text-navy-900">{item.item}</CardTitle>
+                {item.savings_pct > 0 && (
+                  <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold">
+                    Save {item.savings_pct}%
+                  </Badge>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="px-5 pb-4 pt-0">
+              <div className="space-y-1.5">
+                {item.vendors.map((v, vi) => {
+                  const isBest = v.vendor === item.best_vendor && item.vendor_count > 1;
+                  return (
+                    <div
+                      key={v.vendor}
+                      className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors ${isBest ? 'bg-emerald-50 border border-emerald-200' : 'bg-slate-50/70'}`}
+                      data-testid={`vendor-price-${item.item}-${vi}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-xs font-semibold truncate ${isBest ? 'text-emerald-800' : 'text-navy-900'}`}>{v.vendor}</span>
+                          {isBest && (
+                            <Badge className="bg-emerald-600 text-white text-[8px] px-1.5 py-0 h-4 font-bold" data-testid={`best-badge-${item.item}`}>
+                              <Award className="w-2.5 h-2.5 mr-0.5" /> BEST PRICE
+                            </Badge>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400">{v.latest_date}{v.unit ? ` · per ${v.unit}` : ''} · {v.purchase_count} purchase{v.purchase_count !== 1 ? 's' : ''}</span>
+                      </div>
+                      <span className={`text-sm font-bold tabular-nums flex-shrink-0 ${isBest ? 'text-emerald-700' : 'text-navy-900'}`}>
+                        {fmt(v.latest_price)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      {filtered.length === 0 && q && <p className="text-sm text-slate-400 text-center py-6">No items match "{filter}"</p>}
+    </div>
+  );
+}
+
 export default function ItemsPage() {
   const { api } = useAuth();
   const [items, setItems] = useState([]);
@@ -293,6 +381,9 @@ export default function ItemsPage() {
           </div>
         </Card>
       )}
+
+      {/* Vendor Price Comparison */}
+      <VendorComparison api={api} />
 
       {/* Add/Edit Item Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
