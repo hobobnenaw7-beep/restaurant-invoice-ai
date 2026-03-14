@@ -27,7 +27,7 @@ const TABS = [
   { id: 'raw_materials', label: 'Raw Materials', icon: ShoppingCart },
   { id: 'salaries', label: 'Salaries', icon: Users2 },
   { id: 'other_expenses', label: 'Other Expenses', icon: Wrench },
-  { id: 'vendor', label: 'Vendor Purchases', icon: Truck },
+  { id: 'vendor', label: 'Vendors', icon: Truck },
   { id: 'profit', label: 'Profit', icon: PieChart },
 ];
 
