@@ -69,6 +69,14 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Frontend: "Vendor Price Comparison" card grid on Items page below items table — each card shows item name, savings badge, vendor rows with price/date/unit/purchases, green highlight + BEST PRICE badge on cheapest vendor
   - Tested: 100% pass rate (9/9 backend, 11/11 frontend features verified)
 
+- [x] **Price Alert System (March 14, 2026)**:
+  - Backend: POST /api/purchases now auto-generates price_increase alerts when item prices exceed previous prices (uses canonical + alias matching)
+  - Each alert stores: item_name, previous_price, new_price, change_pct, vendor, date, severity
+  - New endpoints: GET /api/alerts/prices, DELETE /api/alerts/prices/{aid}
+  - Dashboard summary returns price_alerts array
+  - Frontend: "Price Alerts" section on dashboard with red icon, alert count badge, dismissable alert cards showing item name, price change, percentage, vendor, date, HIGH badge for >15%
+  - Tested: 100% pass rate (12/12 backend, all frontend verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
