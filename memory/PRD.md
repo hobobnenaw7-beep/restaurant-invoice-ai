@@ -77,6 +77,12 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Frontend: "Price Alerts" section on dashboard with red icon, alert count badge, dismissable alert cards showing item name, price change, percentage, vendor, date, HIGH badge for >15%
   - Tested: 100% pass rate (12/12 backend, all frontend verified)
 
+- [x] **Automatic Profit Calculation (March 14, 2026)**:
+  - Backend: Dashboard summary now returns daily_profit, weekly_profit, monthly_profit, yearly_profit + previous period comparisons
+  - Formula: Net Profit = Total Sales - (Raw Materials + Salaries + Other Expenses)
+  - Frontend: "Net Profit" section on dashboard with 4 color-coded cards (green=profit, red=loss), period % change badges, progress bars
+  - Tested: 100% pass rate (16/16 backend, all frontend verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
