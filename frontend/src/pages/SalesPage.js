@@ -14,6 +14,7 @@ import {
   DollarSign, Plus, Upload, Sparkles, FileText, X,
   Camera, Image as ImageIcon, FileUp, Sheet
 } from 'lucide-react';
+import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/DuplicateCheck';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 
@@ -43,6 +44,7 @@ export default function SalesPage() {
   const filePdfRef = useRef(null);
   const fileCameraRef = useRef(null);
   const fileExcelRef = useRef(null);
+  const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -129,15 +131,18 @@ export default function SalesPage() {
 
   const handleSave = async () => {
     if (!form.total_sales && form.total_sales !== 0) { toast.error('Total sales is required'); return; }
-    setSaving(true);
-    try {
-      await api.post('/sales', form);
-      toast.success('Sale saved');
-      setShowAdd(false);
-      load();
-    } catch (err) {
-      toast.error('Save failed: ' + (err.response?.data?.detail || ''));
-    } finally { setSaving(false); }
+    const doSave = async () => {
+      setSaving(true);
+      try {
+        await api.post('/sales', form);
+        toast.success('Sale saved');
+        setShowAdd(false);
+        load();
+      } catch (err) {
+        toast.error('Save failed: ' + (err.response?.data?.detail || ''));
+      } finally { setSaving(false); }
+    };
+    await checkDuplicates('sale', form, api, doSave);
   };
 
   const SI = ({ field }) => sortBy === field ? (sortOrder === 'desc' ? <ChevronDown className="w-3 h-3 inline ml-0.5" /> : <ChevronUp className="w-3 h-3 inline ml-0.5" />) : null;
@@ -381,6 +386,7 @@ export default function SalesPage() {
           </div>
         </DialogContent>
       </Dialog>
+      <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
     </div>
   );
 }

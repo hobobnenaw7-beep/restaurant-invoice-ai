@@ -19,6 +19,7 @@ import {
   Camera, Image as ImageIcon, FileUp, Sheet,
   Receipt, Beef, Users2, Wrench
 } from 'lucide-react';
+import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/DuplicateCheck';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 
@@ -100,6 +101,7 @@ function RawMaterialsTab({ api }) {
   const fileCameraRef = useRef(null);
   const fileExcelRef = useRef(null);
   const [knownItems, setKnownItems] = useState([]);
+  const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,10 +150,13 @@ function RawMaterialsTab({ api }) {
 
   const handleSave = async () => {
     if (!form.supplier_name.trim()) { toast.error('Vendor name is required'); return; }
-    setSaving(true);
-    try { await api.post('/purchases', form); toast.success('Saved'); setShowAdd(false); load(); }
-    catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
-    finally { setSaving(false); }
+    const doSave = async () => {
+      setSaving(true);
+      try { await api.post('/purchases', form); toast.success('Saved'); setShowAdd(false); load(); }
+      catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
+      finally { setSaving(false); }
+    };
+    await checkDuplicates('purchase', form, api, doSave);
   };
 
   return (
@@ -254,6 +259,7 @@ function RawMaterialsTab({ api }) {
           <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-raw-material-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Purchase</Button></div>
         </DialogContent>
       </Dialog>
+      <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
     </div>
   );
 }
@@ -265,6 +271,7 @@ function SalariesTab({ api }) {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' });
   const [saving, setSaving] = useState(false);
+  const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -280,10 +287,13 @@ function SalariesTab({ api }) {
   const handleSave = async () => {
     if (!form.employee_name.trim()) { toast.error('Employee name is required'); return; }
     if (!form.amount) { toast.error('Salary amount is required'); return; }
-    setSaving(true);
-    try { await api.post('/salaries', form); toast.success('Salary saved'); setShowAdd(false); load(); }
-    catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
-    finally { setSaving(false); }
+    const doSave = async () => {
+      setSaving(true);
+      try { await api.post('/salaries', form); toast.success('Salary saved'); setShowAdd(false); load(); }
+      catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
+      finally { setSaving(false); }
+    };
+    await checkDuplicates('salary', form, api, doSave);
   };
 
   return (
@@ -333,6 +343,7 @@ function SalariesTab({ api }) {
           <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-salary-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Salary</Button></div>
         </DialogContent>
       </Dialog>
+      <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
     </div>
   );
 }
@@ -344,6 +355,7 @@ function OtherExpensesTab({ api }) {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' });
   const [saving, setSaving] = useState(false);
+  const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -359,10 +371,13 @@ function OtherExpensesTab({ api }) {
   const handleSave = async () => {
     if (!form.title.trim()) { toast.error('Expense title is required'); return; }
     if (!form.amount) { toast.error('Amount is required'); return; }
-    setSaving(true);
-    try { await api.post('/other-expenses', form); toast.success('Expense saved'); setShowAdd(false); load(); }
-    catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
-    finally { setSaving(false); }
+    const doSave = async () => {
+      setSaving(true);
+      try { await api.post('/other-expenses', form); toast.success('Expense saved'); setShowAdd(false); load(); }
+      catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
+      finally { setSaving(false); }
+    };
+    await checkDuplicates('other_expense', form, api, doSave);
   };
 
   const catColor = (c) => {
@@ -423,6 +438,7 @@ function OtherExpensesTab({ api }) {
           <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-other-expense-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Expense</Button></div>
         </DialogContent>
       </Dialog>
+      <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
     </div>
   );
 }
