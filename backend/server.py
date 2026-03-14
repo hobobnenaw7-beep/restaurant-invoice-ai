@@ -359,6 +359,10 @@ async def dashboard_summary(user=Depends(get_user)):
 
     alerts = await db.alerts.find({"restaurant_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(10)
     smart_alerts = await _generate_smart_alerts(rid)
+    price_alerts = await db.alerts.find(
+        {"restaurant_id": rid, "type": "price_increase"},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(20)
 
     return {
         "today_sales": round(sum_s(today), 2), "today_purchases": round(sum_p(today), 2),
@@ -377,6 +381,7 @@ async def dashboard_summary(user=Depends(get_user)):
         "top_items": top_items, "top_suppliers": top_suppliers,
         "weekly_trends": weekly_trends, "alerts": alerts,
         "smart_alerts": smart_alerts,
+        "price_alerts": price_alerts,
     }
 
 # ==================== UPLOAD / EXTRACT ====================
@@ -608,6 +613,71 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
     await db.purchases.insert_one(doc)
     doc.pop("_id", None)
+
+    # --- Generate price alerts for items with price increases ---
+    rid = user["restaurant_id"]
+    existing = await db.purchases.find(
+        {"restaurant_id": rid, "id": {"$ne": doc["id"]}},
+        {"_id": 0, "supplier_name": 1, "invoice_date": 1, "items": 1}
+    ).to_list(10000)
+
+    # Build alias mapping for fuzzy matching
+    canon_items = await db.canonical_items.find({"restaurant_id": rid}, {"_id": 0}).to_list(1000)
+    alias_list = await db.item_aliases.find({"restaurant_id": rid}, {"_id": 0}).to_list(5000)
+    name_to_group = {}
+    for c in canon_items:
+        group_key = c["name"].lower()
+        name_to_group[group_key] = group_key
+    for a in alias_list:
+        for c in canon_items:
+            if c["id"] == a["canonical_item_id"]:
+                name_to_group[a["alias_name"].lower()] = c["name"].lower()
+                break
+
+    for item in doc.get("items", []):
+        raw = item.get("raw_name", "").strip()
+        new_price = float(item.get("unit_price", 0))
+        if not raw or new_price <= 0:
+            continue
+
+        # Determine the group of names to match against
+        group_key = name_to_group.get(raw.lower(), raw.lower())
+        match_names = {group_key}
+        for k, v in name_to_group.items():
+            if v == group_key:
+                match_names.add(k)
+        match_names.add(raw.lower())
+
+        # Find the most recent previous price for this item across all purchases
+        prev_record = None
+        for p in sorted(existing, key=lambda x: x.get("invoice_date", ""), reverse=True):
+            for it in p.get("items", []):
+                if it.get("raw_name", "").lower() in match_names and float(it.get("unit_price", 0)) > 0:
+                    prev_record = {"price": float(it["unit_price"]), "vendor": p.get("supplier_name", "Unknown"), "date": p.get("invoice_date", "")}
+                    break
+            if prev_record:
+                break
+
+        if prev_record and new_price > prev_record["price"]:
+            pct = round(((new_price - prev_record["price"]) / prev_record["price"]) * 100, 1)
+            alert_doc = {
+                "id": str(uuid.uuid4()),
+                "restaurant_id": rid,
+                "type": "price_increase",
+                "severity": "high" if pct > 15 else "medium",
+                "item_name": raw,
+                "previous_price": round(prev_record["price"], 2),
+                "new_price": round(new_price, 2),
+                "change_pct": pct,
+                "vendor": doc.get("supplier_name", "Unknown"),
+                "previous_vendor": prev_record["vendor"],
+                "invoice_date": doc.get("invoice_date", ""),
+                "message": f"Price increase detected for {raw}.\nPrevious price: ${prev_record['price']:.2f}\nNew price: ${new_price:.2f}",
+                "is_read": False,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.alerts.insert_one(alert_doc)
+
     return doc
 
 @api_router.put("/purchases/{pid}")
@@ -1306,6 +1376,21 @@ async def vendor_price_comparison(user=Depends(get_user)):
     return {"items": items_out, "total_items": len(items_out)}
 
 # ==================== ALERTS ====================
+
+@api_router.get("/alerts/prices")
+async def list_price_alerts(user=Depends(get_user)):
+    """Get price increase alerts, newest first."""
+    return await db.alerts.find(
+        {"restaurant_id": user["restaurant_id"], "type": "price_increase"},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+
+@api_router.delete("/alerts/prices/{aid}")
+async def dismiss_price_alert(aid: str, user=Depends(get_user)):
+    result = await db.alerts.delete_one({"id": aid, "restaurant_id": user["restaurant_id"], "type": "price_increase"})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"status": "deleted"}
 
 @api_router.get("/alerts")
 async def list_alerts(user=Depends(get_user)):

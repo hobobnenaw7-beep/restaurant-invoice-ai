@@ -8,7 +8,8 @@ import { toast } from 'sonner';
 import {
   TrendingUp, TrendingDown, DollarSign, ShoppingCart,
   ArrowUpRight, ArrowDownRight, Loader2, BarChart3,
-  PackageOpen, CircleDollarSign, ChartNoAxesCombined, Zap
+  PackageOpen, CircleDollarSign, ChartNoAxesCombined, Zap,
+  AlertTriangle, X
 } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -172,6 +173,7 @@ export default function DashboardPage() {
   if (isEmpty) return <EmptyDashboard onSeed={seedData} seeding={seeding} />;
 
   const smartAlerts = data.smart_alerts || [];
+  const priceAlerts = data.price_alerts || [];
   const alertCounts = {
     low_stock: smartAlerts.filter(a => a.type === 'low_stock').length,
     cost_increase: smartAlerts.filter(a => a.type === 'cost_increase').length,
@@ -244,6 +246,75 @@ export default function DashboardPage() {
             <div className="space-y-2">
               {smartAlerts.map((alert, i) => (
                 <SmartAlertCard key={i} alert={alert} index={i} />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Price Alerts Section */}
+      {priceAlerts.length > 0 && (
+        <Card className="border border-slate-200/80 shadow-sm" data-testid="price-alerts-section">
+          <CardHeader className="pb-3 pt-5 px-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-red-600 flex items-center justify-center">
+                  <AlertTriangle className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="font-heading text-sm font-bold text-navy-900">Price Alerts</CardTitle>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Price increases detected when recording purchases</p>
+                </div>
+              </div>
+              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-[10px] px-2 py-0.5 font-bold">
+                {priceAlerts.length} alert{priceAlerts.length !== 1 ? 's' : ''}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="px-6 pb-5">
+            <div className="space-y-2">
+              {priceAlerts.map((alert, i) => (
+                <div
+                  key={alert.id}
+                  className="flex items-start gap-3 p-3.5 rounded-xl border-l-[3px] border-l-red-500 bg-red-50/60 transition-all hover:shadow-sm"
+                  data-testid={`price-alert-${i}`}
+                >
+                  <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <CircleDollarSign className="w-4 h-4 text-red-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-xs font-bold text-navy-900 leading-tight">
+                        Price increase detected for {alert.item_name}
+                      </span>
+                      {alert.change_pct > 15 && (
+                        <Badge className="bg-red-600 text-white text-[9px] px-1.5 py-0 h-4 font-bold">HIGH</Badge>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      Previous price: <span className="font-semibold text-navy-900">${alert.previous_price?.toFixed(2)}</span>
+                      <span className="mx-1.5 text-slate-300">&rarr;</span>
+                      New price: <span className="font-semibold text-red-600">${alert.new_price?.toFixed(2)}</span>
+                      <span className="ml-1.5 font-bold text-red-600">(+{alert.change_pct}%)</span>
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Vendor: {alert.vendor} &middot; {alert.invoice_date}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm" variant="ghost"
+                    className="h-6 w-6 p-0 flex-shrink-0 text-slate-400 hover:text-red-500"
+                    onClick={async () => {
+                      try {
+                        await api.delete(`/alerts/prices/${alert.id}`);
+                        setData(prev => ({ ...prev, price_alerts: prev.price_alerts.filter(a => a.id !== alert.id) }));
+                      } catch { toast.error('Failed to dismiss'); }
+                    }}
+                    data-testid={`dismiss-alert-${i}`}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
               ))}
             </div>
           </CardContent>
