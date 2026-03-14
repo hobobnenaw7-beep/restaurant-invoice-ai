@@ -965,7 +965,6 @@ def _parse_report_dates(report_type, date, now):
         start = datetime.strptime(date, "%Y-%m-%d") if date else now - timedelta(days=now.weekday())
         start_str = start.strftime("%Y-%m-%d")
         end_str = (start + timedelta(days=6)).strftime("%Y-%m-%d")
-        # previous period
         prev_start = (start - timedelta(days=7)).strftime("%Y-%m-%d")
         prev_end = (start - timedelta(days=1)).strftime("%Y-%m-%d")
     elif report_type == "monthly":
@@ -976,7 +975,31 @@ def _parse_report_dates(report_type, date, now):
         prev_month = start - timedelta(days=1)
         prev_start = prev_month.replace(day=1).strftime("%Y-%m-%d")
         prev_end = prev_month.strftime("%Y-%m-%d")
-    else:
+    elif report_type == "quarterly":
+        if date:
+            # date format: "2026-Q1" or "2026-1"
+            parts = date.replace("Q", "").replace("q", "").split("-")
+            year = int(parts[0])
+            quarter = int(parts[1]) if len(parts) > 1 else ((now.month - 1) // 3 + 1)
+        else:
+            year = now.year
+            quarter = (now.month - 1) // 3 + 1
+        q_month = (quarter - 1) * 3 + 1
+        start_str = f"{year}-{q_month:02d}-01"
+        end_month = q_month + 2
+        end_date = datetime(year, end_month, 1) + timedelta(days=31)
+        end_date = end_date.replace(day=1) - timedelta(days=1)
+        end_str = end_date.strftime("%Y-%m-%d")
+        # Previous quarter
+        prev_q = quarter - 1 if quarter > 1 else 4
+        prev_year = year if quarter > 1 else year - 1
+        prev_q_month = (prev_q - 1) * 3 + 1
+        prev_start = f"{prev_year}-{prev_q_month:02d}-01"
+        prev_end_month = prev_q_month + 2
+        prev_end_date = datetime(prev_year, prev_end_month, 1) + timedelta(days=31)
+        prev_end_date = prev_end_date.replace(day=1) - timedelta(days=1)
+        prev_end = prev_end_date.strftime("%Y-%m-%d")
+    else:  # yearly
         year = int(date) if date else now.year
         start_str, end_str = f"{year}-01-01", f"{year}-12-31"
         prev_start, prev_end = f"{year-1}-01-01", f"{year-1}-12-31"
@@ -988,13 +1011,27 @@ async def _build_report(rid, report_type, date):
 
     purchases = await db.purchases.find({"restaurant_id": rid, "invoice_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
     sales = await db.sales.find({"restaurant_id": rid, "report_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+    salaries_cur = await db.salaries.find({"restaurant_id": rid, "payment_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+    other_exp_cur = await db.other_expenses.find({"restaurant_id": rid, "expense_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+
     prev_purchases = await db.purchases.find({"restaurant_id": rid, "invoice_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
     prev_sales = await db.sales.find({"restaurant_id": rid, "report_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
+    salaries_prev = await db.salaries.find({"restaurant_id": rid, "payment_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
+    other_exp_prev = await db.other_expenses.find({"restaurant_id": rid, "expense_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
 
     total_p = round(sum(p["total"] for p in purchases), 2)
     total_s = round(sum(s["total_sales"] for s in sales), 2)
+    total_sal = round(sum(s["amount"] for s in salaries_cur), 2)
+    total_oe = round(sum(e["amount"] for e in other_exp_cur), 2)
+    total_expenses = round(total_p + total_sal + total_oe, 2)
+    net_profit = round(total_s - total_expenses, 2)
+
     prev_p = round(sum(p["total"] for p in prev_purchases), 2)
     prev_s = round(sum(s["total_sales"] for s in prev_sales), 2)
+    prev_sal = round(sum(s["amount"] for s in salaries_prev), 2)
+    prev_oe = round(sum(e["amount"] for e in other_exp_prev), 2)
+    prev_total_expenses = round(prev_p + prev_sal + prev_oe, 2)
+    prev_net_profit = round(prev_s - prev_total_expenses, 2)
 
     sup_spend = {}
     sup_invoice_count = {}
@@ -1050,6 +1087,13 @@ async def _build_report(rid, report_type, date):
         "total_purchases": total_p, "total_sales": total_s, "profit": round(total_s - total_p, 2),
         "prev_purchases": prev_p, "prev_sales": prev_s, "prev_profit": round(prev_s - prev_p, 2),
         "margin_pct": round((total_s - total_p) / total_s * 100, 1) if total_s > 0 else 0,
+        # Tax reporting fields
+        "total_salaries": total_sal, "total_other_expenses": total_oe,
+        "total_expenses": total_expenses, "net_profit": net_profit,
+        "prev_salaries": prev_sal, "prev_other_expenses": prev_oe,
+        "prev_total_expenses": prev_total_expenses, "prev_net_profit": prev_net_profit,
+        "net_margin_pct": round(net_profit / total_s * 100, 1) if total_s > 0 else 0,
+        # Existing fields
         "spending_by_supplier": [{"name": n, "total": round(t, 2), "invoices": sup_invoice_count.get(n, 0)} for n, t in sorted(sup_spend.items(), key=lambda x: -x[1])],
         "top_items": [{"name": n, "total": round(t, 2)} for n, t in sorted(item_spend.items(), key=lambda x: -x[1])[:10]],
         "price_changes": price_changes[:20],
@@ -1083,6 +1127,34 @@ async def download_report(user=Depends(get_user), report_type: str = "weekly", d
         elements.append(Paragraph("Restaurant Financial Report", title_style))
         elements.append(Paragraph(f"{report_type.title()} &bull; {report['date_range']['start']} to {report['date_range']['end']}", sub_style))
         elements.append(Spacer(1, 8*mm))
+
+        # Tax Summary table
+        elements.append(Paragraph("Tax Summary", section_style))
+        tax_data = [
+            ['Category', 'Amount'],
+            ['Total Sales (Revenue)', f"${report['total_sales']:,.2f}"],
+            ['', ''],
+            ['Expenses Breakdown:', ''],
+            ['  Raw Materials', f"${report['total_purchases']:,.2f}"],
+            ['  Salaries', f"${report['total_salaries']:,.2f}"],
+            ['  Other Expenses', f"${report['total_other_expenses']:,.2f}"],
+            ['Total Expenses', f"${report['total_expenses']:,.2f}"],
+            ['', ''],
+            ['Net Profit', f"${report['net_profit']:,.2f}"],
+            ['Net Margin', f"{report['net_margin_pct']}%"],
+        ]
+        t = Table(tax_data, colWidths=[100*mm, 60*mm])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f172a')), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTSIZE', (0,0), (-1,-1), 9), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+            ('TOPPADDING', (0,0), (-1,-1), 5), ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('BACKGROUND', (0,3), (-1,3), colors.HexColor('#f8fafc')), ('FONTNAME', (0,3), (-1,3), 'Helvetica-Bold'),
+            ('BACKGROUND', (0,7), (-1,7), colors.HexColor('#f1f5f9')), ('FONTNAME', (0,7), (-1,7), 'Helvetica-Bold'),
+            ('BACKGROUND', (0,9), (-1,9), colors.HexColor('#ecfdf5') if report['net_profit'] >= 0 else colors.HexColor('#fef2f2')),
+            ('FONTNAME', (0,9), (-1,9), 'Helvetica-Bold'), ('FONTNAME', (0,10), (-1,10), 'Helvetica-Bold'),
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 4*mm))
 
         # KPIs table
         kpi_data = [['Revenue', 'Purchases', 'Profit', 'Margin'],
@@ -1143,7 +1215,24 @@ async def download_report(user=Depends(get_user), report_type: str = "weekly", d
         ws.append(["Purchases", report['total_purchases'], report['prev_purchases'], pct_chg(report['total_purchases'], report['prev_purchases'])])
         ws.append(["Profit", report['profit'], report['prev_profit'], pct_chg(report['profit'], report['prev_profit']) if report['prev_profit'] != 0 else "N/A"])
         ws.append(["Margin %", f"{report['margin_pct']}%", "", ""])
-        ws.column_dimensions['A'].width = 20
+        ws.append([])
+        ws.append(["--- TAX SUMMARY ---"])
+        ws.cell(row=ws.max_row, column=1).font = Font(bold=True, size=11)
+        ws.append(["Total Sales (Revenue)", report['total_sales']])
+        ws.append([])
+        ws.append(["Expenses Breakdown:"])
+        ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
+        ws.append(["  Raw Materials", report['total_purchases']])
+        ws.append(["  Salaries", report['total_salaries']])
+        ws.append(["  Other Expenses", report['total_other_expenses']])
+        ws.append(["Total Expenses", report['total_expenses']])
+        ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
+        ws.append([])
+        ws.append(["Net Profit", report['net_profit']])
+        ws.cell(row=ws.max_row, column=1).font = Font(bold=True, size=11)
+        ws.cell(row=ws.max_row, column=2).font = Font(bold=True, size=11)
+        ws.append(["Net Margin", f"{report['net_margin_pct']}%"])
+        ws.column_dimensions['A'].width = 25
         ws.column_dimensions['B'].width = 18
         ws.column_dimensions['C'].width = 18
         ws.column_dimensions['D'].width = 14

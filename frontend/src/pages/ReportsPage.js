@@ -133,7 +133,7 @@ export default function ReportsPage() {
     finally { setDownloading(''); }
   };
 
-  const periodLabel = reportType === 'weekly' ? 'week' : reportType === 'monthly' ? 'month' : 'year';
+  const periodLabel = reportType === 'weekly' ? 'week' : reportType === 'monthly' ? 'month' : reportType === 'quarterly' ? 'quarter' : 'year';
 
   // Build trend chart data for selected item
   const trendChartData = priceData?.price_trends?.[selectedTrendItem] || [];
@@ -162,15 +162,16 @@ export default function ReportsPage() {
           <TabsList className="bg-slate-100 h-9" data-testid="report-type-tabs">
             <TabsTrigger value="weekly" className="text-xs font-semibold px-5" data-testid="tab-weekly">Weekly</TabsTrigger>
             <TabsTrigger value="monthly" className="text-xs font-semibold px-5" data-testid="tab-monthly">Monthly</TabsTrigger>
+            <TabsTrigger value="quarterly" className="text-xs font-semibold px-5" data-testid="tab-quarterly">Quarterly</TabsTrigger>
             <TabsTrigger value="yearly" className="text-xs font-semibold px-5" data-testid="tab-yearly">Yearly</TabsTrigger>
           </TabsList>
         </Tabs>
         <Input
-          type={reportType === 'yearly' ? 'number' : 'date'}
+          type={reportType === 'yearly' ? 'number' : reportType === 'quarterly' ? 'text' : 'date'}
           className="w-44 h-9 text-xs"
           value={date}
           onChange={(e) => setDate(e.target.value)}
-          placeholder={reportType === 'yearly' ? new Date().getFullYear().toString() : ''}
+          placeholder={reportType === 'yearly' ? new Date().getFullYear().toString() : reportType === 'quarterly' ? `${new Date().getFullYear()}-Q1` : ''}
           data-testid="report-date-input"
         />
         {report?.date_range && (
@@ -202,6 +203,74 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Tax Summary */}
+          <Card className="border border-slate-200/80 shadow-sm" data-testid="tax-summary-section">
+            <CardHeader className="pb-3 pt-5 px-6">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-navy-900 flex items-center justify-center">
+                  <FileSpreadsheet className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="font-heading text-sm font-bold text-navy-900">Tax Summary</CardTitle>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Financial breakdown for tax filing — {report.date_range.start} to {report.date_range.end}</p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="px-6 pb-5">
+              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <table className="w-full text-sm" data-testid="tax-summary-table">
+                  <thead>
+                    <tr className="bg-slate-50/80">
+                      <th className="text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider px-5 py-2.5">Category</th>
+                      <th className="text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider px-5 py-2.5">Current Period</th>
+                      <th className="text-right text-[10px] font-bold text-slate-500 uppercase tracking-wider px-5 py-2.5">Previous Period</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-slate-100 bg-teal-50/30" data-testid="tax-row-sales">
+                      <td className="px-5 py-3 font-semibold text-navy-900">Total Sales (Revenue)</td>
+                      <td className="px-5 py-3 text-right font-bold text-navy-900 tabular-nums">{fmtFull(report.total_sales)}</td>
+                      <td className="px-5 py-3 text-right text-slate-400 tabular-nums">{fmtFull(report.prev_sales)}</td>
+                    </tr>
+                    <tr className="border-t border-slate-100 bg-slate-50/30">
+                      <td className="px-5 py-2 font-semibold text-slate-500 text-xs uppercase tracking-wider" colSpan={3}>Expenses Breakdown</td>
+                    </tr>
+                    <tr className="border-t border-slate-50" data-testid="tax-row-raw-materials">
+                      <td className="px-5 py-2.5 pl-8 text-slate-600">Raw Materials</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-slate-700">{fmtFull(report.total_purchases)}</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-slate-400">{fmtFull(report.prev_purchases)}</td>
+                    </tr>
+                    <tr className="border-t border-slate-50" data-testid="tax-row-salaries">
+                      <td className="px-5 py-2.5 pl-8 text-slate-600">Salaries</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-slate-700">{fmtFull(report.total_salaries || 0)}</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-slate-400">{fmtFull(report.prev_salaries || 0)}</td>
+                    </tr>
+                    <tr className="border-t border-slate-50" data-testid="tax-row-other">
+                      <td className="px-5 py-2.5 pl-8 text-slate-600">Other Expenses</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-slate-700">{fmtFull(report.total_other_expenses || 0)}</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-slate-400">{fmtFull(report.prev_other_expenses || 0)}</td>
+                    </tr>
+                    <tr className="border-t-2 border-slate-200 bg-slate-50/60" data-testid="tax-row-total-expenses">
+                      <td className="px-5 py-3 font-bold text-navy-900">Total Expenses</td>
+                      <td className="px-5 py-3 text-right font-bold text-navy-900 tabular-nums">{fmtFull(report.total_expenses || 0)}</td>
+                      <td className="px-5 py-3 text-right font-semibold text-slate-400 tabular-nums">{fmtFull(report.prev_total_expenses || 0)}</td>
+                    </tr>
+                    <tr className={`border-t-2 border-slate-300 ${(report.net_profit || 0) >= 0 ? 'bg-emerald-50/60' : 'bg-red-50/60'}`} data-testid="tax-row-net-profit">
+                      <td className="px-5 py-3.5 font-bold text-navy-900 text-base">Net Profit</td>
+                      <td className={`px-5 py-3.5 text-right font-extrabold text-base tabular-nums ${(report.net_profit || 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{fmtFull(report.net_profit || 0)}</td>
+                      <td className={`px-5 py-3.5 text-right font-semibold tabular-nums ${(report.prev_net_profit || 0) >= 0 ? 'text-emerald-500/60' : 'text-red-400/60'}`}>{fmtFull(report.prev_net_profit || 0)}</td>
+                    </tr>
+                    <tr className="border-t border-slate-100" data-testid="tax-row-net-margin">
+                      <td className="px-5 py-2.5 font-semibold text-slate-500">Net Margin</td>
+                      <td className={`px-5 py-2.5 text-right font-bold tabular-nums ${(report.net_margin_pct || 0) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{report.net_margin_pct || 0}%</td>
+                      <td className="px-5 py-2.5 text-right text-slate-400">—</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Trend Chart */}
           {report.daily_breakdown?.length > 0 && (
