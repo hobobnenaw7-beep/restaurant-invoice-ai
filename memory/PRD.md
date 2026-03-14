@@ -103,13 +103,20 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Backward compatible with existing report_date-only records
   - Tested: 100% (6/6 backend, 12/12 frontend)
 
+- [x] **Reports Page Reorganization (March 14, 2026)**:
+  - Completely rewrote Reports page into 6 tabbed categories: Sales, Raw Materials, Salaries, Other Expenses, Vendors, Profit
+  - Backend: GET /api/reports/category/{category} with date_from/date_to filtering, vendor filter for Vendors tab
+  - Backend: GET /api/reports/category/{category}/export?fmt=pdf|excel for all 6 categories
+  - Each tab: date range filters, KPI summary cards, data tables, PDF/Excel export buttons
+  - Profit tab includes detailed breakdown table (Revenue, Expenses by category, Net Profit, Net Margin)
+  - Tested: 100% (12/12 backend, all frontend features verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
 ## Prioritized Backlog
 
 ### P0
-- Verify and complete Expenses page refactor (3-tab CRUD, dashboard totals)
 - Implement Real OCR/Document Extraction (OpenAI GPT-5.2 Vision)
 
 ### P1
