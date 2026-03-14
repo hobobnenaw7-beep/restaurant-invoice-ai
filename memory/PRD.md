@@ -111,6 +111,17 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Profit tab includes detailed breakdown table (Revenue, Expenses by category, Net Profit, Net Margin)
   - Tested: 100% (12/12 backend, all frontend features verified)
 
+- [x] **Records Library (March 14, 2026)**:
+  - New archive section for all uploaded files linked to financial entries
+  - Two folders: Sales Files, Expense Files — accessible via tabbed navigation
+  - Backend: POST /api/records/upload, GET /api/records (with folder/search/date/type filters), GET /api/records/{id}, GET /api/records/{id}/file, DELETE /api/records/{id}
+  - File preview dialog with transaction details (type, ID, date, amount, vendor, notes)
+  - Search by filename, filter by date range, filter by file type (Image/PDF/Excel)
+  - Download and delete with confirmation
+  - Auto-save: files uploaded during Sale or Raw Material Purchase entry are automatically saved to the correct folder
+  - Sidebar navigation added between Reports and Chat Assistant
+  - Tested: 100% (19/19 backend, all frontend features verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
