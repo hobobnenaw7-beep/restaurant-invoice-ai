@@ -90,6 +90,19 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Frontend: Reports page now has 4 tabs (Weekly, Monthly, Quarterly, Yearly); Tax Summary section with structured table showing Total Sales, Expenses Breakdown, Total Expenses, Net Profit, Net Margin with current vs previous period
   - Tested: 100% pass rate (17/17 backend, all frontend verified)
 
+- [x] **Duplicate Entry Detection (March 14, 2026)**:
+  - Backend `POST /api/duplicates/check` — checks for duplicate purchases (by invoice#, vendor+date+amount), sales (by date, date+amount), salaries (employee+date), other expenses (title+date, date+amount)
+  - Shared `DuplicateWarningDialog` component + `useDuplicateCheck` hook
+  - Applied to all 4 save flows: Sales, Raw Materials, Salaries, Other Expenses
+  - Warning shows match details, Cancel and Save Anyway buttons
+
+- [x] **Sales Date Range (March 14, 2026)**:
+  - From Date + To Date fields replace single Report Date; backend validates to_date >= from_date
+  - "Single Day Entry" badge when dates match, "X Day Range" badge when different
+  - Table shows TYPE column with badges, date ranges as "from → to"
+  - Backward compatible with existing report_date-only records
+  - Tested: 100% (6/6 backend, 12/12 frontend)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
