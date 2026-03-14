@@ -63,6 +63,12 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Frontend: "Prices" button on each item row → opens Price History dialog with 4 KPI cards, Recharts line chart, and scrollable purchase records table
   - Tested: 100% pass rate (8/8 backend, all frontend features verified)
 
+- [x] **Vendor Price Comparison (March 14, 2026)**:
+  - Backend `GET /api/prices/vendor-comparison` — per-item, per-vendor latest price comparison with canonical name + alias resolution
+  - Returns items sorted by vendor count and savings potential, each with vendors sorted cheapest first, best_vendor, savings_pct
+  - Frontend: "Vendor Price Comparison" card grid on Items page below items table — each card shows item name, savings badge, vendor rows with price/date/unit/purchases, green highlight + BEST PRICE badge on cheapest vendor
+  - Tested: 100% pass rate (9/9 backend, 11/11 frontend features verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
