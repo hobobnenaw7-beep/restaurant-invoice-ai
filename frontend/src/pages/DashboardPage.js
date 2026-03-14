@@ -9,7 +9,7 @@ import {
   TrendingUp, TrendingDown, DollarSign, ShoppingCart,
   ArrowUpRight, ArrowDownRight, Loader2, BarChart3,
   PackageOpen, CircleDollarSign, ChartNoAxesCombined, Zap,
-  AlertTriangle, X
+  AlertTriangle, X, Wallet
 } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -207,6 +207,56 @@ export default function DashboardPage() {
         <Card className="border border-slate-100 shadow-sm"><CardContent className="p-6">
           <KPI label="This Month Purchases" value={data.month_purchases} prev={data.prev_month_purchases} icon={ShoppingCart} testId="stat-month-purchases" />
         </CardContent></Card>
+      </div>
+
+      {/* Profit Overview */}
+      <div data-testid="profit-overview-section">
+        <div className="flex items-center gap-2.5 mb-4">
+          <div className="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center">
+            <Wallet className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <h2 className="font-heading text-sm font-bold text-navy-900">Net Profit</h2>
+            <p className="text-[10px] text-slate-400">Total Sales minus all Expenses (Raw Materials + Salaries + Other)</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { label: 'Daily Profit', value: data.daily_profit, prev: null, testId: 'profit-daily' },
+            { label: 'Weekly Profit', value: data.weekly_profit, prev: data.prev_weekly_profit, testId: 'profit-weekly' },
+            { label: 'Monthly Profit', value: data.monthly_profit, prev: data.prev_monthly_profit, testId: 'profit-monthly' },
+            { label: 'Yearly Profit', value: data.yearly_profit, prev: data.prev_yearly_profit, testId: 'profit-yearly' },
+          ].map((p) => {
+            const val = p.value || 0;
+            const isPositive = val >= 0;
+            const pct = pctChange(Math.abs(p.value), Math.abs(p.prev));
+            const pctUp = pct > 0;
+            return (
+              <Card key={p.testId} className={`border shadow-sm overflow-hidden ${isPositive ? 'border-emerald-200/80' : 'border-red-200/80'}`} data-testid={p.testId}>
+                <CardContent className="p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">{p.label}</span>
+                    {pct !== null && (
+                      <span className={`inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${pctUp ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                        {pctUp ? <ArrowUpRight className="w-2.5 h-2.5 mr-0.5" /> : <ArrowDownRight className="w-2.5 h-2.5 mr-0.5" />}
+                        {Math.abs(pct)}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    {!isPositive && <span className="text-lg font-bold text-red-500">-</span>}
+                    <span className={`text-2xl font-extrabold tabular-nums tracking-tight ${isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {fmt(Math.abs(val))}
+                    </span>
+                  </div>
+                  <div className={`h-1 rounded-full mt-3 ${isPositive ? 'bg-emerald-100' : 'bg-red-100'}`}>
+                    <div className={`h-full rounded-full transition-all ${isPositive ? 'bg-emerald-500' : 'bg-red-500'}`} style={{ width: `${Math.min(100, Math.abs(val) / Math.max(1, (data.yearly_sales || 1)) * 100 * 4)}%` }} />
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
       </div>
 
       {/* Smart Alerts Section */}

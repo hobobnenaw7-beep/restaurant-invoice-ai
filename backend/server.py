@@ -318,11 +318,14 @@ async def dashboard_summary(user=Depends(get_user)):
     today = now.strftime("%Y-%m-%d")
     week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
     month_start = now.strftime("%Y-%m-01")
+    year_start = now.strftime("%Y-01-01")
     prev_week_start = (now - timedelta(days=now.weekday() + 7)).strftime("%Y-%m-%d")
     prev_week_end = (now - timedelta(days=now.weekday() + 1)).strftime("%Y-%m-%d")
     prev_month = now.replace(day=1) - timedelta(days=1)
     prev_month_start = prev_month.strftime("%Y-%m-01")
     prev_month_end = prev_month.strftime("%Y-%m-%d")
+    prev_year_start = f"{now.year - 1}-01-01"
+    prev_year_end = f"{now.year - 1}-12-31"
 
     purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
     sales = await db.sales.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
@@ -337,6 +340,12 @@ async def dashboard_summary(user=Depends(get_user)):
         return sum(s["amount"] for s in salaries if s.get("payment_date", "") >= df and (not dt or s.get("payment_date", "") <= dt))
     def sum_oe(df, dt=None):
         return sum(e["amount"] for e in other_exp if e.get("expense_date", "") >= df and (not dt or e.get("expense_date", "") <= dt))
+
+    def total_expenses(df, dt=None):
+        return sum_p(df, dt) + sum_sal(df, dt) + sum_oe(df, dt)
+
+    def profit(df, dt=None):
+        return round(sum_s(df, dt) - total_expenses(df, dt), 2)
 
     item_spend = {}
     for p in purchases:
@@ -382,6 +391,18 @@ async def dashboard_summary(user=Depends(get_user)):
         "weekly_trends": weekly_trends, "alerts": alerts,
         "smart_alerts": smart_alerts,
         "price_alerts": price_alerts,
+        "daily_profit": profit(today),
+        "weekly_profit": profit(week_start),
+        "monthly_profit": profit(month_start),
+        "yearly_profit": profit(year_start),
+        "prev_weekly_profit": profit(prev_week_start, prev_week_end),
+        "prev_monthly_profit": profit(prev_month_start, prev_month_end),
+        "prev_yearly_profit": profit(prev_year_start, prev_year_end),
+        "daily_expenses": round(total_expenses(today), 2),
+        "weekly_expenses": round(total_expenses(week_start), 2),
+        "monthly_expenses": round(total_expenses(month_start), 2),
+        "yearly_expenses": round(total_expenses(year_start), 2),
+        "yearly_sales": round(sum_s(year_start), 2),
     }
 
 # ==================== UPLOAD / EXTRACT ====================
