@@ -627,6 +627,7 @@ async def upload_record(
     user=Depends(get_user)
 ):
     """Upload a file to the Records Library."""
+    import hashlib
     rid = user["restaurant_id"]
     if folder not in ("sales", "expenses"):
         raise HTTPException(400, "folder must be 'sales' or 'expenses'")
@@ -636,6 +637,22 @@ async def upload_record(
     original_name = file.filename or "untitled"
     ext = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
     mime = file.content_type or "application/octet-stream"
+    file_hash = hashlib.sha256(content).hexdigest()
+
+    # Duplicate detection: same content hash OR same file name + size in same folder
+    dup = await db.records_library.find_one({
+        "restaurant_id": rid, "folder": folder,
+        "$or": [
+            {"file_hash": file_hash},
+            {"file_name": original_name, "file_size": file_size},
+        ]
+    }, {"_id": 0, "id": 1, "file_name": 1, "upload_date": 1})
+    if dup:
+        raise HTTPException(
+            409,
+            f"Duplicate file detected: \"{dup['file_name']}\" (uploaded {dup.get('upload_date', 'previously')})"
+        )
+
     record_id = str(uuid.uuid4())
     stored_name = f"{record_id}.{ext}" if ext else record_id
 
@@ -652,6 +669,7 @@ async def upload_record(
         "file_type": mime,
         "file_extension": ext,
         "file_size": file_size,
+        "file_hash": file_hash,
         "stored_name": stored_name,
         "upload_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "transaction_type": transaction_type,
@@ -675,8 +693,10 @@ async def list_records(
     date_from: str = "",
     date_to: str = "",
     file_type: str = "",
+    sort_by: str = "upload_date",
+    sort_order: str = "desc",
 ):
-    """List records in the library with optional filters."""
+    """List records in the library with optional filters and sorting."""
     rid = user["restaurant_id"]
     query = {"restaurant_id": rid}
     if folder:
@@ -695,7 +715,15 @@ async def list_records(
         elif file_type == "excel":
             query["file_extension"] = {"$in": ["xlsx", "xls", "csv"]}
 
-    records = await db.records_library.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    sort_field_map = {
+        "upload_date": "upload_date",
+        "amount": "transaction_amount",
+        "name": "file_name",
+    }
+    sort_f = sort_field_map.get(sort_by, "upload_date")
+    sort_d = -1 if sort_order == "desc" else 1
+
+    records = await db.records_library.find(query, {"_id": 0}).sort(sort_f, sort_d).to_list(5000)
     return records
 
 
