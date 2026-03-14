@@ -83,6 +83,13 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Frontend: "Net Profit" section on dashboard with 4 color-coded cards (green=profit, red=loss), period % change badges, progress bars
   - Tested: 100% pass rate (16/16 backend, all frontend verified)
 
+- [x] **Tax Reporting Features (March 14, 2026)**:
+  - Backend: `_build_report` now includes salaries + other_expenses for full expense breakdown; Net Profit = Sales - (Raw Materials + Salaries + Other); `_parse_report_dates` supports quarterly (2026-Q1 format)
+  - PDF export: Tax Summary table added with category breakdown before KPIs
+  - Excel export: Tax Summary rows added to Summary sheet
+  - Frontend: Reports page now has 4 tabs (Weekly, Monthly, Quarterly, Yearly); Tax Summary section with structured table showing Total Sales, Expenses Breakdown, Total Expenses, Net Profit, Net Margin with current vs previous period
+  - Tested: 100% pass rate (17/17 backend, all frontend verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
