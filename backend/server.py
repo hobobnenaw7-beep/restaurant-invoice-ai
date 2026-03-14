@@ -64,12 +64,16 @@ class PurchaseUpdate(BaseModel):
     total: Optional[float] = None
 
 class SalesCreate(BaseModel):
-    report_date: str
+    report_date: Optional[str] = None  # kept for backward compat
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
     total_sales: float
     items: Optional[List[Dict[str, Any]]] = []
 
 class SalesUpdate(BaseModel):
     report_date: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
     total_sales: Optional[float] = None
     items: Optional[List[Dict[str, Any]]] = None
 
@@ -891,6 +895,16 @@ async def get_sale(sid: str, user=Depends(get_user)):
 @api_router.post("/sales")
 async def create_sale(data: SalesCreate, user=Depends(get_user)):
     doc = data.model_dump()
+    # Normalize dates: date_from/date_to take precedence, fall back to report_date
+    if doc.get("date_from") and doc.get("date_to"):
+        if doc["date_to"] < doc["date_from"]:
+            raise HTTPException(400, "To Date cannot be earlier than From Date")
+        doc["report_date"] = doc["date_from"]
+        doc["is_single_day"] = doc["date_from"] == doc["date_to"]
+    elif doc.get("report_date"):
+        doc["date_from"] = doc["report_date"]
+        doc["date_to"] = doc["report_date"]
+        doc["is_single_day"] = True
     doc["id"] = str(uuid.uuid4())
     doc["restaurant_id"] = user["restaurant_id"]
     doc["created_at"] = datetime.now(timezone.utc).isoformat()

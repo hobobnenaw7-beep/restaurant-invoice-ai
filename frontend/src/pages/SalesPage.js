@@ -12,14 +12,15 @@ import { toast } from 'sonner';
 import {
   Loader2, Eye, Trash2, ChevronUp, ChevronDown,
   DollarSign, Plus, Upload, Sparkles, FileText, X,
-  Camera, Image as ImageIcon, FileUp, Sheet
+  Camera, Image as ImageIcon, FileUp, Sheet, CalendarDays
 } from 'lucide-react';
 import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/DuplicateCheck';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 
 const emptySale = () => ({
-  report_date: new Date().toISOString().split('T')[0],
+  date_from: new Date().toISOString().split('T')[0],
+  date_to: new Date().toISOString().split('T')[0],
   total_sales: 0,
   items: [{ menu_item: '', quantity: 1, revenue: 0 }],
 });
@@ -131,10 +132,14 @@ export default function SalesPage() {
 
   const handleSave = async () => {
     if (!form.total_sales && form.total_sales !== 0) { toast.error('Total sales is required'); return; }
+    if (!form.date_from) { toast.error('From Date is required'); return; }
+    if (!form.date_to) { toast.error('To Date is required'); return; }
+    if (form.date_to < form.date_from) { toast.error('To Date cannot be earlier than From Date'); return; }
+    const payload = { ...form, report_date: form.date_from };
     const doSave = async () => {
       setSaving(true);
       try {
-        await api.post('/sales', form);
+        await api.post('/sales', payload);
         toast.success('Sale saved');
         setShowAdd(false);
         load();
@@ -142,7 +147,7 @@ export default function SalesPage() {
         toast.error('Save failed: ' + (err.response?.data?.detail || ''));
       } finally { setSaving(false); }
     };
-    await checkDuplicates('sale', form, api, doSave);
+    await checkDuplicates('sale', payload, api, doSave);
   };
 
   const SI = ({ field }) => sortBy === field ? (sortOrder === 'desc' ? <ChevronDown className="w-3 h-3 inline ml-0.5" /> : <ChevronUp className="w-3 h-3 inline ml-0.5" />) : null;
@@ -185,6 +190,7 @@ export default function SalesPage() {
               <TableHeader>
                 <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
                   <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('report_date')}>Date <SI field="report_date" /></TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Type</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Menu Items</TableHead>
                   <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total_sales')}>Total Revenue <SI field="total_sales" /></TableHead>
                   <TableHead className="w-20" />
@@ -193,7 +199,16 @@ export default function SalesPage() {
               <TableBody>
                 {sales.map((s, i) => (
                   <TableRow key={s.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} data-testid={`sale-row-${i}`}>
-                    <TableCell className="text-xs font-medium tabular-nums text-slate-600">{s.report_date}</TableCell>
+                    <TableCell className="text-xs font-medium tabular-nums text-slate-600">
+                      {s.date_from && s.date_to && s.date_from !== s.date_to
+                        ? <>{s.date_from} <span className="text-slate-300 mx-0.5">&rarr;</span> {s.date_to}</>
+                        : s.date_from || s.report_date}
+                    </TableCell>
+                    <TableCell>
+                      {s.date_from && s.date_to && s.date_from !== s.date_to
+                        ? <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[9px] font-bold text-violet-600">{Math.round((new Date(s.date_to) - new Date(s.date_from)) / 86400000) + 1}d Range</span>
+                        : <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[9px] font-bold text-sky-600">1 Day</span>}
+                    </TableCell>
                     <TableCell className="text-xs text-center text-slate-500">{s.items?.length || 0}</TableCell>
                     <TableCell className="text-xs text-right font-bold text-teal-700 tabular-nums">{fmt(s.total_sales)}</TableCell>
                     <TableCell className="text-right">
@@ -219,8 +234,21 @@ export default function SalesPage() {
           <DialogHeader><DialogTitle className="font-heading text-lg">Sales Report</DialogTitle></DialogHeader>
           {selected && (
             <div className="space-y-5">
-              <div className="grid grid-cols-2 gap-4">
-                <div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date</p><p className="text-sm font-semibold text-navy-900 mt-0.5">{selected.report_date}</p></div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Period</p>
+                  <p className="text-sm font-semibold text-navy-900 mt-0.5">
+                    {selected.date_from && selected.date_to && selected.date_from !== selected.date_to
+                      ? `${selected.date_from} to ${selected.date_to}`
+                      : selected.date_from || selected.report_date}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Type</p>
+                  <p className="mt-1">{selected.date_from && selected.date_to && selected.date_from !== selected.date_to
+                    ? <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[10px] font-bold text-violet-600">{Math.round((new Date(selected.date_to) - new Date(selected.date_from)) / 86400000) + 1} Day Range</span>
+                    : <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[10px] font-bold text-sky-600">Single Day Entry</span>}</p>
+                </div>
                 <div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Revenue</p><p className="text-lg font-bold text-teal-700 mt-0.5">{fmt(selected.total_sales)}</p></div>
               </div>
               {selected.items?.length > 0 && (<>
@@ -342,13 +370,36 @@ export default function SalesPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Report Date</Label>
-                <Input className="mt-1 h-9 text-sm" type="date" value={form.report_date} onChange={(e) => updateField('report_date', e.target.value)} data-testid="form-report-date" />
+                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">From Date *</Label>
+                <Input className="mt-1 h-9 text-sm" type="date" value={form.date_from} onChange={(e) => {
+                  updateField('date_from', e.target.value);
+                  if (form.date_to && e.target.value > form.date_to) updateField('date_to', e.target.value);
+                }} data-testid="form-date-from" />
               </div>
               <div>
-                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Sales *</Label>
-                <Input className="mt-1 h-9 text-sm font-semibold" type="number" step="0.01" value={form.total_sales || ''} onChange={(e) => updateField('total_sales', parseFloat(e.target.value) || 0)} placeholder="0.00" data-testid="form-total-sales" />
+                <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">To Date *</Label>
+                <Input className="mt-1 h-9 text-sm" type="date" value={form.date_to} min={form.date_from} onChange={(e) => updateField('date_to', e.target.value)} data-testid="form-date-to" />
               </div>
+            </div>
+            {form.date_from && form.date_to && (
+              <div className="flex items-center gap-2" data-testid="date-range-indicator">
+                {form.date_from === form.date_to ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-50 border border-sky-200 text-[10px] font-bold text-sky-700" data-testid="single-day-badge">
+                    <CalendarDays className="w-3 h-3" /> Single Day Entry
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-violet-50 border border-violet-200 text-[10px] font-bold text-violet-700" data-testid="date-range-badge">
+                    <CalendarDays className="w-3 h-3" /> {Math.round((new Date(form.date_to) - new Date(form.date_from)) / 86400000) + 1} Day Range
+                  </span>
+                )}
+                {form.date_to < form.date_from && (
+                  <span className="text-[10px] font-semibold text-red-500" data-testid="date-error">To Date cannot be earlier than From Date</span>
+                )}
+              </div>
+            )}
+            <div>
+              <Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Sales *</Label>
+              <Input className="mt-1 h-9 text-sm font-semibold" type="number" step="0.01" value={form.total_sales || ''} onChange={(e) => updateField('total_sales', parseFloat(e.target.value) || 0)} placeholder="0.00" data-testid="form-total-sales" />
             </div>
 
             {/* Menu items */}
