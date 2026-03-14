@@ -1213,6 +1213,269 @@ async def _build_report(rid, report_type, date):
 async def get_reports(user=Depends(get_user), report_type: str = "weekly", date: str = ""):
     return await _build_report(user["restaurant_id"], report_type, date)
 
+# ==================== DETAILED CATEGORY REPORTS ====================
+
+@api_router.get("/reports/category/{category}")
+async def get_category_report(category: str, user=Depends(get_user), date_from: str = "", date_to: str = "", vendor: str = ""):
+    """Get detailed report for a specific category with from/to date filtering."""
+    rid = user["restaurant_id"]
+    now = datetime.now(timezone.utc)
+    if not date_from:
+        date_from = now.strftime("%Y-%m-01")
+    if not date_to:
+        date_to = now.strftime("%Y-%m-%d")
+
+    if category == "sales":
+        sales = await db.sales.find(
+            {"restaurant_id": rid, "$or": [
+                {"report_date": {"$gte": date_from, "$lte": date_to}},
+                {"date_from": {"$gte": date_from, "$lte": date_to}},
+            ]}, {"_id": 0}
+        ).sort("report_date", -1).to_list(5000)
+        total = round(sum(s.get("total_sales", 0) for s in sales), 2)
+        avg_per_entry = round(total / len(sales), 2) if sales else 0
+        return {"category": "sales", "date_from": date_from, "date_to": date_to,
+                "total_sales": total, "record_count": len(sales), "avg_per_entry": avg_per_entry, "records": sales}
+
+    elif category == "raw_materials":
+        purchases = await db.purchases.find(
+            {"restaurant_id": rid, "invoice_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+        ).sort("invoice_date", -1).to_list(5000)
+        total = round(sum(p.get("total", 0) for p in purchases), 2)
+        # Flatten items for itemized view
+        all_items = []
+        for p in purchases:
+            for it in p.get("items", []):
+                all_items.append({
+                    "vendor": p.get("supplier_name", ""), "date": p.get("invoice_date", ""),
+                    "invoice": p.get("invoice_number", ""), "item": it.get("raw_name", ""),
+                    "quantity": it.get("quantity", 0), "unit": it.get("unit", ""),
+                    "unit_price": it.get("unit_price", 0), "line_total": it.get("total", 0)
+                })
+        return {"category": "raw_materials", "date_from": date_from, "date_to": date_to,
+                "total": total, "invoice_count": len(purchases), "items": all_items, "records": purchases}
+
+    elif category == "salaries":
+        salaries = await db.salaries.find(
+            {"restaurant_id": rid, "payment_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+        ).sort("payment_date", -1).to_list(5000)
+        total = round(sum(s.get("amount", 0) for s in salaries), 2)
+        return {"category": "salaries", "date_from": date_from, "date_to": date_to,
+                "total": total, "record_count": len(salaries), "records": salaries}
+
+    elif category == "other_expenses":
+        expenses = await db.other_expenses.find(
+            {"restaurant_id": rid, "expense_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+        ).sort("expense_date", -1).to_list(5000)
+        total = round(sum(e.get("amount", 0) for e in expenses), 2)
+        # Group by category
+        by_cat = {}
+        for e in expenses:
+            c = e.get("category", "Other")
+            by_cat[c] = by_cat.get(c, 0) + e.get("amount", 0)
+        breakdown = [{"category": k, "total": round(v, 2)} for k, v in sorted(by_cat.items(), key=lambda x: -x[1])]
+        return {"category": "other_expenses", "date_from": date_from, "date_to": date_to,
+                "total": total, "record_count": len(expenses), "records": expenses, "breakdown": breakdown}
+
+    elif category == "vendor":
+        query = {"restaurant_id": rid, "invoice_date": {"$gte": date_from, "$lte": date_to}}
+        if vendor:
+            query["supplier_name"] = {"$regex": f"^{vendor}$", "$options": "i"}
+        purchases = await db.purchases.find(query, {"_id": 0}).sort("invoice_date", -1).to_list(5000)
+        total = round(sum(p.get("total", 0) for p in purchases), 2)
+        items = []
+        for p in purchases:
+            for it in p.get("items", []):
+                items.append({
+                    "vendor": p.get("supplier_name", ""), "date": p.get("invoice_date", ""),
+                    "item": it.get("raw_name", ""), "quantity": it.get("quantity", 0),
+                    "unit": it.get("unit", ""), "price": it.get("unit_price", 0),
+                    "total": it.get("total", 0)
+                })
+        # Get vendor list for dropdown
+        all_vendors = await db.suppliers.find({"restaurant_id": rid}, {"_id": 0, "name": 1}).to_list(200)
+        vendor_names = sorted(set([v["name"] for v in all_vendors]))
+        return {"category": "vendor", "date_from": date_from, "date_to": date_to, "vendor": vendor or "All",
+                "total": total, "invoice_count": len(purchases), "items": items, "records": purchases, "vendors": vendor_names}
+
+    elif category == "profit":
+        sales = await db.sales.find(
+            {"restaurant_id": rid, "$or": [
+                {"report_date": {"$gte": date_from, "$lte": date_to}},
+                {"date_from": {"$gte": date_from, "$lte": date_to}},
+            ]}, {"_id": 0}
+        ).to_list(5000)
+        purchases = await db.purchases.find(
+            {"restaurant_id": rid, "invoice_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+        ).to_list(5000)
+        salaries = await db.salaries.find(
+            {"restaurant_id": rid, "payment_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+        ).to_list(5000)
+        other_exp = await db.other_expenses.find(
+            {"restaurant_id": rid, "expense_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+        ).to_list(5000)
+        total_sales = round(sum(s.get("total_sales", 0) for s in sales), 2)
+        raw_mat = round(sum(p.get("total", 0) for p in purchases), 2)
+        sal = round(sum(s.get("amount", 0) for s in salaries), 2)
+        oe = round(sum(e.get("amount", 0) for e in other_exp), 2)
+        total_exp = round(raw_mat + sal + oe, 2)
+        net_profit = round(total_sales - total_exp, 2)
+        margin = round(net_profit / total_sales * 100, 1) if total_sales > 0 else 0
+        return {"category": "profit", "date_from": date_from, "date_to": date_to,
+                "total_sales": total_sales, "raw_materials": raw_mat, "salaries": sal,
+                "other_expenses": oe, "total_expenses": total_exp, "net_profit": net_profit, "net_margin_pct": margin}
+
+    raise HTTPException(400, f"Unknown category: {category}")
+
+@api_router.get("/reports/category/{category}/export")
+async def export_category_report(category: str, fmt: str = "excel", user=Depends(get_user), date_from: str = "", date_to: str = "", vendor: str = ""):
+    """Export a category report as PDF or Excel."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Table as RLTable, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from io import BytesIO
+
+    # Fetch data
+    report = await get_category_report(category, user, date_from, date_to, vendor)
+    df = report.get("date_from", "")
+    dt = report.get("date_to", "")
+    title_map = {"sales": "Sales Report", "raw_materials": "Raw Material Expense Report", "salaries": "Salary Report",
+                 "other_expenses": "Other Expense Report", "vendor": "Vendor Purchase Report", "profit": "Profit Report"}
+    title = title_map.get(category, "Report")
+
+    if fmt == "pdf":
+        buf = BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=15*mm, rightMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#0f172a'), spaceAfter=4*mm)
+        sub_style = ParagraphStyle('Sub', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#94a3b8'), spaceAfter=6*mm)
+        elements = [Paragraph(title, title_style), Paragraph(f"{df} to {dt}", sub_style)]
+
+        if category == "sales":
+            data = [["Date", "Total Sales"]]
+            for r in report.get("records", []):
+                data.append([r.get("report_date", r.get("date_from", "")), f"${r.get('total_sales',0):,.2f}"])
+            data.append(["TOTAL", f"${report['total_sales']:,.2f}"])
+        elif category == "raw_materials":
+            data = [["Vendor", "Item", "Date", "Qty", "Price", "Total"]]
+            for it in report.get("items", []):
+                data.append([it["vendor"], it["item"], it["date"], str(it["quantity"]), f"${it['unit_price']:,.2f}", f"${it['line_total']:,.2f}"])
+            data.append(["", "", "", "", "TOTAL", f"${report['total']:,.2f}"])
+        elif category == "salaries":
+            data = [["Employee", "Position", "Amount", "Date"]]
+            for r in report.get("records", []):
+                data.append([r.get("employee_name",""), r.get("position",""), f"${r.get('amount',0):,.2f}", r.get("payment_date","")])
+            data.append(["", "", f"${report['total']:,.2f}", "TOTAL"])
+        elif category == "other_expenses":
+            data = [["Title", "Category", "Amount", "Date", "Notes"]]
+            for r in report.get("records", []):
+                data.append([r.get("title",""), r.get("category",""), f"${r.get('amount',0):,.2f}", r.get("expense_date",""), (r.get("notes","") or "")[:30]])
+            data.append(["", "", f"${report['total']:,.2f}", "TOTAL", ""])
+        elif category == "vendor":
+            data = [["Vendor", "Item", "Date", "Qty", "Price", "Total"]]
+            for it in report.get("items", []):
+                data.append([it["vendor"], it["item"], it["date"], str(it["quantity"]), f"${it['price']:,.2f}", f"${it['total']:,.2f}"])
+            data.append(["", "", "", "", "TOTAL", f"${report['total']:,.2f}"])
+        elif category == "profit":
+            data = [["Category", "Amount"],
+                    ["Total Sales", f"${report['total_sales']:,.2f}"], ["", ""],
+                    ["Expenses:", ""], ["  Raw Materials", f"${report['raw_materials']:,.2f}"],
+                    ["  Salaries", f"${report['salaries']:,.2f}"], ["  Other Expenses", f"${report['other_expenses']:,.2f}"],
+                    ["Total Expenses", f"${report['total_expenses']:,.2f}"], ["", ""],
+                    ["Net Profit", f"${report['net_profit']:,.2f}"], ["Net Margin", f"{report['net_margin_pct']}%"]]
+        else:
+            data = [["No data"]]
+
+        t = RLTable(data)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f172a')), ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTSIZE', (0,0), (-1,-1), 8), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+            ('TOPPADDING', (0,0), (-1,-1), 4), ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'), ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#f1f5f9')),
+        ]))
+        elements.append(t)
+        doc.build(elements)
+        buf.seek(0)
+        return Response(content=buf.read(), media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="{category}_report_{df}_{dt}.pdf"'})
+
+    else:  # excel
+        wb = Workbook()
+        ws = wb.active
+        ws.title = title
+        header_font = Font(bold=True, color="FFFFFF", size=10)
+        header_fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+
+        ws.append([title])
+        ws['A1'].font = Font(bold=True, size=14)
+        ws.append([f"Period: {df} to {dt}"])
+        ws.append([])
+
+        if category == "sales":
+            headers = ["Date", "Total Sales"]
+            ws.append(headers)
+            for c in range(1, len(headers)+1): ws.cell(row=4, column=c).font = header_font; ws.cell(row=4, column=c).fill = header_fill
+            for r in report.get("records", []):
+                ws.append([r.get("report_date", r.get("date_from", "")), r.get("total_sales", 0)])
+            ws.append(["TOTAL", report["total_sales"]])
+        elif category == "raw_materials":
+            headers = ["Vendor", "Item", "Date", "Quantity", "Unit Price", "Total"]
+            ws.append(headers)
+            for c in range(1, len(headers)+1): ws.cell(row=4, column=c).font = header_font; ws.cell(row=4, column=c).fill = header_fill
+            for it in report.get("items", []):
+                ws.append([it["vendor"], it["item"], it["date"], it["quantity"], it["unit_price"], it["line_total"]])
+            ws.append(["", "", "", "", "TOTAL", report["total"]])
+        elif category == "salaries":
+            headers = ["Employee", "Position", "Amount", "Payment Date", "Notes"]
+            ws.append(headers)
+            for c in range(1, len(headers)+1): ws.cell(row=4, column=c).font = header_font; ws.cell(row=4, column=c).fill = header_fill
+            for r in report.get("records", []):
+                ws.append([r.get("employee_name",""), r.get("position",""), r.get("amount",0), r.get("payment_date",""), r.get("notes","")])
+            ws.append(["", "", report["total"], "TOTAL", ""])
+        elif category == "other_expenses":
+            headers = ["Title", "Category", "Amount", "Date", "Notes"]
+            ws.append(headers)
+            for c in range(1, len(headers)+1): ws.cell(row=4, column=c).font = header_font; ws.cell(row=4, column=c).fill = header_fill
+            for r in report.get("records", []):
+                ws.append([r.get("title",""), r.get("category",""), r.get("amount",0), r.get("expense_date",""), r.get("notes","")])
+            ws.append(["", "", report["total"], "TOTAL", ""])
+        elif category == "vendor":
+            headers = ["Vendor", "Item", "Date", "Quantity", "Price", "Total"]
+            ws.append(headers)
+            for c in range(1, len(headers)+1): ws.cell(row=4, column=c).font = header_font; ws.cell(row=4, column=c).fill = header_fill
+            for it in report.get("items", []):
+                ws.append([it["vendor"], it["item"], it["date"], it["quantity"], it["price"], it["total"]])
+            ws.append(["", "", "", "", "TOTAL", report["total"]])
+        elif category == "profit":
+            headers = ["Category", "Amount"]
+            ws.append(headers)
+            for c in range(1, len(headers)+1): ws.cell(row=4, column=c).font = header_font; ws.cell(row=4, column=c).fill = header_fill
+            ws.append(["Total Sales", report["total_sales"]])
+            ws.append([])
+            ws.append(["Raw Materials", report["raw_materials"]])
+            ws.append(["Salaries", report["salaries"]])
+            ws.append(["Other Expenses", report["other_expenses"]])
+            ws.append(["Total Expenses", report["total_expenses"]])
+            ws.append([])
+            ws.append(["Net Profit", report["net_profit"]])
+            ws.cell(row=ws.max_row, column=1).font = Font(bold=True, size=12)
+
+        for col_cells in ws.columns:
+            max_length = max(len(str(c.value or "")) for c in col_cells)
+            ws.column_dimensions[col_cells[0].column_letter].width = min(max_length + 4, 30)
+
+        ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
+
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return Response(content=buf.read(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f'attachment; filename="{category}_report_{df}_{dt}.xlsx"'})
+
 @api_router.get("/reports/download")
 async def download_report(user=Depends(get_user), report_type: str = "weekly", date: str = "", fmt: str = "excel"):
     report = await _build_report(user["restaurant_id"], report_type, date)
