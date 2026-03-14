@@ -122,6 +122,14 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Sidebar navigation added between Reports and Chat Assistant
   - Tested: 100% (19/19 backend, all frontend features verified)
 
+  **Records Library Enhancements (March 14, 2026)**:
+  - Duplicate file prevention: SHA-256 content hash + file name/size check per folder (returns 409 with clear message)
+  - Drag-and-drop bulk upload zone with progress bar and multi-file support
+  - Sortable columns: Upload Date, Amount, File Name (click headers to toggle asc/desc)
+  - Audit-aware delete confirmation dialog with warning about tax/audit purposes
+  - "Stored for tax & audit" badge in table footer and preview dialog
+  - Tested: 100% (19/19 backend, all frontend features verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
