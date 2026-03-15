@@ -140,6 +140,17 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - All alerts computed from real purchase history, no mocks
   - Tested: 100% (18/19 backend, all frontend verified)
 
+- [x] **User Management System (March 15, 2026)**:
+  - Multi-user support: Manager can create, edit, deactivate, and delete users within the same restaurant
+  - 4 default roles: Manager, Accountant, Cashier, Staff — with role badges
+  - Each user has: full name, email, password (hashed), role, status (Active/Inactive)
+  - Disabled users blocked from login (403 error)
+  - Self-protection: Manager cannot deactivate/delete themselves or change own role
+  - Backend: CRUD endpoints at /api/users (Manager-only), /auth/me returns role
+  - Frontend: User Management page with stats cards, user table, add/edit dialogs, search
+  - Sidebar: "Management" section visible only to managers
+  - Tested: 100% (23/23 backend, all frontend verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
