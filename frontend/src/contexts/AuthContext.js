@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 
 const API_URL = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -9,13 +9,16 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(localStorage.getItem('ra_token'));
   const [loading, setLoading] = useState(true);
 
-  const api = axios.create({ baseURL: API_URL });
-
-  api.interceptors.request.use((config) => {
-    const t = localStorage.getItem('ra_token');
-    if (t) config.headers.Authorization = `Bearer ${t}`;
-    return config;
-  });
+  const apiRef = useRef(null);
+  if (!apiRef.current) {
+    apiRef.current = axios.create({ baseURL: API_URL });
+    apiRef.current.interceptors.request.use((config) => {
+      const t = localStorage.getItem('ra_token');
+      if (t) config.headers.Authorization = `Bearer ${t}`;
+      return config;
+    });
+  }
+  const api = apiRef.current;
 
   useEffect(() => {
     if (token) {
@@ -50,8 +53,10 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  const value = useMemo(() => ({ user, token, loading, login, register, logout, api }), [user, token, loading, login, register, logout, api]);
+
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout, api }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
