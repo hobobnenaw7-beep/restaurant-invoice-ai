@@ -151,6 +151,15 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - Sidebar: "Management" section visible only to managers
   - Tested: 100% (23/23 backend, all frontend verified)
 
+- [x] **Configurable Permissions (March 15, 2026)**:
+  - 13 granular permissions per user: add/edit/delete sales, add/edit/delete expenses, upload files, view/export reports, view records, manage vendors/items/users
+  - Grouped into 4 sections: Sales, Expenses, Files & Reports, Management
+  - Role-based defaults: Manager (13/13), Accountant (10/13), Cashier (1/13), Staff (1/13)
+  - Select All / Clear All bulk toggles, X/13 counter badge
+  - Manager role auto-applies all permissions (checkboxes disabled)
+  - Backend: permissions stored per user, defaults/update/direct-update endpoints
+  - Tested: 100% (15/15 backend, all frontend verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 

@@ -248,7 +248,12 @@ async def create_user(data: UserCreate, user=Depends(get_user)):
     if len(data.password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
     uid = str(uuid.uuid4())
-    perms = data.permissions if data.permissions else DEFAULT_PERMISSIONS.get(data.role, DEFAULT_PERMISSIONS["staff"])
+    if data.permissions:
+        perms = {}
+        for p in ALL_PERMISSIONS:
+            perms[p] = bool(data.permissions.get(p, False))
+    else:
+        perms = DEFAULT_PERMISSIONS.get(data.role, DEFAULT_PERMISSIONS["staff"])
     doc = {
         "id": uid,
         "email": data.email,
