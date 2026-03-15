@@ -130,6 +130,16 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
   - "Stored for tax & audit" badge in table footer and preview dialog
   - Tested: 100% (19/19 backend, all frontend features verified)
 
+- [x] **Smart Alerts Overhaul (March 15, 2026)**:
+  - Moved Smart Alerts to TOP of dashboard, made actionable with 3 real data-driven alert types
+  - Price Increases: item name, old→new price, change %, vendor, severity badge
+  - Cheaper Vendor Alternatives: item name, current vs cheaper price, savings %, vendor comparison
+  - Items Not Ordered: item name, days since last order, last vendor, severity badge
+  - Filter tabs: All, Price Increases, Cheaper Vendors, Not Ordered (with counts)
+  - Severity: High (red), Medium (amber), Low (slate) — thresholds vary by alert type
+  - All alerts computed from real purchase history, no mocks
+  - Tested: 100% (18/19 backend, all frontend verified)
+
 ## Credentials
 - Test: demo@test.com / testpassword
 
