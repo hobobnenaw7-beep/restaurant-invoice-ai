@@ -175,11 +175,45 @@ async def me(user=Depends(get_user)):
 
 VALID_ROLES = ["manager", "accountant", "cashier", "staff"]
 
+ALL_PERMISSIONS = [
+    "can_add_sales", "can_edit_sales", "can_delete_sales",
+    "can_add_expenses", "can_edit_expenses", "can_delete_expenses",
+    "can_upload_files", "can_view_reports", "can_export_reports",
+    "can_view_records", "can_manage_vendors", "can_manage_items",
+    "can_manage_users",
+]
+
+DEFAULT_PERMISSIONS = {
+    "manager": {p: True for p in ALL_PERMISSIONS},
+    "accountant": {
+        "can_add_sales": True, "can_edit_sales": True, "can_delete_sales": False,
+        "can_add_expenses": True, "can_edit_expenses": True, "can_delete_expenses": False,
+        "can_upload_files": True, "can_view_reports": True, "can_export_reports": True,
+        "can_view_records": True, "can_manage_vendors": True, "can_manage_items": True,
+        "can_manage_users": False,
+    },
+    "cashier": {
+        "can_add_sales": True, "can_edit_sales": False, "can_delete_sales": False,
+        "can_add_expenses": False, "can_edit_expenses": False, "can_delete_expenses": False,
+        "can_upload_files": False, "can_view_reports": False, "can_export_reports": False,
+        "can_view_records": False, "can_manage_vendors": False, "can_manage_items": False,
+        "can_manage_users": False,
+    },
+    "staff": {
+        "can_add_sales": False, "can_edit_sales": False, "can_delete_sales": False,
+        "can_add_expenses": False, "can_edit_expenses": False, "can_delete_expenses": False,
+        "can_upload_files": True, "can_view_reports": False, "can_export_reports": False,
+        "can_view_records": False, "can_manage_vendors": False, "can_manage_items": False,
+        "can_manage_users": False,
+    },
+}
+
 class UserCreate(BaseModel):
     name: str
     email: str
     password: str
     role: str = "staff"
+    permissions: Optional[Dict[str, bool]] = None
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
@@ -187,10 +221,14 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     role: Optional[str] = None
     status: Optional[str] = None
+    permissions: Optional[Dict[str, bool]] = None
 
 def _safe_user(u):
-    """Return user dict without password_hash."""
-    return {k: v for k, v in u.items() if k != "password_hash"}
+    """Return user dict without password_hash, with permissions defaulted."""
+    out = {k: v for k, v in u.items() if k != "password_hash"}
+    if "permissions" not in out:
+        out["permissions"] = DEFAULT_PERMISSIONS.get(out.get("role", "staff"), DEFAULT_PERMISSIONS["staff"])
+    return out
 
 @api_router.get("/users")
 async def list_users(user=Depends(get_user)):
@@ -210,6 +248,7 @@ async def create_user(data: UserCreate, user=Depends(get_user)):
     if len(data.password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
     uid = str(uuid.uuid4())
+    perms = data.permissions if data.permissions else DEFAULT_PERMISSIONS.get(data.role, DEFAULT_PERMISSIONS["staff"])
     doc = {
         "id": uid,
         "email": data.email,
@@ -218,6 +257,7 @@ async def create_user(data: UserCreate, user=Depends(get_user)):
         "restaurant_id": rid,
         "role": data.role,
         "status": "active",
+        "permissions": perms,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": user["id"],
     }
@@ -256,6 +296,12 @@ async def update_user(user_id: str, data: UserUpdate, user=Depends(get_user)):
         if user_id == user["id"] and data.status == "inactive":
             raise HTTPException(400, "You cannot deactivate yourself")
         updates["status"] = data.status
+    if data.permissions is not None:
+        # Validate all keys are valid permissions
+        clean_perms = {}
+        for p in ALL_PERMISSIONS:
+            clean_perms[p] = bool(data.permissions.get(p, False))
+        updates["permissions"] = clean_perms
     if not updates:
         raise HTTPException(400, "No fields to update")
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -274,6 +320,27 @@ async def delete_user(user_id: str, user=Depends(get_user)):
         raise HTTPException(404, "User not found")
     await db.users.delete_one({"id": user_id, "restaurant_id": rid})
     return {"status": "deleted"}
+
+@api_router.get("/users/permissions/defaults")
+async def get_default_permissions(user=Depends(get_user)):
+    """Get the default permission presets for each role."""
+    require_manager(user)
+    return DEFAULT_PERMISSIONS
+
+@api_router.put("/users/{user_id}/permissions")
+async def update_user_permissions(user_id: str, permissions: Dict[str, bool], user=Depends(get_user)):
+    """Update a user's permissions directly."""
+    require_manager(user)
+    rid = user["restaurant_id"]
+    target = await db.users.find_one({"id": user_id, "restaurant_id": rid}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "User not found")
+    clean_perms = {}
+    for p in ALL_PERMISSIONS:
+        clean_perms[p] = bool(permissions.get(p, False))
+    await db.users.update_one({"id": user_id}, {"$set": {"permissions": clean_perms, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    updated = await db.users.find_one({"id": user_id}, {"_id": 0})
+    return _safe_user(updated)
 
 
 
