@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   LayoutDashboard, Receipt, DollarSign, Users,
-  Package, FileText, FolderArchive, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat
+  Package, FileText, FolderArchive, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat, UserCog
 } from 'lucide-react';
 
 const mainNav = [
@@ -18,6 +18,10 @@ const mainNav = [
   { path: '/reports', label: 'Reports', icon: FileText },
   { path: '/records', label: 'Records Library', icon: FolderArchive },
   { path: '/chat', label: 'Chat Assistant', icon: MessageCircle },
+];
+
+const managerNav = [
+  { path: '/users', label: 'User Management', icon: UserCog },
 ];
 
 export default function Layout({ children }) {
@@ -62,6 +66,12 @@ export default function Layout({ children }) {
       {/* Main navigation */}
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
         {mainNav.map(item => <NavLink key={item.path} item={item} />)}
+        {user?.role === 'manager' && (
+          <>
+            <div className="pt-3 pb-1 px-3"><p className="text-[10px] font-bold text-navy-600 uppercase tracking-widest">Management</p></div>
+            {managerNav.map(item => <NavLink key={item.path} item={item} />)}
+          </>
+        )}
       </nav>
 
       {/* Settings + User — pinned at bottom */}

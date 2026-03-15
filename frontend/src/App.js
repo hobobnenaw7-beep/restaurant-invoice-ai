@@ -11,6 +11,7 @@ import VendorsPage from "@/pages/VendorsPage";
 import ItemsPage from "@/pages/ItemsPage";
 import ReportsPage from "@/pages/ReportsPage";
 import RecordsLibraryPage from "@/pages/RecordsLibraryPage";
+import UserManagementPage from "@/pages/UserManagementPage";
 import ChatPage from "@/pages/ChatPage";
 import SettingsPage from "@/pages/SettingsPage";
 
@@ -41,6 +42,7 @@ function App() {
           <Route path="/items" element={<ProtectedRoute><ItemsPage /></ProtectedRoute>} />
           <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
           <Route path="/records" element={<ProtectedRoute><RecordsLibraryPage /></ProtectedRoute>} />
+          <Route path="/users" element={<ProtectedRoute><UserManagementPage /></ProtectedRoute>} />
           <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
