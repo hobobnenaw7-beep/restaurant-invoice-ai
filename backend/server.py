@@ -166,150 +166,136 @@ async def me(user=Depends(get_user)):
 # ==================== SMART ALERTS ENGINE ====================
 
 async def _generate_smart_alerts(rid):
-    """Analyze financial data and generate real-time smart alerts."""
+    """Analyze real purchase history and generate actionable smart alerts."""
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
-    week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
-    month_start = now.strftime("%Y-%m-01")
-    prev_week_start = (now - timedelta(days=now.weekday() + 7)).strftime("%Y-%m-%d")
-    prev_week_end = (now - timedelta(days=now.weekday() + 1)).strftime("%Y-%m-%d")
-    prev_month = now.replace(day=1) - timedelta(days=1)
-    prev_month_start = prev_month.strftime("%Y-%m-01")
-    prev_month_end = prev_month.strftime("%Y-%m-%d")
-    two_weeks_ago = (now - timedelta(days=14)).strftime("%Y-%m-%d")
 
     purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
-    sales = await db.sales.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    if not purchases:
+        return []
 
     alerts = []
 
-    # --- 1. LOW STOCK: Items purchased regularly before but not in last 10 days ---
+    # --- 1. ITEMS NOT ORDERED FOR A LONG TIME ---
+    # Items purchased before but not recently (cutoff: 10 days)
     recent_cutoff = (now - timedelta(days=10)).strftime("%Y-%m-%d")
-    older_cutoff = (now - timedelta(days=45)).strftime("%Y-%m-%d")
+    older_cutoff = (now - timedelta(days=90)).strftime("%Y-%m-%d")
 
-    # Items purchased in last 45 days but before 10 days ago
-    older_items = set()
-    recent_items = set()
-    for p in purchases:
+    item_last_purchase = {}  # item_name -> {date, vendor, price}
+    for p in sorted(purchases, key=lambda x: x.get("invoice_date", "")):
         d = p.get("invoice_date", "")
         for it in p.get("items", []):
-            name = it.get("raw_name", "Unknown")
-            if d >= older_cutoff and d < recent_cutoff:
-                older_items.add(name)
-            if d >= recent_cutoff:
-                recent_items.add(name)
+            name = it.get("raw_name", "").strip()
+            if not name:
+                continue
+            item_last_purchase[name] = {
+                "date": d,
+                "vendor": p.get("supplier_name", ""),
+                "price": float(it.get("unit_price", 0)),
+            }
 
-    missing_items = older_items - recent_items
-    for item_name in sorted(missing_items)[:5]:
-        # Find last purchase date
-        last_date = ""
-        for p in sorted(purchases, key=lambda x: x.get("invoice_date", ""), reverse=True):
-            for it in p.get("items", []):
-                if it.get("raw_name") == item_name:
-                    last_date = p.get("invoice_date", "")
-                    break
-            if last_date:
-                break
-        days_ago = (now - datetime.strptime(last_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)).days if last_date else 0
-        alerts.append({
-            "type": "low_stock",
-            "severity": "high" if days_ago > 14 else "medium",
-            "title": f"{item_name} — not ordered in {days_ago} days",
-            "detail": f"Last purchased on {last_date}. This item was being ordered regularly before.",
-            "item": item_name,
-            "days_since": days_ago,
-        })
+    for item_name, info in item_last_purchase.items():
+        if info["date"] < recent_cutoff and info["date"] >= older_cutoff:
+            days_ago = (now - datetime.strptime(info["date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)).days
+            severity = "high" if days_ago > 21 else ("medium" if days_ago > 14 else "low")
+            alerts.append({
+                "type": "not_ordered",
+                "severity": severity,
+                "item_name": item_name,
+                "vendor": info["vendor"],
+                "days_since": days_ago,
+                "last_date": info["date"],
+                "last_price": info["price"],
+            })
 
-    # --- 2. COST INCREASES: Compare avg prices this week vs previous week ---
-    def avg_prices_in_range(plist, start, end):
-        prices = {}
-        for p in plist:
-            d = p.get("invoice_date", "")
-            if d >= start and d <= end:
-                for it in p.get("items", []):
-                    name = it.get("raw_name", "Unknown")
-                    price = float(it.get("unit_price", 0))
-                    if price > 0:
-                        prices.setdefault(name, []).append(price)
-        return {n: round(sum(v) / len(v), 2) for n, v in prices.items()}
+    # Sort by days_since descending, limit to 8
+    not_ordered = [a for a in alerts if a["type"] == "not_ordered"]
+    not_ordered.sort(key=lambda x: -x["days_since"])
+    alerts = not_ordered[:8]
 
-    cur_prices = avg_prices_in_range(purchases, two_weeks_ago, today)
-    prev_prices = avg_prices_in_range(purchases, (now - timedelta(days=42)).strftime("%Y-%m-%d"), two_weeks_ago)
+    # --- 2. PRICE INCREASES ---
+    # Compare most recent price per item vs the previous price
+    item_price_history = {}  # item_name -> [(date, price, vendor)]
+    for p in sorted(purchases, key=lambda x: x.get("invoice_date", "")):
+        d = p.get("invoice_date", "")
+        vendor = p.get("supplier_name", "")
+        for it in p.get("items", []):
+            name = it.get("raw_name", "").strip()
+            price = float(it.get("unit_price", 0))
+            if name and price > 0:
+                item_price_history.setdefault(name, []).append({"date": d, "price": price, "vendor": vendor})
 
-    for name, cur_p in cur_prices.items():
-        prev_p = prev_prices.get(name)
-        if prev_p and prev_p > 0:
-            pct = ((cur_p - prev_p) / prev_p) * 100
-            if pct > 5:
-                alerts.append({
-                    "type": "cost_increase",
-                    "severity": "high" if pct > 15 else "medium",
-                    "title": f"{name} up {pct:.1f}%",
-                    "detail": f"Price went from ${prev_p:.2f} to ${cur_p:.2f} per unit.",
-                    "item": name,
+    price_alerts = []
+    for name, history in item_price_history.items():
+        if len(history) < 2:
+            continue
+        latest = history[-1]
+        previous = history[-2]
+        if latest["price"] > previous["price"] and previous["price"] > 0:
+            pct = ((latest["price"] - previous["price"]) / previous["price"]) * 100
+            if pct > 3:  # Only alert on >3% increases
+                severity = "high" if pct > 15 else ("medium" if pct > 8 else "low")
+                price_alerts.append({
+                    "type": "price_increase",
+                    "severity": severity,
+                    "item_name": name,
+                    "vendor": latest["vendor"],
+                    "old_price": previous["price"],
+                    "new_price": latest["price"],
                     "change_pct": round(pct, 1),
-                    "old_price": prev_p,
-                    "new_price": cur_p,
+                    "old_date": previous["date"],
+                    "new_date": latest["date"],
+                    "old_vendor": previous["vendor"],
                 })
 
-    # Sort cost increases by severity
-    cost_alerts = [a for a in alerts if a["type"] == "cost_increase"]
-    cost_alerts.sort(key=lambda x: -x["change_pct"])
-    alerts = [a for a in alerts if a["type"] != "cost_increase"] + cost_alerts[:5]
+    price_alerts.sort(key=lambda x: -x["change_pct"])
+    alerts += price_alerts[:8]
 
-    # --- 3. PROFIT MARGIN DROP ---
-    def sum_p(df, dt=None):
-        return sum(p["total"] for p in purchases if p.get("invoice_date", "") >= df and (not dt or p.get("invoice_date", "") <= dt))
-    def sum_s(df, dt=None):
-        return sum(s["total_sales"] for s in sales if s.get("report_date", "") >= df and (not dt or s.get("report_date", "") <= dt))
+    # --- 3. CHEAPER VENDOR ALTERNATIVES ---
+    # For each item, find if another vendor sells it for less
+    item_vendor_prices = {}  # item_name -> {vendor: {price, date}}
+    for p in sorted(purchases, key=lambda x: x.get("invoice_date", "")):
+        d = p.get("invoice_date", "")
+        vendor = p.get("supplier_name", "")
+        for it in p.get("items", []):
+            name = it.get("raw_name", "").strip()
+            price = float(it.get("unit_price", 0))
+            if name and price > 0:
+                item_vendor_prices.setdefault(name, {})[vendor] = {"price": price, "date": d}
 
-    # Weekly margin comparison
-    cur_week_s = sum_s(week_start)
-    cur_week_p = sum_p(week_start)
-    prev_week_s = sum_s(prev_week_start, prev_week_end)
-    prev_week_p = sum_p(prev_week_start, prev_week_end)
+    cheaper_alerts = []
+    for name, vendors in item_vendor_prices.items():
+        if len(vendors) < 2:
+            continue
+        sorted_vendors = sorted(vendors.items(), key=lambda x: x[1]["price"])
+        cheapest_vendor, cheapest_info = sorted_vendors[0]
+        # Check if most recent purchase was NOT from the cheapest vendor
+        last_purchase = item_price_history.get(name, [])
+        if not last_purchase:
+            continue
+        last = last_purchase[-1]
+        if last["vendor"] != cheapest_vendor and last["price"] > cheapest_info["price"]:
+            savings_pct = ((last["price"] - cheapest_info["price"]) / last["price"]) * 100
+            if savings_pct > 3:
+                severity = "high" if savings_pct > 20 else ("medium" if savings_pct > 10 else "low")
+                cheaper_alerts.append({
+                    "type": "cheaper_vendor",
+                    "severity": severity,
+                    "item_name": name,
+                    "vendor": last["vendor"],
+                    "current_price": last["price"],
+                    "cheaper_vendor": cheapest_vendor,
+                    "cheaper_price": cheapest_info["price"],
+                    "savings_pct": round(savings_pct, 1),
+                    "last_cheap_date": cheapest_info["date"],
+                })
 
-    cur_week_margin = ((cur_week_s - cur_week_p) / cur_week_s * 100) if cur_week_s > 0 else 0
-    prev_week_margin = ((prev_week_s - prev_week_p) / prev_week_s * 100) if prev_week_s > 0 else 0
+    cheaper_alerts.sort(key=lambda x: -x["savings_pct"])
+    alerts += cheaper_alerts[:8]
 
-    if prev_week_margin > 0 and cur_week_margin < prev_week_margin:
-        margin_drop = prev_week_margin - cur_week_margin
-        if margin_drop > 3:
-            alerts.append({
-                "type": "margin_drop",
-                "severity": "high" if margin_drop > 10 else "medium",
-                "title": f"Weekly margin dropped {margin_drop:.1f}pp",
-                "detail": f"This week: {cur_week_margin:.1f}% vs last week: {prev_week_margin:.1f}%. Review cost drivers.",
-                "current_margin": round(cur_week_margin, 1),
-                "previous_margin": round(prev_week_margin, 1),
-                "drop_pp": round(margin_drop, 1),
-            })
-
-    # Monthly margin comparison
-    cur_month_s = sum_s(month_start)
-    cur_month_p = sum_p(month_start)
-    prev_month_s = sum_s(prev_month_start, prev_month_end)
-    prev_month_p = sum_p(prev_month_start, prev_month_end)
-
-    cur_month_margin = ((cur_month_s - cur_month_p) / cur_month_s * 100) if cur_month_s > 0 else 0
-    prev_month_margin = ((prev_month_s - prev_month_p) / prev_month_s * 100) if prev_month_s > 0 else 0
-
-    if prev_month_margin > 0 and cur_month_margin < prev_month_margin:
-        margin_drop = prev_month_margin - cur_month_margin
-        if margin_drop > 3:
-            alerts.append({
-                "type": "margin_drop",
-                "severity": "high" if margin_drop > 10 else "medium",
-                "title": f"Monthly margin dropped {margin_drop:.1f}pp",
-                "detail": f"This month: {cur_month_margin:.1f}% vs last month: {prev_month_margin:.1f}%.",
-                "current_margin": round(cur_month_margin, 1),
-                "previous_margin": round(prev_month_margin, 1),
-                "drop_pp": round(margin_drop, 1),
-            })
-
-    # Sort: high severity first, then by type priority
-    type_order = {"margin_drop": 0, "cost_increase": 1, "low_stock": 2}
-    alerts.sort(key=lambda a: (0 if a["severity"] == "high" else 1, type_order.get(a["type"], 9)))
+    # Final sort: high first, then medium, then low
+    sev_order = {"high": 0, "medium": 1, "low": 2}
+    alerts.sort(key=lambda a: sev_order.get(a["severity"], 9))
 
     return alerts
 
