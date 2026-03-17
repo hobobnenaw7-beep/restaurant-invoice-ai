@@ -48,6 +48,8 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Fixed NotificationPanel useEffect loop: used ref for onClose callback instead of dependency
 - [x] Memoized Dashboard: load (useCallback), smartAlerts (useMemo), SmartAlertsSection (memo), CustomTooltip (memo)
 - [x] Memoized Layout callbacks: handleCloseAlerts, handleCloseMobile, handleToggleAlerts (useCallback)
+- [x] Fixed Expenses page runtime error: deferred list refresh after dialog close (all 3 tabs + Sales page)
+- [x] Fixed DuplicateCheck confirmSave timing: deferred save after warning dialog exit animation
 - [x] Stress-tested: rapid navigation through 7 pages + rapid bell toggling — zero crashes
 
 ### Financial Calculation Accuracy (March 17, 2026)

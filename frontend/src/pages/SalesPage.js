@@ -160,7 +160,7 @@ export default function SalesPage() {
         }
         toast.success('Sale saved');
         setShowAdd(false);
-        load();
+        setTimeout(() => load(), 150);
       } catch (err) {
         toast.error('Save failed: ' + (err.response?.data?.detail || ''));
       } finally { setSaving(false); }

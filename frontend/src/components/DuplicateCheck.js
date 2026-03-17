@@ -34,7 +34,11 @@ export function useDuplicateCheck() {
   const confirmSave = useCallback(async () => {
     setShowWarning(false);
     setDuplicates([]);
-    if (pendingSave) await pendingSave();
+    if (pendingSave) {
+      // Defer save so the warning dialog's exit animation completes
+      await new Promise(r => setTimeout(r, 150));
+      await pendingSave();
+    }
     setPendingSave(null);
   }, [pendingSave]);
 

@@ -174,7 +174,10 @@ function RawMaterialsTab({ api }) {
             await api.post('/records/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
           } catch { /* silent — file archive is best-effort */ }
         }
-        toast.success('Saved'); setShowAdd(false); load();
+        toast.success('Saved');
+        setShowAdd(false);
+        // Defer list refresh so Radix Dialog exit animation completes before re-render
+        setTimeout(() => load(), 150);
       }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
@@ -312,7 +315,12 @@ function SalariesTab({ api }) {
     if (!form.amount) { toast.error('Salary amount is required'); return; }
     const doSave = async () => {
       setSaving(true);
-      try { await api.post('/salaries', form); toast.success('Salary saved'); setShowAdd(false); load(); }
+      try {
+        await api.post('/salaries', form);
+        toast.success('Salary saved');
+        setShowAdd(false);
+        setTimeout(() => load(), 150);
+      }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
     };
@@ -396,7 +404,12 @@ function OtherExpensesTab({ api }) {
     if (!form.amount) { toast.error('Amount is required'); return; }
     const doSave = async () => {
       setSaving(true);
-      try { await api.post('/other-expenses', form); toast.success('Expense saved'); setShowAdd(false); load(); }
+      try {
+        await api.post('/other-expenses', form);
+        toast.success('Expense saved');
+        setShowAdd(false);
+        setTimeout(() => load(), 150);
+      }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
     };
