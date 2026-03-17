@@ -889,32 +889,51 @@ async def extract_document(file: UploadFile = File(...), document_type: str = Fo
     try:
         content = await file.read()
         mime = file.content_type or "image/jpeg"
+        fname = (file.filename or "").lower()
 
-        if "pdf" in mime.lower():
+        # Handle PDF: render all pages (up to 5) at high resolution and combine
+        if "pdf" in mime.lower() or fname.endswith(".pdf"):
             import fitz
             pdf_doc = fitz.open(stream=content, filetype="pdf")
-            page = pdf_doc[0]
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-            img_bytes = pix.tobytes("png")
+            images_b64 = []
+            for page_num in range(min(len(pdf_doc), 5)):
+                page = pdf_doc[page_num]
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                img_bytes = pix.tobytes("png")
+                images_b64.append(base64.b64encode(img_bytes).decode())
             pdf_doc.close()
-            b64 = base64.b64encode(img_bytes).decode()
         else:
-            b64 = base64.b64encode(content).decode()
+            images_b64 = [base64.b64encode(content).decode()]
 
         from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
         if document_type == "purchase_invoice":
-            prompt = """Extract from this purchase invoice image. Return ONLY valid JSON:
+            prompt = """You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
 {"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{"raw_name":"","quantity":0,"unit":"","unit_price":0,"total":0}],"subtotal":0,"tax":0,"total":0}
-If a field is unreadable, use reasonable defaults. Return ONLY the JSON object."""
-        else:
-            prompt = """Extract from this sales report image. Return ONLY valid JSON:
-{"report_date":"YYYY-MM-DD","total_sales":0,"items":[{"menu_item":"","quantity":0,"revenue":0}]}
-If a field is unreadable, use reasonable defaults. Return ONLY the JSON object."""
 
-        chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant documents. Extract data accurately and return valid JSON only.").with_model("openai", "gpt-5.2")
-        image_content = ImageContent(image_base64=b64)
-        user_msg = UserMessage(text=prompt, file_contents=[image_content])
+Rules:
+- For each line item, calculate total = quantity × unit_price if not shown
+- If unit_price is missing but total and quantity are known, calculate unit_price = total / quantity
+- subtotal = sum of all item totals
+- total = subtotal + tax
+- Dates must be in YYYY-MM-DD format
+- Use 0 for any truly missing numeric values
+- Return ONLY the JSON object, no other text."""
+        else:
+            prompt = """You are reading a restaurant sales report or receipt. Extract ALL data into this exact JSON format:
+{"report_date":"YYYY-MM-DD","total_sales":0,"items":[{"menu_item":"","quantity":0,"revenue":0}]}
+
+Rules:
+- total_sales should be the grand total
+- For each item, revenue is the total amount for that item
+- Dates must be in YYYY-MM-DD format
+- Use 0 for any truly missing numeric values
+- Return ONLY the JSON object, no other text."""
+
+        chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
+        # Send all page images
+        file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
+        user_msg = UserMessage(text=prompt, file_contents=file_contents)
         response = await chat.send_message(user_msg)
 
         json_match = re.search(r'\{[\s\S]*\}', response)
@@ -922,6 +941,25 @@ If a field is unreadable, use reasonable defaults. Return ONLY the JSON object."
             extracted = json.loads(json_match.group())
         else:
             extracted = {"error": "Could not parse extraction results"}
+
+        # Post-process: validate and fix calculations
+        if "error" not in extracted:
+            if document_type == "purchase_invoice":
+                for item in extracted.get("items", []):
+                    qty = float(item.get("quantity", 0) or 0)
+                    up = float(item.get("unit_price", 0) or 0)
+                    tot = float(item.get("total", 0) or 0)
+                    if tot == 0 and qty > 0 and up > 0:
+                        item["total"] = round(qty * up, 2)
+                    elif up == 0 and tot > 0 and qty > 0:
+                        item["unit_price"] = round(tot / qty, 2)
+                    elif qty == 0 and tot > 0 and up > 0:
+                        item["quantity"] = round(tot / up, 2)
+                items_sum = round(sum(float(it.get("total", 0) or 0) for it in extracted.get("items", [])), 2)
+                if not extracted.get("subtotal") and items_sum > 0:
+                    extracted["subtotal"] = items_sum
+                if not extracted.get("total") and items_sum > 0:
+                    extracted["total"] = round(items_sum + float(extracted.get("tax", 0) or 0), 2)
 
         return {"extracted_data": extracted, "document_type": document_type}
     except Exception as e:
@@ -1616,15 +1654,18 @@ async def _build_report(rid, report_type, date):
     now = datetime.now(timezone.utc)
     start_str, end_str, prev_start, prev_end = _parse_report_dates(report_type, date, now)
 
-    purchases = await db.purchases.find({"restaurant_id": rid, "invoice_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
-    sales = await db.sales.find({"restaurant_id": rid, "report_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
-    salaries_cur = await db.salaries.find({"restaurant_id": rid, "payment_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
-    other_exp_cur = await db.other_expenses.find({"restaurant_id": rid, "expense_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+    # Only include approved records in reports (backwards-compatible: no approval_status = approved)
+    _appr = {"$or": [{"approval_status": {"$exists": False}}, {"approval_status": "approved"}]}
 
-    prev_purchases = await db.purchases.find({"restaurant_id": rid, "invoice_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
-    prev_sales = await db.sales.find({"restaurant_id": rid, "report_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
-    salaries_prev = await db.salaries.find({"restaurant_id": rid, "payment_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
-    other_exp_prev = await db.other_expenses.find({"restaurant_id": rid, "expense_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
+    purchases = await db.purchases.find({"restaurant_id": rid, **_appr, "invoice_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+    sales = await db.sales.find({"restaurant_id": rid, **_appr, "report_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+    salaries_cur = await db.salaries.find({"restaurant_id": rid, **_appr, "payment_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+    other_exp_cur = await db.other_expenses.find({"restaurant_id": rid, **_appr, "expense_date": {"$gte": start_str, "$lte": end_str}}, {"_id": 0}).to_list(10000)
+
+    prev_purchases = await db.purchases.find({"restaurant_id": rid, **_appr, "invoice_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
+    prev_sales = await db.sales.find({"restaurant_id": rid, **_appr, "report_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
+    salaries_prev = await db.salaries.find({"restaurant_id": rid, **_appr, "payment_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
+    other_exp_prev = await db.other_expenses.find({"restaurant_id": rid, **_appr, "expense_date": {"$gte": prev_start, "$lte": prev_end}}, {"_id": 0}).to_list(10000)
 
     total_p = round(sum(p["total"] for p in purchases), 2)
     total_s = round(sum(s["total_sales"] for s in sales), 2)

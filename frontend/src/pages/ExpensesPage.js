@@ -115,8 +115,13 @@ function RawMaterialsTab({ api }) {
   const SI = ({ field }) => sortBy === field ? (sortOrder === 'desc' ? <ChevronDown className="w-3 h-3 inline ml-0.5" /> : <ChevronUp className="w-3 h-3 inline ml-0.5" />) : null;
 
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') it[idx].total = parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0); return { ...f, items: it }; }); };
-  const removeItem = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+  const recalcTotals = (items, tax) => {
+    const subtotal = round2(items.reduce((s, it) => s + (parseFloat(it.total) || 0), 0));
+    return { subtotal, total: round2(subtotal + (parseFloat(tax) || 0)) };
+  };
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
+  const removeItem = (idx) => setForm(f => { const items = f.items.filter((_, i) => i !== idx); const totals = recalcTotals(items, f.tax); return { ...f, items, ...totals }; });
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, { raw_name: '', quantity: 1, unit: 'kg', unit_price: 0, total: 0 }] }));
 
   const openAdd = () => {
@@ -269,9 +274,9 @@ function RawMaterialsTab({ api }) {
               ))}</div>
             </div>
             <div className="grid grid-cols-3 gap-3">
-              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Subtotal</Label><Input className="mt-1 h-9 text-sm" type="number" step="0.01" value={form.subtotal || ''} onChange={(e) => updateField('subtotal', parseFloat(e.target.value) || 0)} /></div>
-              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tax</Label><Input className="mt-1 h-9 text-sm" type="number" step="0.01" value={form.tax || ''} onChange={(e) => updateField('tax', parseFloat(e.target.value) || 0)} /></div>
-              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total</Label><Input className="mt-1 h-9 text-sm font-bold" type="number" step="0.01" value={form.total || ''} onChange={(e) => updateField('total', parseFloat(e.target.value) || 0)} /></div>
+              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Subtotal</Label><Input className="mt-1 h-9 text-sm bg-slate-50" type="number" step="0.01" value={form.subtotal || ''} readOnly tabIndex={-1} data-testid="form-subtotal" /></div>
+              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tax</Label><Input className="mt-1 h-9 text-sm" type="number" step="0.01" value={form.tax || ''} onChange={(e) => { const tax = parseFloat(e.target.value) || 0; setForm(f => ({ ...f, tax, total: round2(f.subtotal + tax) })); }} data-testid="form-tax" /></div>
+              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total</Label><Input className="mt-1 h-9 text-sm font-bold bg-slate-50" type="number" step="0.01" value={form.total || ''} readOnly tabIndex={-1} data-testid="form-total" /></div>
             </div>
           </div>
           <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-raw-material-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Purchase</Button></div>
