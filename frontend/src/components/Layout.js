@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
@@ -42,19 +42,42 @@ const SEV_BADGE = {
 
 function fmtPrice(n) { return `$${Number(n).toFixed(2)}`; }
 
+// ======================== NAV LINK (stable component) ========================
+const NavLink = memo(function NavLink({ item, isActive, onNavigate }) {
+  return (
+    <Link
+      to={item.path}
+      onClick={onNavigate}
+      data-testid={`nav-${item.path.slice(1)}`}
+      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 ${
+        isActive
+          ? 'bg-teal-600/15 text-teal-400'
+          : 'text-navy-400 hover:text-white hover:bg-navy-800/60'
+      }`}
+    >
+      <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
+      <span>{item.label}</span>
+    </Link>
+  );
+});
+
 // ======================== NOTIFICATION PANEL ========================
-function NotificationPanel({ alerts, open, onClose, containerRef }) {
+const NotificationPanel = memo(function NotificationPanel({ alerts, open, onClose, containerRef }) {
   const [filter, setFilter] = useState('all');
   const [filterOpen, setFilterOpen] = useState(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
     const handler = (e) => {
-      if (containerRef?.current && !containerRef.current.contains(e.target)) onClose();
+      if (containerRef?.current && !containerRef.current.contains(e.target)) {
+        onCloseRef.current();
+      }
     };
     const timer = setTimeout(() => document.addEventListener('mousedown', handler), 10);
     return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler); };
-  }, [open, onClose, containerRef]);
+  }, [open, containerRef]); // removed onClose from deps — use ref instead
 
   if (!open) return null;
 
@@ -146,48 +169,11 @@ function NotificationPanel({ alerts, open, onClose, containerRef }) {
       </Link>
     </div>
   );
-}
+});
 
-// ======================== LAYOUT ========================
-export default function Layout({ children }) {
-  const { user, api, logout } = useAuth();
-  const location = useLocation();
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [alertsOpen, setAlertsOpen] = useState(false);
-  const [alerts, setAlerts] = useState([]);
-  const bellContainerRef = useRef(null);
-
-  useEffect(() => {
-    if (!api) return;
-    let mounted = true;
-    api.get('/dashboard/summary').then(res => {
-      if (mounted) setAlerts(res.data?.smart_alerts || []);
-    }).catch(() => {});
-    return () => { mounted = false; };
-  }, [api]);
-
-  const highCount = alerts.filter(a => a.severity === 'high').length;
-
-  const NavLink = ({ item }) => {
-    const isActive = location.pathname === item.path;
-    return (
-      <Link
-        to={item.path}
-        onClick={() => setMobileOpen(false)}
-        data-testid={`nav-${item.path.slice(1)}`}
-        className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 ${
-          isActive
-            ? 'bg-teal-600/15 text-teal-400'
-            : 'text-navy-400 hover:text-white hover:bg-navy-800/60'
-        }`}
-      >
-        <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
-        <span>{item.label}</span>
-      </Link>
-    );
-  };
-
-  const SidebarContent = () => (
+// ======================== SIDEBAR CONTENT ========================
+const SidebarContent = memo(function SidebarContent({ user, pathname, onNavigate, onLogout }) {
+  return (
     <div className="flex flex-col h-full bg-navy-950 text-white" data-testid="sidebar">
       <div className="p-5 border-b border-navy-800">
         <div className="flex items-center gap-3">
@@ -202,18 +188,22 @@ export default function Layout({ children }) {
       </div>
 
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {mainNav.map(item => <NavLink key={item.path} item={item} />)}
+        {mainNav.map(item => (
+          <NavLink key={item.path} item={item} isActive={pathname === item.path} onNavigate={onNavigate} />
+        ))}
         {user?.role === 'manager' && (
           <>
             <div className="pt-3 pb-1 px-3"><p className="text-[10px] font-bold text-navy-600 uppercase tracking-widest">Management</p></div>
-            {managerNav.map(item => <NavLink key={item.path} item={item} />)}
+            {managerNav.map(item => (
+              <NavLink key={item.path} item={item} isActive={pathname === item.path} onNavigate={onNavigate} />
+            ))}
           </>
         )}
       </nav>
 
       <div className="border-t border-navy-800">
         <div className="px-3 pt-3 pb-1">
-          <NavLink item={{ path: '/settings', label: 'Settings', icon: Settings }} />
+          <NavLink item={{ path: '/settings', label: 'Settings', icon: Settings }} isActive={pathname === '/settings'} onNavigate={onNavigate} />
         </div>
         <div className="p-4 pt-2">
           <div className="flex items-center gap-3 mb-3">
@@ -226,7 +216,7 @@ export default function Layout({ children }) {
             </div>
           </div>
           <Button
-            onClick={logout}
+            onClick={onLogout}
             variant="ghost"
             className="w-full justify-start text-navy-400 hover:text-white hover:bg-navy-800/60 h-8 text-xs"
             data-testid="logout-btn"
@@ -238,18 +228,44 @@ export default function Layout({ children }) {
       </div>
     </div>
   );
+});
+
+// ======================== LAYOUT ========================
+export default function Layout({ children }) {
+  const { user, api, logout } = useAuth();
+  const location = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [alerts, setAlerts] = useState([]);
+  const bellContainerRef = useRef(null);
+
+  // Fetch alerts once on mount
+  useEffect(() => {
+    if (!api) return;
+    let mounted = true;
+    api.get('/dashboard/summary').then(res => {
+      if (mounted) setAlerts(res.data?.smart_alerts || []);
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, [api]);
+
+  const highCount = useMemo(() => alerts.filter(a => a.severity === 'high').length, [alerts]);
+
+  const handleCloseAlerts = useCallback(() => setAlertsOpen(false), []);
+  const handleCloseMobile = useCallback(() => setMobileOpen(false), []);
+  const handleToggleAlerts = useCallback(() => setAlertsOpen(prev => !prev), []);
 
   return (
     <div className="flex h-screen bg-slate-50/80">
       <aside className="hidden lg:flex w-64 flex-shrink-0 border-r border-navy-800">
         <div className="w-full">
-          <SidebarContent />
+          <SidebarContent user={user} pathname={location.pathname} onNavigate={handleCloseMobile} onLogout={logout} />
         </div>
       </aside>
 
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent side="left" className="p-0 w-64 bg-navy-950 border-none">
-          <SidebarContent />
+          <SidebarContent user={user} pathname={location.pathname} onNavigate={handleCloseMobile} onLogout={logout} />
         </SheetContent>
       </Sheet>
 
@@ -268,7 +284,7 @@ export default function Layout({ children }) {
               variant="ghost"
               size="icon"
               className="relative"
-              onClick={() => setAlertsOpen(!alertsOpen)}
+              onClick={handleToggleAlerts}
               data-testid="notifications-btn"
             >
               <Bell className="w-[18px] h-[18px] text-slate-500" />
@@ -278,7 +294,7 @@ export default function Layout({ children }) {
                 </Badge>
               )}
             </Button>
-            <NotificationPanel alerts={alerts} open={alertsOpen} onClose={() => setAlertsOpen(false)} containerRef={bellContainerRef} />
+            <NotificationPanel alerts={alerts} open={alertsOpen} onClose={handleCloseAlerts} containerRef={bellContainerRef} />
           </div>
         </header>
 

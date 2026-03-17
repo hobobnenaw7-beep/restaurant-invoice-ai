@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -133,18 +133,22 @@ function CheaperVendorAlert({ alert, index }) {
 }
 
 // ======================== SMART ALERTS SECTION ========================
-function SmartAlertsSection({ alerts }) {
+const SmartAlertsSection = memo(function SmartAlertsSection({ alerts }) {
   const [tab, setTab] = useState('all');
 
-  const notOrdered = alerts.filter(a => a.type === 'not_ordered');
-  const priceUp = alerts.filter(a => a.type === 'price_increase');
-  const cheaper = alerts.filter(a => a.type === 'cheaper_vendor');
-  const highCount = alerts.filter(a => a.severity === 'high').length;
+  const { notOrdered, priceUp, cheaper, highCount } = useMemo(() => ({
+    notOrdered: alerts.filter(a => a.type === 'not_ordered'),
+    priceUp: alerts.filter(a => a.type === 'price_increase'),
+    cheaper: alerts.filter(a => a.type === 'cheaper_vendor'),
+    highCount: alerts.filter(a => a.severity === 'high').length,
+  }), [alerts]);
 
-  const filtered = tab === 'all' ? alerts
-    : tab === 'not_ordered' ? notOrdered
-    : tab === 'price_increase' ? priceUp
-    : cheaper;
+  const filtered = useMemo(() => {
+    if (tab === 'all') return alerts;
+    if (tab === 'not_ordered') return notOrdered;
+    if (tab === 'price_increase') return priceUp;
+    return cheaper;
+  }, [tab, alerts, notOrdered, priceUp, cheaper]);
 
   if (!alerts.length) return null;
 
@@ -206,7 +210,7 @@ function SmartAlertsSection({ alerts }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 // ======================== HELPERS ========================
 function LoadingSkeleton() {
@@ -233,7 +237,7 @@ function EmptyDashboard({ onSeed, seeding }) {
   );
 }
 
-const CustomTooltip = ({ active, payload, label }) => {
+const CustomTooltip = memo(function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 shadow-lg">
@@ -241,7 +245,7 @@ const CustomTooltip = ({ active, payload, label }) => {
       {payload.map((p, i) => <p key={i} className="text-xs"><span className="font-semibold" style={{ color: p.color }}>{p.name}:</span> {fmt(p.value)}</p>)}
     </div>
   );
-};
+});
 
 // ======================== MAIN PAGE ========================
 export default function DashboardPage() {
@@ -250,25 +254,26 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try { const res = await api.get('/dashboard/summary'); setData(res.data); }
     catch { toast.error('Failed to load dashboard'); }
     finally { setLoading(false); }
-  };
-  const seedData = async () => {
+  }, [api]);
+
+  const seedData = useCallback(async () => {
     setSeeding(true);
     try { await api.post('/seed'); toast.success('Demo data loaded!'); await load(); }
     catch { toast.error('Failed to seed data'); }
     finally { setSeeding(false); }
-  };
+  }, [api, load]);
 
-  useEffect(() => { load(); }, []); // eslint-disable-line
+  useEffect(() => { load(); }, [load]);
+
+  const smartAlerts = useMemo(() => data?.smart_alerts || [], [data]);
 
   if (loading) return <LoadingSkeleton />;
   const isEmpty = !data || (data.month_sales === 0 && data.month_purchases === 0);
   if (isEmpty) return <EmptyDashboard onSeed={seedData} seeding={seeding} />;
-
-  const smartAlerts = data.smart_alerts || [];
 
   return (
     <div className="space-y-8 max-w-[1400px]" data-testid="dashboard-page">

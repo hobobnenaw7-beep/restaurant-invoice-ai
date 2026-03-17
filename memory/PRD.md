@@ -43,6 +43,13 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Better prompts for accurate extraction
 - [x] Support in both Expenses (Raw Materials) and Sales forms
 
+### Stability & Performance (March 17, 2026)
+- [x] Fixed infinite re-render risk: moved NavLink and SidebarContent outside Layout as memo'd components
+- [x] Fixed NotificationPanel useEffect loop: used ref for onClose callback instead of dependency
+- [x] Memoized Dashboard: load (useCallback), smartAlerts (useMemo), SmartAlertsSection (memo), CustomTooltip (memo)
+- [x] Memoized Layout callbacks: handleCloseAlerts, handleCloseMobile, handleToggleAlerts (useCallback)
+- [x] Stress-tested: rapid navigation through 7 pages + rapid bell toggling — zero crashes
+
 ### Financial Calculation Accuracy (March 17, 2026)
 - [x] Dashboard and Reports show consistent numbers (bounded date ranges)
 - [x] All report endpoints filter by approval_status (approved only)
