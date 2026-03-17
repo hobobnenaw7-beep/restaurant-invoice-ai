@@ -697,17 +697,21 @@ async def dashboard_summary(user=Depends(get_user)):
         {"_id": 0}
     ).sort("created_at", -1).to_list(20)
 
+    week_end = (now - timedelta(days=now.weekday() - 6)).strftime("%Y-%m-%d")
+    if week_end > today:
+        week_end = today
+
     return {
-        "today_sales": round(sum_s(today), 2), "today_purchases": round(sum_p(today), 2),
-        "week_sales": round(sum_s(week_start), 2), "week_purchases": round(sum_p(week_start), 2),
-        "month_sales": round(sum_s(month_start), 2), "month_purchases": round(sum_p(month_start), 2),
+        "today_sales": round(sum_s(today, today), 2), "today_purchases": round(sum_p(today, today), 2),
+        "week_sales": round(sum_s(week_start, week_end), 2), "week_purchases": round(sum_p(week_start, week_end), 2),
+        "month_sales": round(sum_s(month_start, today), 2), "month_purchases": round(sum_p(month_start, today), 2),
         "prev_week_sales": round(sum_s(prev_week_start, prev_week_end), 2),
         "prev_week_purchases": round(sum_p(prev_week_start, prev_week_end), 2),
         "prev_month_sales": round(sum_s(prev_month_start, prev_month_end), 2),
         "prev_month_purchases": round(sum_p(prev_month_start, prev_month_end), 2),
-        "month_raw_materials": round(sum_p(month_start), 2),
-        "month_salaries": round(sum_sal(month_start), 2),
-        "month_other_expenses": round(sum_oe(month_start), 2),
+        "month_raw_materials": round(sum_p(month_start, today), 2),
+        "month_salaries": round(sum_sal(month_start, today), 2),
+        "month_other_expenses": round(sum_oe(month_start, today), 2),
         "prev_month_raw_materials": round(sum_p(prev_month_start, prev_month_end), 2),
         "prev_month_salaries": round(sum_sal(prev_month_start, prev_month_end), 2),
         "prev_month_other_expenses": round(sum_oe(prev_month_start, prev_month_end), 2),
@@ -715,18 +719,18 @@ async def dashboard_summary(user=Depends(get_user)):
         "weekly_trends": weekly_trends, "alerts": alerts,
         "smart_alerts": smart_alerts,
         "price_alerts": price_alerts,
-        "daily_profit": profit(today),
-        "weekly_profit": profit(week_start),
-        "monthly_profit": profit(month_start),
-        "yearly_profit": profit(year_start),
+        "daily_profit": profit(today, today),
+        "weekly_profit": profit(week_start, week_end),
+        "monthly_profit": profit(month_start, today),
+        "yearly_profit": profit(year_start, today),
         "prev_weekly_profit": profit(prev_week_start, prev_week_end),
         "prev_monthly_profit": profit(prev_month_start, prev_month_end),
         "prev_yearly_profit": profit(prev_year_start, prev_year_end),
-        "daily_expenses": round(total_expenses(today), 2),
-        "weekly_expenses": round(total_expenses(week_start), 2),
-        "monthly_expenses": round(total_expenses(month_start), 2),
-        "yearly_expenses": round(total_expenses(year_start), 2),
-        "yearly_sales": round(sum_s(year_start), 2),
+        "daily_expenses": round(total_expenses(today, today), 2),
+        "weekly_expenses": round(total_expenses(week_start, week_end), 2),
+        "monthly_expenses": round(total_expenses(month_start, today), 2),
+        "yearly_expenses": round(total_expenses(year_start, today), 2),
+        "yearly_sales": round(sum_s(year_start, today), 2),
     }
 
 # ==================== UPLOAD / EXTRACT ====================

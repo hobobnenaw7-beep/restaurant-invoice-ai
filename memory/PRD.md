@@ -25,154 +25,92 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 13. Demo data seeding
 
 ## What's Been Implemented
-- [x] Full-stack scaffolding (FastAPI + React + MongoDB)
+
+### Authentication & Users
 - [x] JWT authentication (register/login/me)
-- [x] All pages created (Dashboard, Expenses, Sales, Vendors, Items, Reports, Chat, Settings)
-- [x] Database seeding with realistic demo data
-- [x] Premium SaaS UI/UX (dark sidebar, light content, Manrope + IBM Plex Sans fonts)
-- [x] CRUD endpoints for purchases, sales, vendors, items, aliases
-- [x] Dashboard summary with period comparisons and top lists
-- [x] Reports endpoint (weekly/monthly/yearly)
-- [x] Real OCR document extraction via GPT-5.2 Vision (upload endpoint)
-- [x] Chat Assistant with GPT-5.2 integration
-- [x] Reports Page with KPI cards, trend charts, vendor spending, price intelligence
-- [x] Inline Upload (removed standalone Upload Center)
-- [x] Smart Alerts System on Dashboard
-- [x] Vendor Price Comparison on Reports page
-- [x] Excel/CSV Upload Support
-- [x] Expenses page refactor (Raw Materials, Salaries, Other Expenses tabs)
-- [x] **Suppliers → Vendors Rename (March 12, 2026)**:
-  - Renamed "Suppliers" to "Vendors" across all user-facing UI
-  - Sidebar nav, page title, description, buttons, table headers, form labels, search placeholders
-  - Updated Dashboard "Top Vendors" card, Reports "Vendor Spending" table, Chat quick questions
-  - Backend API endpoints unchanged (`/api/suppliers`) — only UI labels changed
+- [x] Multi-user support with roles (Manager, Accountant, Cashier, Staff)
+- [x] 13 granular permissions per user
+- [x] Approval workflow (pending/approved/rejected records)
+- [x] User Management page (Manager-only)
+- [x] Approvals page for reviewing pending records
 
-- [x] **Items Page List View (March 12, 2026)**:
-  - Converted card/grid layout to structured table/list layout
-  - Columns: Item Name, Category, Aliases (badges, max 4 shown), Actions (Aliases, Edit, Delete)
-  - Compact, scannable rows ideal for accounting/admin use
+### OCR & Document Extraction (March 17, 2026)
+- [x] Real OCR via OpenAI GPT-5.2 Vision (NOT MOCKED)
+- [x] Multi-page PDF support (up to 5 pages)
+- [x] Excel/CSV parsing with intelligent column mapping
+- [x] Image upload support (JPEG, PNG, WebP)
+- [x] Post-processing validation: auto-fills missing qty, unit_price, total
+- [x] Better prompts for accurate extraction
+- [x] Support in both Expenses (Raw Materials) and Sales forms
 
-- [x] **Item Name Autocomplete in Expenses Form (March 12, 2026)**:
-  - Replaced plain text input with searchable autocomplete dropdown in Add Raw Material Purchase form
-  - Fetches canonical items + aliases from Items database when dialog opens
-  - Type-to-filter with dropdown suggestions; select existing or type new item freely
+### Financial Calculation Accuracy (March 17, 2026)
+- [x] Dashboard and Reports show consistent numbers (bounded date ranges)
+- [x] All report endpoints filter by approval_status (approved only)
+- [x] Expenses form auto-calculates subtotal and total from line items
+- [x] Tax field auto-updates total
+- [x] Subtotal = sum of line item totals, Total = subtotal + tax
 
-- [x] **Price Tracking System (March 12, 2026)**:
-  - Backend `GET /api/items/{item_id}/price-history` — computes price history from purchases by matching canonical name + aliases
-  - Returns records (vendor, date, unit_price, qty, unit), trend (avg price per date), and summary stats (avg/min/max/vendors)
-  - Frontend: "Prices" button on each item row → opens Price History dialog with 4 KPI cards, Recharts line chart, and scrollable purchase records table
-  - Tested: 100% pass rate (8/8 backend, all frontend features verified)
+### Dashboard
+- [x] Smart Alerts at top (Price Increases, Cheaper Vendors, Not Ordered)
+- [x] Summary cards: Today/Week/Month sales, purchases, expenses
+- [x] Profit calculation cards
+- [x] Top 5 items and vendors
+- [x] Weekly trend charts
+- [x] Notification bell with alert dropdown
 
-- [x] **Vendor Price Comparison (March 14, 2026)**:
-  - Backend `GET /api/prices/vendor-comparison` — per-item, per-vendor latest price comparison with canonical name + alias resolution
-  - Returns items sorted by vendor count and savings potential, each with vendors sorted cheapest first, best_vendor, savings_pct
-  - Frontend: "Vendor Price Comparison" card grid on Items page below items table — each card shows item name, savings badge, vendor rows with price/date/unit/purchases, green highlight + BEST PRICE badge on cheapest vendor
-  - Tested: 100% pass rate (9/9 backend, 11/11 frontend features verified)
+### Expenses (3 tabs)
+- [x] Raw Materials: CRUD, upload/extract, auto-calculation, vendor autocomplete
+- [x] Salaries: CRUD, payment tracking
+- [x] Other Expenses: CRUD with categories (Rent, Electricity, etc.)
+- [x] Duplicate entry detection for all 3 types
 
-- [x] **Price Alert System (March 14, 2026)**:
-  - Backend: POST /api/purchases now auto-generates price_increase alerts when item prices exceed previous prices (uses canonical + alias matching)
-  - Each alert stores: item_name, previous_price, new_price, change_pct, vendor, date, severity
-  - New endpoints: GET /api/alerts/prices, DELETE /api/alerts/prices/{aid}
-  - Dashboard summary returns price_alerts array
-  - Frontend: "Price Alerts" section on dashboard with red icon, alert count badge, dismissable alert cards showing item name, price change, percentage, vendor, date, HIGH badge for >15%
-  - Tested: 100% pass rate (12/12 backend, all frontend verified)
+### Sales
+- [x] CRUD with date range support (from/to dates)
+- [x] Upload/extract from images, PDFs, Excel
+- [x] Extraction properly sets date_from/date_to
+- [x] Duplicate entry detection
 
-- [x] **Automatic Profit Calculation (March 14, 2026)**:
-  - Backend: Dashboard summary now returns daily_profit, weekly_profit, monthly_profit, yearly_profit + previous period comparisons
-  - Formula: Net Profit = Total Sales - (Raw Materials + Salaries + Other Expenses)
-  - Frontend: "Net Profit" section on dashboard with 4 color-coded cards (green=profit, red=loss), period % change badges, progress bars
-  - Tested: 100% pass rate (16/16 backend, all frontend verified)
+### Records Library
+- [x] View-only archive (uploads happen through Sales/Expense forms)
+- [x] Sales Files and Expense Files tabs
+- [x] Search, date filter, file type filter
+- [x] Expense Category filter on Expense Files tab
+- [x] File preview, download, delete
+- [x] Auto-linked to transactions
 
-- [x] **Tax Reporting Features (March 14, 2026)**:
-  - Backend: `_build_report` now includes salaries + other_expenses for full expense breakdown; Net Profit = Sales - (Raw Materials + Salaries + Other); `_parse_report_dates` supports quarterly (2026-Q1 format)
-  - PDF export: Tax Summary table added with category breakdown before KPIs
-  - Excel export: Tax Summary rows added to Summary sheet
-  - Frontend: Reports page now has 4 tabs (Weekly, Monthly, Quarterly, Yearly); Tax Summary section with structured table showing Total Sales, Expenses Breakdown, Total Expenses, Net Profit, Net Margin with current vs previous period
-  - Tested: 100% pass rate (17/17 backend, all frontend verified)
+### Reports
+- [x] 6-tab layout: Sales, Raw Materials, Salaries, Other Expenses, Vendors, Profit
+- [x] Date range filtering
+- [x] PDF and Excel export
+- [x] All reports filter approved records only
 
-- [x] **Duplicate Entry Detection (March 14, 2026)**:
-  - Backend `POST /api/duplicates/check` — checks for duplicate purchases (by invoice#, vendor+date+amount), sales (by date, date+amount), salaries (employee+date), other expenses (title+date, date+amount)
-  - Shared `DuplicateWarningDialog` component + `useDuplicateCheck` hook
-  - Applied to all 4 save flows: Sales, Raw Materials, Salaries, Other Expenses
-  - Warning shows match details, Cancel and Save Anyway buttons
+### Vendors & Items
+- [x] Vendors: CRUD with spending totals and invoice counts
+- [x] Items: CRUD with aliases, price history charts, vendor comparison
+- [x] Price alert generation on new purchases
 
-- [x] **Sales Date Range (March 14, 2026)**:
-  - From Date + To Date fields replace single Report Date; backend validates to_date >= from_date
-  - "Single Day Entry" badge when dates match, "X Day Range" badge when different
-  - Table shows TYPE column with badges, date ranges as "from → to"
-  - Backward compatible with existing report_date-only records
-  - Tested: 100% (6/6 backend, 12/12 frontend)
-
-- [x] **Reports Page Reorganization (March 14, 2026)**:
-  - Completely rewrote Reports page into 6 tabbed categories: Sales, Raw Materials, Salaries, Other Expenses, Vendors, Profit
-  - Backend: GET /api/reports/category/{category} with date_from/date_to filtering, vendor filter for Vendors tab
-  - Backend: GET /api/reports/category/{category}/export?fmt=pdf|excel for all 6 categories
-  - Each tab: date range filters, KPI summary cards, data tables, PDF/Excel export buttons
-  - Profit tab includes detailed breakdown table (Revenue, Expenses by category, Net Profit, Net Margin)
-  - Tested: 100% (12/12 backend, all frontend features verified)
-
-- [x] **Records Library (March 14, 2026)**:
-  - New archive section for all uploaded files linked to financial entries
-  - Two folders: Sales Files, Expense Files — accessible via tabbed navigation
-  - Backend: POST /api/records/upload, GET /api/records (with folder/search/date/type filters), GET /api/records/{id}, GET /api/records/{id}/file, DELETE /api/records/{id}
-  - File preview dialog with transaction details (type, ID, date, amount, vendor, notes)
-  - Search by filename, filter by date range, filter by file type (Image/PDF/Excel)
-  - Download and delete with confirmation
-  - Auto-save: files uploaded during Sale or Raw Material Purchase entry are automatically saved to the correct folder
-  - Sidebar navigation added between Reports and Chat Assistant
-  - Tested: 100% (19/19 backend, all frontend features verified)
-
-  **Records Library Enhancements (March 14, 2026)**:
-  - Duplicate file prevention: SHA-256 content hash + file name/size check per folder (returns 409 with clear message)
-  - Drag-and-drop bulk upload zone with progress bar and multi-file support
-  - Sortable columns: Upload Date, Amount, File Name (click headers to toggle asc/desc)
-  - Audit-aware delete confirmation dialog with warning about tax/audit purposes
-  - "Stored for tax & audit" badge in table footer and preview dialog
-  - Tested: 100% (19/19 backend, all frontend features verified)
-
-- [x] **Smart Alerts Overhaul (March 15, 2026)**:
-  - Moved Smart Alerts to TOP of dashboard, made actionable with 3 real data-driven alert types
-  - Price Increases: item name, old→new price, change %, vendor, severity badge
-  - Cheaper Vendor Alternatives: item name, current vs cheaper price, savings %, vendor comparison
-  - Items Not Ordered: item name, days since last order, last vendor, severity badge
-  - Filter tabs: All, Price Increases, Cheaper Vendors, Not Ordered (with counts)
-  - Severity: High (red), Medium (amber), Low (slate) — thresholds vary by alert type
-  - All alerts computed from real purchase history, no mocks
-  - Tested: 100% (18/19 backend, all frontend verified)
-
-- [x] **User Management System (March 15, 2026)**:
-  - Multi-user support: Manager can create, edit, deactivate, and delete users within the same restaurant
-  - 4 default roles: Manager, Accountant, Cashier, Staff — with role badges
-  - Each user has: full name, email, password (hashed), role, status (Active/Inactive)
-  - Disabled users blocked from login (403 error)
-  - Self-protection: Manager cannot deactivate/delete themselves or change own role
-  - Backend: CRUD endpoints at /api/users (Manager-only), /auth/me returns role
-  - Frontend: User Management page with stats cards, user table, add/edit dialogs, search
-  - Sidebar: "Management" section visible only to managers
-  - Tested: 100% (23/23 backend, all frontend verified)
-
-- [x] **Configurable Permissions (March 15, 2026)**:
-  - 13 granular permissions per user: add/edit/delete sales, add/edit/delete expenses, upload files, view/export reports, view records, manage vendors/items/users
-  - Grouped into 4 sections: Sales, Expenses, Files & Reports, Management
-  - Role-based defaults: Manager (13/13), Accountant (10/13), Cashier (1/13), Staff (1/13)
-  - Select All / Clear All bulk toggles, X/13 counter badge
-  - Manager role auto-applies all permissions (checkboxes disabled)
-  - Backend: permissions stored per user, defaults/update/direct-update endpoints
-  - Tested: 100% (15/15 backend, all frontend verified)
+### Other Features
+- [x] Premium SaaS UI/UX (dark sidebar, light content)
+- [x] Demo data seeding
+- [x] Duplicate file detection in Records Library
+- [x] Sortable columns throughout
 
 ## Credentials
 - Test: demo@test.com / testpassword
 
 ## Prioritized Backlog
 
-### P0
-- Implement Real OCR/Document Extraction (OpenAI GPT-5.2 Vision)
-
 ### P1
 - Implement Real Chat Assistant Backend (GPT-5.2 with financial data context)
+- Implement Audit Log (track user/record actions)
 - Build Item Normalization UI
 
 ### P2
 - Implement Settings page functionality
-- Enhance CRUD UI on Vendors/Items pages
+- Enhance Vendor/Item CRUD (edit purchases, more filters)
 - Refactoring: extract backend routes into separate files
+
+### Deferred
+- AI Chat Assistant backend
+- Audit log
+- Settings page
