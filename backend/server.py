@@ -214,6 +214,8 @@ class UserCreate(BaseModel):
     password: str
     role: str = "staff"
     permissions: Optional[Dict[str, bool]] = None
+    approval_rule: str = "pending_all"
+    auto_approve_limit: Optional[float] = None
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
@@ -222,13 +224,36 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     status: Optional[str] = None
     permissions: Optional[Dict[str, bool]] = None
+    approval_rule: Optional[str] = None
+    auto_approve_limit: Optional[float] = None
+
+VALID_APPROVAL_RULES = ["auto_approve_all", "auto_approve_below", "pending_all"]
 
 def _safe_user(u):
-    """Return user dict without password_hash, with permissions defaulted."""
+    """Return user dict without password_hash, with permissions and approval defaulted."""
     out = {k: v for k, v in u.items() if k != "password_hash"}
     if "permissions" not in out:
         out["permissions"] = DEFAULT_PERMISSIONS.get(out.get("role", "staff"), DEFAULT_PERMISSIONS["staff"])
+    if "approval_rule" not in out:
+        out["approval_rule"] = "auto_approve_all" if out.get("role") == "manager" else "pending_all"
+    if "auto_approve_limit" not in out:
+        out["auto_approve_limit"] = None
     return out
+
+def _compute_approval_status(user, amount):
+    """Determine approval_status for a new record based on user's approval rule."""
+    role = user.get("role", "staff")
+    if role == "manager":
+        return "approved"
+    rule = user.get("approval_rule", "pending_all")
+    if rule == "auto_approve_all":
+        return "approved"
+    if rule == "auto_approve_below":
+        limit = user.get("auto_approve_limit")
+        if limit is not None and amount <= limit:
+            return "approved"
+        return "pending"
+    return "pending"
 
 @api_router.get("/users")
 async def list_users(user=Depends(get_user)):
@@ -263,6 +288,8 @@ async def create_user(data: UserCreate, user=Depends(get_user)):
         "role": data.role,
         "status": "active",
         "permissions": perms,
+        "approval_rule": data.approval_rule if data.approval_rule in VALID_APPROVAL_RULES else "pending_all",
+        "auto_approve_limit": data.auto_approve_limit,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": user["id"],
     }
@@ -307,6 +334,12 @@ async def update_user(user_id: str, data: UserUpdate, user=Depends(get_user)):
         for p in ALL_PERMISSIONS:
             clean_perms[p] = bool(data.permissions.get(p, False))
         updates["permissions"] = clean_perms
+    if data.approval_rule is not None:
+        if data.approval_rule not in VALID_APPROVAL_RULES:
+            raise HTTPException(400, f"Invalid approval_rule. Must be one of: {', '.join(VALID_APPROVAL_RULES)}")
+        updates["approval_rule"] = data.approval_rule
+    if data.auto_approve_limit is not None:
+        updates["auto_approve_limit"] = data.auto_approve_limit
     if not updates:
         raise HTTPException(400, "No fields to update")
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -346,6 +379,119 @@ async def update_user_permissions(user_id: str, permissions: Dict[str, bool], us
     await db.users.update_one({"id": user_id}, {"$set": {"permissions": clean_perms, "updated_at": datetime.now(timezone.utc).isoformat()}})
     updated = await db.users.find_one({"id": user_id}, {"_id": 0})
     return _safe_user(updated)
+
+
+
+# ==================== APPROVALS ====================
+
+class ApprovalAction(BaseModel):
+    action: str  # "approve" or "reject"
+    reason: Optional[str] = None
+
+@api_router.get("/approvals")
+async def list_pending_records(
+    user=Depends(get_user),
+    record_type: str = "",
+    status: str = "pending",
+    created_by: str = "",
+    date_from: str = "",
+    date_to: str = "",
+):
+    """List records pending approval (Manager only)."""
+    require_manager(user)
+    rid = user["restaurant_id"]
+    results = []
+
+    collections = {
+        "sale": ("sales", "total_sales", "report_date"),
+        "purchase": ("purchases", "total", "invoice_date"),
+        "salary": ("salaries", "amount", "payment_date"),
+        "other_expense": ("other_expenses", "amount", "expense_date"),
+    }
+
+    types_to_check = [record_type] if record_type and record_type in collections else list(collections.keys())
+
+    for rtype in types_to_check:
+        coll_name, amt_field, date_field = collections[rtype]
+        coll = db[coll_name]
+        query = {"restaurant_id": rid}
+        if status:
+            query["approval_status"] = status
+        if created_by:
+            query["created_by_id"] = created_by
+        if date_from:
+            query.setdefault(date_field, {})["$gte"] = date_from
+        if date_to:
+            query.setdefault(date_field, {})["$lte"] = date_to
+
+        docs = await coll.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+        for d in docs:
+            results.append({
+                "record_type": rtype,
+                "record_id": d.get("id", ""),
+                "date": d.get(date_field, ""),
+                "amount": d.get(amt_field, 0),
+                "created_by_id": d.get("created_by_id", ""),
+                "created_by_name": d.get("created_by_name", "Unknown"),
+                "approval_status": d.get("approval_status", "approved"),
+                "rejection_reason": d.get("rejection_reason", ""),
+                "notes": d.get("notes", d.get("transaction_notes", "")),
+                "created_at": d.get("created_at", ""),
+                # Type-specific fields
+                "supplier_name": d.get("supplier_name", ""),
+                "employee_name": d.get("employee_name", ""),
+                "title": d.get("title", ""),
+                "category": d.get("category", ""),
+                "invoice_number": d.get("invoice_number", ""),
+            })
+
+    results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return results
+
+
+@api_router.get("/approvals/counts")
+async def approval_counts(user=Depends(get_user)):
+    """Get count of pending records per type."""
+    require_manager(user)
+    rid = user["restaurant_id"]
+    counts = {}
+    for rtype, (coll_name, _, _) in {"sale": ("sales", "", ""), "purchase": ("purchases", "", ""), "salary": ("salaries", "", ""), "other_expense": ("other_expenses", "", "")}.items():
+        counts[rtype] = await db[coll_name].count_documents({"restaurant_id": rid, "approval_status": "pending"})
+    counts["total"] = sum(counts.values())
+    return counts
+
+
+@api_router.put("/approvals/{record_type}/{record_id}")
+async def process_approval(record_type: str, record_id: str, data: ApprovalAction, user=Depends(get_user)):
+    """Approve or reject a record."""
+    require_manager(user)
+    rid = user["restaurant_id"]
+
+    coll_map = {"sale": "sales", "purchase": "purchases", "salary": "salaries", "other_expense": "other_expenses"}
+    coll_name = coll_map.get(record_type)
+    if not coll_name:
+        raise HTTPException(400, "Invalid record_type")
+
+    if data.action not in ("approve", "reject"):
+        raise HTTPException(400, "Action must be 'approve' or 'reject'")
+
+    coll = db[coll_name]
+    rec = await coll.find_one({"id": record_id, "restaurant_id": rid}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Record not found")
+
+    updates = {
+        "approval_status": "approved" if data.action == "approve" else "rejected",
+        "approved_by_id": user["id"],
+        "approved_by_name": user.get("name", ""),
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if data.action == "reject" and data.reason:
+        updates["rejection_reason"] = data.reason
+
+    await coll.update_one({"id": record_id}, {"$set": updates})
+    updated = await coll.find_one({"id": record_id}, {"_id": 0})
+    return updated
 
 
 
@@ -503,10 +649,12 @@ async def dashboard_summary(user=Depends(get_user)):
     prev_year_start = f"{now.year - 1}-01-01"
     prev_year_end = f"{now.year - 1}-12-31"
 
-    purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
-    sales = await db.sales.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
-    salaries = await db.salaries.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
-    other_exp = await db.other_expenses.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    # Only count approved records in dashboard (backwards-compatible: no approval_status = approved)
+    _approved = {"$or": [{"approval_status": {"$exists": False}}, {"approval_status": "approved"}]}
+    purchases = await db.purchases.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
+    sales = await db.sales.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
+    salaries = await db.salaries.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
+    other_exp = await db.other_expenses.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
 
     def sum_p(df, dt=None):
         return sum(p["total"] for p in purchases if p.get("invoice_date", "") >= df and (not dt or p.get("invoice_date", "") <= dt))
@@ -1066,6 +1214,9 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     doc["id"] = str(uuid.uuid4())
     doc["restaurant_id"] = user["restaurant_id"]
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["created_by_id"] = user["id"]
+    doc["created_by_name"] = user.get("name", "")
+    doc["approval_status"] = _compute_approval_status(user, doc.get("total", 0))
     await db.purchases.insert_one(doc)
     doc.pop("_id", None)
 
@@ -1169,6 +1320,9 @@ async def create_salary(data: SalaryCreate, user=Depends(get_user)):
     doc["id"] = str(uuid.uuid4())
     doc["restaurant_id"] = user["restaurant_id"]
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["created_by_id"] = user["id"]
+    doc["created_by_name"] = user.get("name", "")
+    doc["approval_status"] = _compute_approval_status(user, doc.get("amount", 0))
     await db.salaries.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -1199,6 +1353,9 @@ async def create_other_expense(data: OtherExpenseCreate, user=Depends(get_user))
     doc["id"] = str(uuid.uuid4())
     doc["restaurant_id"] = user["restaurant_id"]
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["created_by_id"] = user["id"]
+    doc["created_by_name"] = user.get("name", "")
+    doc["approval_status"] = _compute_approval_status(user, doc.get("amount", 0))
     await db.other_expenses.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -1244,6 +1401,9 @@ async def create_sale(data: SalesCreate, user=Depends(get_user)):
     doc["id"] = str(uuid.uuid4())
     doc["restaurant_id"] = user["restaurant_id"]
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["created_by_id"] = user["id"]
+    doc["created_by_name"] = user.get("name", "")
+    doc["approval_status"] = _compute_approval_status(user, doc.get("total_sales", 0))
     await db.sales.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -1560,10 +1720,12 @@ async def get_category_report(category: str, user=Depends(get_user), date_from: 
         date_from = now.strftime("%Y-%m-01")
     if not date_to:
         date_to = now.strftime("%Y-%m-%d")
+    # Only include approved records in reports
+    _appr = {"$or": [{"approval_status": {"$exists": False}}, {"approval_status": "approved"}]}
 
     if category == "sales":
         sales = await db.sales.find(
-            {"restaurant_id": rid, "$or": [
+            {"restaurant_id": rid, **_appr, "$or": [
                 {"report_date": {"$gte": date_from, "$lte": date_to}},
                 {"date_from": {"$gte": date_from, "$lte": date_to}},
             ]}, {"_id": 0}
@@ -1575,7 +1737,7 @@ async def get_category_report(category: str, user=Depends(get_user), date_from: 
 
     elif category == "raw_materials":
         purchases = await db.purchases.find(
-            {"restaurant_id": rid, "invoice_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+            {"restaurant_id": rid, **_appr, "invoice_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
         ).sort("invoice_date", -1).to_list(5000)
         total = round(sum(p.get("total", 0) for p in purchases), 2)
         # Flatten items for itemized view
@@ -1593,7 +1755,7 @@ async def get_category_report(category: str, user=Depends(get_user), date_from: 
 
     elif category == "salaries":
         salaries = await db.salaries.find(
-            {"restaurant_id": rid, "payment_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+            {"restaurant_id": rid, **_appr, "payment_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
         ).sort("payment_date", -1).to_list(5000)
         total = round(sum(s.get("amount", 0) for s in salaries), 2)
         return {"category": "salaries", "date_from": date_from, "date_to": date_to,
@@ -1601,7 +1763,7 @@ async def get_category_report(category: str, user=Depends(get_user), date_from: 
 
     elif category == "other_expenses":
         expenses = await db.other_expenses.find(
-            {"restaurant_id": rid, "expense_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+            {"restaurant_id": rid, **_appr, "expense_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
         ).sort("expense_date", -1).to_list(5000)
         total = round(sum(e.get("amount", 0) for e in expenses), 2)
         # Group by category
@@ -1614,7 +1776,7 @@ async def get_category_report(category: str, user=Depends(get_user), date_from: 
                 "total": total, "record_count": len(expenses), "records": expenses, "breakdown": breakdown}
 
     elif category == "vendor":
-        query = {"restaurant_id": rid, "invoice_date": {"$gte": date_from, "$lte": date_to}}
+        query = {"restaurant_id": rid, **_appr, "invoice_date": {"$gte": date_from, "$lte": date_to}}
         if vendor:
             query["supplier_name"] = {"$regex": f"^{vendor}$", "$options": "i"}
         purchases = await db.purchases.find(query, {"_id": 0}).sort("invoice_date", -1).to_list(5000)
@@ -1636,19 +1798,19 @@ async def get_category_report(category: str, user=Depends(get_user), date_from: 
 
     elif category == "profit":
         sales = await db.sales.find(
-            {"restaurant_id": rid, "$or": [
+            {"restaurant_id": rid, **_appr, "$or": [
                 {"report_date": {"$gte": date_from, "$lte": date_to}},
                 {"date_from": {"$gte": date_from, "$lte": date_to}},
             ]}, {"_id": 0}
         ).to_list(5000)
         purchases = await db.purchases.find(
-            {"restaurant_id": rid, "invoice_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+            {"restaurant_id": rid, **_appr, "invoice_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
         ).to_list(5000)
         salaries = await db.salaries.find(
-            {"restaurant_id": rid, "payment_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+            {"restaurant_id": rid, **_appr, "payment_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
         ).to_list(5000)
         other_exp = await db.other_expenses.find(
-            {"restaurant_id": rid, "expense_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
+            {"restaurant_id": rid, **_appr, "expense_date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
         ).to_list(5000)
         total_sales = round(sum(s.get("total_sales", 0) for s in sales), 2)
         raw_mat = round(sum(p.get("total", 0) for p in purchases), 2)

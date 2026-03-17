@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   LayoutDashboard, Receipt, DollarSign, Users,
-  Package, FileText, FolderArchive, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat, UserCog
+  Package, FileText, FolderArchive, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat, UserCog, ClipboardCheck,
+  TrendingUp, ArrowRightLeft, Clock, ChevronDown
 } from 'lucide-react';
 
 const mainNav = [
@@ -22,12 +23,150 @@ const mainNav = [
 
 const managerNav = [
   { path: '/users', label: 'User Management', icon: UserCog },
+  { path: '/approvals', label: 'Approvals', icon: ClipboardCheck },
 ];
 
+// ======================== ALERT CONFIG ========================
+const ALERT_CONFIG = {
+  price_increase: { label: 'Price Increase', icon: TrendingUp, border: 'border-l-red-500', iconBg: 'bg-red-100', iconColor: 'text-red-600', badge: 'bg-red-100 text-red-700' },
+  cheaper_vendor: { label: 'Cheaper Vendor', icon: ArrowRightLeft, border: 'border-l-emerald-500', iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', badge: 'bg-emerald-100 text-emerald-700' },
+  not_ordered:    { label: 'Not Ordered', icon: Clock, border: 'border-l-amber-500', iconBg: 'bg-amber-100', iconColor: 'text-amber-600', badge: 'bg-amber-100 text-amber-700' },
+};
+
+const SEV_ORDER = { high: 0, medium: 1, low: 2 };
+const SEV_BADGE = {
+  high: 'bg-red-600 text-white',
+  medium: 'bg-amber-500 text-white',
+  low: 'bg-slate-400 text-white',
+};
+
+function fmtPrice(n) { return `$${Number(n).toFixed(2)}`; }
+
+// ======================== NOTIFICATION PANEL ========================
+function NotificationPanel({ alerts, open, onClose, containerRef }) {
+  const [filter, setFilter] = useState('all');
+  const [filterOpen, setFilterOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (containerRef?.current && !containerRef.current.contains(e.target)) onClose();
+    };
+    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 10);
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler); };
+  }, [open, onClose, containerRef]);
+
+  if (!open) return null;
+
+  const sorted = [...alerts].sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9));
+  const filtered = filter === 'all' ? sorted : sorted.filter(a => a.type === filter);
+
+  const filterOptions = [
+    { value: 'all', label: 'All Alerts' },
+    { value: 'price_increase', label: 'Price Increase' },
+    { value: 'cheaper_vendor', label: 'Cheaper Vendor' },
+    { value: 'not_ordered', label: 'Not Ordered' },
+  ];
+
+  return (
+    <div className="absolute right-0 top-full mt-2 w-[380px] max-h-[480px] bg-white rounded-xl border border-slate-200 shadow-xl z-50 flex flex-col overflow-hidden" data-testid="notification-panel">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+        <div className="flex items-center gap-2">
+          <Bell className="w-4 h-4 text-navy-900" />
+          <span className="text-xs font-bold text-navy-900">Smart Alerts</span>
+          <Badge className="text-[9px] bg-slate-100 text-slate-500 h-4 px-1.5">{alerts.length}</Badge>
+        </div>
+        {/* Filter dropdown */}
+        <div className="relative">
+          <button
+            className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-navy-900 transition-colors px-2 py-1 rounded-md hover:bg-slate-50"
+            onClick={() => setFilterOpen(!filterOpen)}
+            data-testid="alert-filter-btn"
+          >
+            Filter <ChevronDown className="w-3 h-3" />
+          </button>
+          {filterOpen && (
+            <div className="absolute right-0 top-full mt-1 w-36 bg-white border border-slate-200 rounded-lg shadow-lg z-10 py-1" data-testid="alert-filter-dropdown">
+              {filterOptions.map(opt => (
+                <button
+                  key={opt.value}
+                  className={`w-full text-left px-3 py-1.5 text-[11px] transition-colors ${filter === opt.value ? 'bg-teal-50 text-teal-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}
+                  onClick={() => { setFilter(opt.value); setFilterOpen(false); }}
+                  data-testid={`alert-filter-${opt.value}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Alert list */}
+      <div className="flex-1 overflow-y-auto" data-testid="alert-list">
+        {filtered.length === 0 ? (
+          <div className="text-center py-10 text-xs text-slate-400">No alerts match this filter</div>
+        ) : (
+          filtered.map((alert, i) => {
+            const cfg = ALERT_CONFIG[alert.type] || ALERT_CONFIG.not_ordered;
+            const Icon = cfg.icon;
+            return (
+              <div key={i} className={`flex items-start gap-2.5 px-4 py-3 border-b border-slate-50 border-l-[3px] ${cfg.border} hover:bg-slate-50/60 transition-colors`} data-testid={`notif-alert-${i}`}>
+                <div className={`w-7 h-7 rounded-lg ${cfg.iconBg} flex items-center justify-center flex-shrink-0 mt-0.5`}>
+                  <Icon className={`w-3.5 h-3.5 ${cfg.iconColor}`} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                    <span className="text-[11px] font-bold text-navy-900">{alert.item_name}</span>
+                    <span className={`text-[8px] font-bold uppercase px-1.5 py-0 rounded ${SEV_BADGE[alert.severity] || SEV_BADGE.low}`}>{alert.severity}</span>
+                    <span className={`text-[9px] font-semibold px-1.5 py-0 rounded ${cfg.badge}`}>{cfg.label}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-snug">
+                    {alert.type === 'price_increase' && (
+                      <>{fmtPrice(alert.old_price)} <span className="text-red-500">&rarr;</span> <span className="font-semibold text-red-600">{fmtPrice(alert.new_price)}</span> <span className="text-slate-400">(+{alert.change_pct}%)</span>{alert.vendor && <> &middot; {alert.vendor}</>}</>
+                    )}
+                    {alert.type === 'cheaper_vendor' && (
+                      <>{fmtPrice(alert.current_price)} at {alert.vendor} <span className="text-emerald-500">&rarr;</span> <span className="font-semibold text-emerald-600">{fmtPrice(alert.cheaper_price)}</span> at <span className="font-medium text-emerald-700">{alert.cheaper_vendor}</span> <span className="text-slate-400">(-{alert.savings_pct}%)</span></>
+                    )}
+                    {alert.type === 'not_ordered' && (
+                      <><span className="font-semibold text-amber-600">{alert.days_since}d</span> since last order{alert.vendor && <> &middot; {alert.vendor}</>}{alert.last_price > 0 && <> &middot; {fmtPrice(alert.last_price)}</>}</>
+                    )}
+                  </p>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Footer */}
+      <Link to="/dashboard" onClick={onClose} className="block px-4 py-2.5 border-t border-slate-100 text-center text-[11px] font-semibold text-teal-600 hover:bg-teal-50/50 transition-colors" data-testid="view-all-alerts-link">
+        View all on Dashboard
+      </Link>
+    </div>
+  );
+}
+
+// ======================== LAYOUT ========================
 export default function Layout({ children }) {
-  const { user, logout } = useAuth();
+  const { user, api, logout } = useAuth();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [alerts, setAlerts] = useState([]);
+  const bellContainerRef = useRef(null);
+
+  useEffect(() => {
+    if (!api) return;
+    let mounted = true;
+    api.get('/dashboard/summary').then(res => {
+      if (mounted) setAlerts(res.data?.smart_alerts || []);
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, [api]);
+
+  const highCount = alerts.filter(a => a.severity === 'high').length;
 
   const NavLink = ({ item }) => {
     const isActive = location.pathname === item.path;
@@ -50,7 +189,6 @@ export default function Layout({ children }) {
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full bg-navy-950 text-white" data-testid="sidebar">
-      {/* Logo */}
       <div className="p-5 border-b border-navy-800">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-teal-600 flex items-center justify-center flex-shrink-0">
@@ -63,7 +201,6 @@ export default function Layout({ children }) {
         </div>
       </div>
 
-      {/* Main navigation */}
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
         {mainNav.map(item => <NavLink key={item.path} item={item} />)}
         {user?.role === 'manager' && (
@@ -74,7 +211,6 @@ export default function Layout({ children }) {
         )}
       </nav>
 
-      {/* Settings + User — pinned at bottom */}
       <div className="border-t border-navy-800">
         <div className="px-3 pt-3 pb-1">
           <NavLink item={{ path: '/settings', label: 'Settings', icon: Settings }} />
@@ -127,10 +263,23 @@ export default function Layout({ children }) {
             <Menu className="w-5 h-5 text-slate-600" />
           </button>
           <div className="flex-1" />
-          <Button variant="ghost" size="icon" className="relative" data-testid="notifications-btn">
-            <Bell className="w-[18px] h-[18px] text-slate-500" />
-            <Badge className="absolute -top-0.5 -right-0.5 h-4 w-4 p-0 flex items-center justify-center text-[10px] bg-red-500 text-white border-0">3</Badge>
-          </Button>
+          <div className="relative" ref={bellContainerRef}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="relative"
+              onClick={() => setAlertsOpen(!alertsOpen)}
+              data-testid="notifications-btn"
+            >
+              <Bell className="w-[18px] h-[18px] text-slate-500" />
+              {alerts.length > 0 && (
+                <Badge className={`absolute -top-0.5 -right-0.5 h-4 min-w-4 p-0 px-0.5 flex items-center justify-center text-[10px] border-0 ${highCount > 0 ? 'bg-red-500 text-white' : 'bg-amber-500 text-white'}`} data-testid="alert-count-badge">
+                  {alerts.length}
+                </Badge>
+              )}
+            </Button>
+            <NotificationPanel alerts={alerts} open={alertsOpen} onClose={() => setAlertsOpen(false)} containerRef={bellContainerRef} />
+          </div>
         </header>
 
         <div className="flex-1 overflow-auto p-5 lg:p-8">

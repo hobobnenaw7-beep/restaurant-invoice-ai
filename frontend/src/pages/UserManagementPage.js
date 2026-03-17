@@ -71,6 +71,7 @@ function permCount(perms) {
 }
 
 const emptyForm = { name: '', email: '', password: '', role: 'staff' };
+const defaultApproval = { rule: 'pending_all', limit: '' };
 
 // ======================== PERMISSIONS PANEL ========================
 function PermissionsPanel({ permissions, onChange, disabled }) {
@@ -131,6 +132,7 @@ export default function UserManagementPage() {
   const [editingUser, setEditingUser] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [permissions, setPermissions] = useState({});
+  const [approvalRule, setApprovalRule] = useState(defaultApproval);
   const [defaults, setDefaults] = useState({});
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -157,6 +159,7 @@ export default function UserManagementPage() {
     setEditingUser(null);
     setForm(emptyForm);
     setPermissions(defaults['staff'] || {});
+    setApprovalRule(defaultApproval);
     setShowDialog(true);
   };
 
@@ -164,6 +167,7 @@ export default function UserManagementPage() {
     setEditingUser(u);
     setForm({ name: u.name, email: u.email, password: '', role: u.role });
     setPermissions(u.permissions || defaults[u.role] || {});
+    setApprovalRule({ rule: u.approval_rule || 'pending_all', limit: u.auto_approve_limit != null ? String(u.auto_approve_limit) : '' });
     setShowDialog(true);
   };
 
@@ -184,13 +188,17 @@ export default function UserManagementPage() {
     }
     setSaving(true);
     try {
+      const approvalPayload = {
+        approval_rule: approvalRule.rule,
+        auto_approve_limit: approvalRule.rule === 'auto_approve_below' && approvalRule.limit ? Number(approvalRule.limit) : null,
+      };
       if (editingUser) {
-        const payload = { name: form.name, email: form.email, role: form.role, permissions };
+        const payload = { name: form.name, email: form.email, role: form.role, permissions, ...approvalPayload };
         if (form.password) payload.password = form.password;
         await api.put(`/users/${editingUser.id}`, payload);
         toast.success('User updated');
       } else {
-        await api.post('/users', { ...form, permissions });
+        await api.post('/users', { ...form, permissions, ...approvalPayload });
         toast.success('User created');
       }
       setShowDialog(false);
@@ -272,6 +280,7 @@ export default function UserManagementPage() {
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Role</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Permissions</TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Approval Rule</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Status</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right">Actions</TableHead>
                 </TableRow>
@@ -301,6 +310,13 @@ export default function UserManagementPage() {
                         <span className="text-[10px] font-semibold text-slate-500" data-testid={`user-perm-count-${i}`}>{pc}/{ALL_KEYS.length}</span>
                       </TableCell>
                       <TableCell>
+                        <span className="text-[10px] font-medium text-slate-500" data-testid={`user-approval-rule-${i}`}>
+                          {u.approval_rule === 'auto_approve_all' ? 'Auto-approve all'
+                           : u.approval_rule === 'auto_approve_below' ? `Auto below $${u.auto_approve_limit || 0}`
+                           : 'Pending all'}
+                        </span>
+                      </TableCell>
+                      <TableCell>
                         <Badge className={`text-[10px] font-bold px-2 py-0 h-5 ${u.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`} data-testid={`user-status-${i}`}>
                           {u.status === 'active' ? 'Active' : 'Inactive'}
                         </Badge>
@@ -317,7 +333,7 @@ export default function UserManagementPage() {
                     </TableRow>
                   );
                 })}
-                {filtered.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-12 text-sm text-slate-400">No users found</TableCell></TableRow>}
+                {filtered.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-12 text-sm text-slate-400">No users found</TableCell></TableRow>}
               </TableBody>
             </Table>
           </div>
@@ -378,6 +394,37 @@ export default function UserManagementPage() {
                 </p>
               )}
             </div>
+
+            {/* Approval rule config */}
+            {form.role !== 'manager' && (
+              <div className="border-t border-slate-200/80 pt-3">
+                <div className="flex items-center gap-2 mb-3">
+                  <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
+                  <span className="text-xs font-bold text-navy-900">Approval Rule</span>
+                </div>
+                <div className="space-y-2.5">
+                  <label className="flex items-center gap-2 cursor-pointer" data-testid="rule-auto-all">
+                    <input type="radio" name="approval_rule" className="accent-teal-600 w-3.5 h-3.5" checked={approvalRule.rule === 'auto_approve_all'} onChange={() => setApprovalRule({ rule: 'auto_approve_all', limit: '' })} />
+                    <span className="text-xs text-slate-600">Auto-approve all entries</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer" data-testid="rule-auto-below">
+                    <input type="radio" name="approval_rule" className="accent-teal-600 w-3.5 h-3.5" checked={approvalRule.rule === 'auto_approve_below'} onChange={() => setApprovalRule(a => ({ ...a, rule: 'auto_approve_below' }))} />
+                    <span className="text-xs text-slate-600">Auto-approve below amount:</span>
+                    {approvalRule.rule === 'auto_approve_below' && (
+                      <Input
+                        type="number" className="h-7 w-28 text-xs ml-1" placeholder="e.g. 500"
+                        value={approvalRule.limit} onChange={e => setApprovalRule(a => ({ ...a, limit: e.target.value }))}
+                        data-testid="rule-limit-input"
+                      />
+                    )}
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer" data-testid="rule-pending-all">
+                    <input type="radio" name="approval_rule" className="accent-teal-600 w-3.5 h-3.5" checked={approvalRule.rule === 'pending_all'} onChange={() => setApprovalRule({ rule: 'pending_all', limit: '' })} />
+                    <span className="text-xs text-slate-600">Keep all entries pending until approved</span>
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter className="flex-shrink-0 pt-3 border-t border-slate-100">
             <Button variant="outline" size="sm" className="text-xs" onClick={() => setShowDialog(false)} data-testid="user-cancel-btn">Cancel</Button>
