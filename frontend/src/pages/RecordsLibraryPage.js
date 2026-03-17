@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import {
   FolderOpen, DollarSign, Receipt, Search, Download,
   Trash2, Eye, FileText, Image as ImageIcon, Sheet,
-  File, X, Loader2, FolderArchive, Upload, ChevronUp,
+  File, X, Loader2, FolderArchive, ChevronUp,
   ChevronDown, AlertTriangle, ShieldCheck
 } from 'lucide-react';
 
@@ -161,93 +161,6 @@ function DeleteConfirmDialog({ record, open, onClose, onConfirm, deleting }) {
   );
 }
 
-// ======================== BULK UPLOAD ZONE ========================
-function BulkUploadZone({ folder, api, onUploaded }) {
-  const [dragging, setDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState({ done: 0, total: 0, errors: [] });
-  const fileInputRef = useRef(null);
-
-  const uploadFiles = async (files) => {
-    if (!files.length) return;
-    setUploading(true);
-    setProgress({ done: 0, total: files.length, errors: [] });
-    const errors = [];
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      try {
-        const fd = new FormData();
-        fd.append('file', f);
-        fd.append('folder', folder);
-        fd.append('transaction_type', '');
-        fd.append('transaction_id', '');
-        fd.append('transaction_date', '');
-        fd.append('transaction_amount', 0);
-        fd.append('transaction_notes', '');
-        fd.append('vendor_name', '');
-        await api.post('/records/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      } catch (err) {
-        const msg = err.response?.data?.detail || 'Upload failed';
-        errors.push({ name: f.name, error: msg });
-      }
-      setProgress(p => ({ ...p, done: i + 1 }));
-    }
-    setProgress(p => ({ ...p, errors }));
-    setUploading(false);
-    const successCount = files.length - errors.length;
-    if (successCount > 0) toast.success(`${successCount} file${successCount > 1 ? 's' : ''} uploaded`);
-    if (errors.length > 0) {
-      errors.forEach(e => toast.error(`${e.name}: ${e.error}`, { duration: 5000 }));
-    }
-    onUploaded();
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault(); setDragging(false);
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length) uploadFiles(files);
-  };
-  const handleFileInput = (e) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length) uploadFiles(files);
-    e.target.value = '';
-  };
-
-  return (
-    <div
-      className={`rounded-xl border-2 border-dashed transition-colors p-5 text-center ${
-        dragging ? 'border-teal-400 bg-teal-50/50' : 'border-slate-200 bg-slate-50/30 hover:border-slate-300'
-      }`}
-      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={handleDrop}
-      data-testid="bulk-upload-zone"
-    >
-      {uploading ? (
-        <div className="space-y-2">
-          <Loader2 className="w-6 h-6 animate-spin text-teal-600 mx-auto" />
-          <p className="text-xs font-semibold text-navy-900">Uploading {progress.done}/{progress.total} files...</p>
-          <div className="w-48 h-1.5 bg-slate-200 rounded-full mx-auto overflow-hidden">
-            <div className="h-full bg-teal-500 rounded-full transition-all" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
-          </div>
-        </div>
-      ) : (
-        <>
-          <Upload className={`w-7 h-7 mx-auto mb-2 ${dragging ? 'text-teal-500' : 'text-slate-300'}`} />
-          <p className="text-xs font-semibold text-navy-900 mb-1">
-            {dragging ? 'Drop files here' : 'Drag & drop files here'}
-          </p>
-          <p className="text-[10px] text-slate-400 mb-3">or click to browse &middot; Images, PDFs, Excel files</p>
-          <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => fileInputRef.current?.click()} data-testid="bulk-upload-browse-btn">
-            <Upload className="w-3 h-3 mr-1.5" /> Browse Files
-          </Button>
-          <input ref={fileInputRef} type="file" className="hidden" multiple accept="image/*,.pdf,.xlsx,.xls,.csv" onChange={handleFileInput} />
-        </>
-      )}
-    </div>
-  );
-}
-
 // ======================== SORT HEADER ========================
 function SortHead({ label, field, sortBy, sortOrder, onSort, align, testId }) {
   const active = sortBy === field;
@@ -275,6 +188,7 @@ export default function RecordsLibraryPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [fileType, setFileType] = useState('');
+  const [expenseCategory, setExpenseCategory] = useState('');
   const [sortBy, setSortBy] = useState('upload_date');
   const [sortOrder, setSortOrder] = useState('desc');
   const [previewRecord, setPreviewRecord] = useState(null);
@@ -289,21 +203,18 @@ export default function RecordsLibraryPage() {
       if (dateFrom) params.date_from = dateFrom;
       if (dateTo) params.date_to = dateTo;
       if (fileType) params.file_type = fileType;
+      if (folder === 'expenses' && expenseCategory) params.expense_category = expenseCategory;
       const res = await api.get('/records', { params });
       setRecords(res.data);
     } catch { toast.error('Failed to load records'); }
     finally { setLoading(false); }
-  }, [api, folder, search, dateFrom, dateTo, fileType, sortBy, sortOrder]);
+  }, [api, folder, search, dateFrom, dateTo, fileType, expenseCategory, sortBy, sortOrder]);
 
   useEffect(() => { load(); }, [load]);
 
   const handleSort = (field) => {
-    if (sortBy === field) {
-      setSortOrder(o => o === 'desc' ? 'asc' : 'desc');
-    } else {
-      setSortBy(field);
-      setSortOrder('desc');
-    }
+    if (sortBy === field) setSortOrder(o => o === 'desc' ? 'asc' : 'desc');
+    else { setSortBy(field); setSortOrder('desc'); }
   };
 
   const handleDeleteConfirm = async () => {
@@ -327,6 +238,7 @@ export default function RecordsLibraryPage() {
     } catch { toast.error('Download failed'); }
   };
 
+  const resetFilters = () => { setSearch(''); setDateFrom(''); setDateTo(''); setFileType(''); setExpenseCategory(''); setSortBy('upload_date'); setSortOrder('desc'); };
   const folderLabel = folder === 'sales' ? 'Sales Files' : 'Expense Files';
 
   return (
@@ -338,7 +250,7 @@ export default function RecordsLibraryPage() {
         <p className="text-xs text-slate-400 mt-0.5">Permanently stored documents for tax and audit purposes</p>
       </div>
 
-      <Tabs value={folder} onValueChange={(v) => { setFolder(v); setSearch(''); setDateFrom(''); setDateTo(''); setFileType(''); setSortBy('upload_date'); setSortOrder('desc'); }}>
+      <Tabs value={folder} onValueChange={(v) => { setFolder(v); resetFilters(); }}>
         <TabsList className="bg-slate-100 h-10" data-testid="folder-tabs">
           <TabsTrigger value="sales" className="text-xs font-semibold px-4 gap-2" data-testid="folder-tab-sales">
             <DollarSign className="w-4 h-4" /> Sales Files
@@ -348,9 +260,6 @@ export default function RecordsLibraryPage() {
           </TabsTrigger>
         </TabsList>
       </Tabs>
-
-      {/* Bulk upload */}
-      <BulkUploadZone folder={folder} api={api} onUploaded={load} />
 
       {/* Filters */}
       <div className="flex flex-wrap items-end gap-3" data-testid="records-filters">
@@ -369,6 +278,17 @@ export default function RecordsLibraryPage() {
             <SelectItem value="excel" className="text-xs">Excel/CSV</SelectItem>
           </SelectContent>
         </Select>
+        {folder === 'expenses' && (
+          <Select value={expenseCategory} onValueChange={setExpenseCategory}>
+            <SelectTrigger className="h-9 w-44 text-xs" data-testid="records-expense-category-filter"><SelectValue placeholder="All Categories" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all" className="text-xs">All Categories</SelectItem>
+              <SelectItem value="raw_material" className="text-xs">Raw Materials</SelectItem>
+              <SelectItem value="salary" className="text-xs">Salaries</SelectItem>
+              <SelectItem value="other_expense" className="text-xs">Other Expenses</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       {/* Content */}
@@ -380,7 +300,7 @@ export default function RecordsLibraryPage() {
             <FolderOpen className="w-12 h-12 text-slate-300 mb-3" />
             <h3 className="font-heading text-sm font-bold text-navy-900 mb-1">{folderLabel} is empty</h3>
             <p className="text-xs text-slate-400 max-w-xs">
-              Upload files above or add {folder === 'sales' ? 'sales' : 'expenses'} with attachments to populate this archive.
+              Files uploaded while adding {folder === 'sales' ? 'sales' : 'expenses'} will appear here automatically.
             </p>
           </CardContent>
         </Card>

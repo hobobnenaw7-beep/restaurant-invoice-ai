@@ -1013,6 +1013,7 @@ async def list_records(
     date_from: str = "",
     date_to: str = "",
     file_type: str = "",
+    expense_category: str = "",
     sort_by: str = "upload_date",
     sort_order: str = "desc",
 ):
@@ -1034,6 +1035,8 @@ async def list_records(
             query["file_extension"] = "pdf"
         elif file_type == "excel":
             query["file_extension"] = {"$in": ["xlsx", "xls", "csv"]}
+    if expense_category and expense_category != "all":
+        query["transaction_type"] = expense_category
 
     sort_field_map = {
         "upload_date": "upload_date",
