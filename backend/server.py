@@ -1265,8 +1265,45 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     await db.purchases.insert_one(doc)
     doc.pop("_id", None)
 
-    # --- Generate price alerts for items with price increases ---
+    # --- Auto-create vendor if new ---
     rid = user["restaurant_id"]
+    supplier_name = doc.get("supplier_name", "").strip()
+    if supplier_name:
+        existing_vendor = await db.suppliers.find_one({
+            "restaurant_id": rid,
+            "name": {"$regex": f"^{re.escape(supplier_name)}$", "$options": "i"}
+        })
+        if not existing_vendor:
+            vendor_doc = {
+                "id": str(uuid.uuid4()),
+                "restaurant_id": rid,
+                "name": supplier_name,
+                "contact_name": "", "phone": "", "email": "", "address": "",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.suppliers.insert_one(vendor_doc)
+            logger.info(f"Auto-created vendor: {supplier_name}")
+
+    # --- Auto-create items if new ---
+    for item in doc.get("items", []):
+        raw_name = item.get("raw_name", "").strip()
+        if not raw_name:
+            continue
+        existing_item = await db.canonical_items.find_one({
+            "restaurant_id": rid,
+            "name": {"$regex": f"^{re.escape(raw_name)}$", "$options": "i"}
+        })
+        if not existing_item:
+            item_doc = {
+                "id": str(uuid.uuid4()),
+                "restaurant_id": rid,
+                "name": raw_name,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.canonical_items.insert_one(item_doc)
+            logger.info(f"Auto-created item: {raw_name}")
+
+    # --- Generate price alerts for items with price increases ---
     existing = await db.purchases.find(
         {"restaurant_id": rid, "id": {"$ne": doc["id"]}},
         {"_id": 0, "supplier_name": 1, "invoice_date": 1, "items": 1}
