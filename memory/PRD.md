@@ -43,6 +43,10 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Better prompts for accurate extraction
 - [x] Support in both Expenses (Raw Materials) and Sales forms
 
+### Bug Fixes (March 19, 2026)
+- [x] Bug 1: App works correctly from completely empty database — all endpoints return valid data, dashboard shows proper empty state, all CRUD operations work from zero records
+- [x] Bug 2: Auto-create vendors and items from expenses — when saving a purchase with a new vendor/item name, they are automatically added to the master Vendors and Items lists with case-insensitive dedup
+
 ### Stability & Performance (March 17, 2026)
 - [x] Fixed infinite re-render risk: moved NavLink and SidebarContent outside Layout as memo'd components
 - [x] Fixed NotificationPanel useEffect loop: used ref for onClose callback instead of dependency
