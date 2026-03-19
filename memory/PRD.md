@@ -43,6 +43,14 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Better prompts for accurate extraction
 - [x] Support in both Expenses (Raw Materials) and Sales forms
 
+### Critical Frontend Runtime Bug Fixes (March 19, 2026)
+- [x] Fixed "Maximum call stack size exceeded": replaced all setTimeout-based refresh with savedRef + useEffect pattern
+- [x] Fixed "insertBefore / insertOrAppendPlacementNode": no DOM structure change during dialog exit (background refresh without skeleton)
+- [x] Fixed line item reconciliation: stable _key per item instead of array index
+- [x] Fixed DuplicateCheck: removed stacked setTimeout(150ms), uses useRef for pendingSave
+- [x] Fixed dialog dismiss during save: onOpenChange blocked when saving/extracting
+- [x] All 13 critical tests passed with ZERO console errors
+
 ### Vendor Detail Page (March 19, 2026)
 - [x] Vendor list rows are clickable → navigates to /vendors/:id
 - [x] Detail page shows: vendor name, total spent, invoice count, contact, phone, email, address
