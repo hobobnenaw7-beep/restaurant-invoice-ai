@@ -1541,6 +1541,39 @@ async def delete_supplier(sid: str, user=Depends(get_user)):
         raise HTTPException(404, "Not found")
     return {"status": "deleted"}
 
+@api_router.get("/suppliers/{sid}/detail")
+async def supplier_detail(sid: str, user=Depends(get_user)):
+    rid = user["restaurant_id"]
+    supplier = await db.suppliers.find_one({"id": sid, "restaurant_id": rid}, {"_id": 0})
+    if not supplier:
+        raise HTTPException(404, "Vendor not found")
+    # Case-insensitive match on supplier name for purchases
+    name = supplier["name"]
+    purchases = await db.purchases.find(
+        {"restaurant_id": rid, "supplier_name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}},
+        {"_id": 0}
+    ).to_list(10000)
+    supplier["total_spending"] = round(sum(p.get("total", 0) for p in purchases), 2)
+    supplier["invoice_count"] = len(purchases)
+    return supplier
+
+@api_router.get("/suppliers/{sid}/purchases")
+async def supplier_purchases(sid: str, user=Depends(get_user), search: str = "", date_from: str = "", date_to: str = ""):
+    rid = user["restaurant_id"]
+    supplier = await db.suppliers.find_one({"id": sid, "restaurant_id": rid}, {"_id": 0})
+    if not supplier:
+        raise HTTPException(404, "Vendor not found")
+    name = supplier["name"]
+    query = {"restaurant_id": rid, "supplier_name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}
+    if search:
+        query["invoice_number"] = {"$regex": search, "$options": "i"}
+    if date_from:
+        query.setdefault("invoice_date", {})["$gte"] = date_from
+    if date_to:
+        query.setdefault("invoice_date", {})["$lte"] = date_to
+    purchases = await db.purchases.find(query, {"_id": 0}).sort("invoice_date", -1).to_list(10000)
+    return purchases
+
 # ==================== ITEMS & ALIASES ====================
 
 @api_router.get("/items")

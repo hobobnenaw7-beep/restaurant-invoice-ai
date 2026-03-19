@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,12 +9,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Search, Plus, Edit, Trash2, Loader2, Users } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Loader2, Users, ChevronRight } from 'lucide-react';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}` : '$0'; }
 
 export default function VendorsPage() {
   const { api } = useAuth();
+  const navigate = useNavigate();
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -91,7 +93,7 @@ export default function VendorsPage() {
               </TableHeader>
               <TableBody>
                 {vendors.map((s, i) => (
-                  <TableRow key={s.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`}>
+                  <TableRow key={s.id} className={`transition-colors cursor-pointer ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} onClick={() => navigate(`/vendors/${s.id}`)} data-testid={`vendor-row-${i}`}>
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-lg bg-navy-900 text-white flex items-center justify-center text-[11px] font-bold flex-shrink-0">{s.name?.charAt(0)}</div>
@@ -104,8 +106,9 @@ export default function VendorsPage() {
                     <TableCell className="text-sm text-center text-slate-500">{s.invoice_count || 0}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-0.5">
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(s)}><Edit className="w-3.5 h-3.5 text-slate-500" /></Button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(s.id)}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={(e) => { e.stopPropagation(); openEdit(s); }}><Edit className="w-3.5 h-3.5 text-slate-500" /></Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={(e) => { e.stopPropagation(); handleDelete(s.id); }}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                        <ChevronRight className="w-4 h-4 text-slate-300 ml-1 self-center" />
                       </div>
                     </TableCell>
                   </TableRow>

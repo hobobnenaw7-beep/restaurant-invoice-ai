@@ -8,6 +8,7 @@ import DashboardPage from "@/pages/DashboardPage";
 import ExpensesPage from "@/pages/ExpensesPage";
 import SalesPage from "@/pages/SalesPage";
 import VendorsPage from "@/pages/VendorsPage";
+import VendorDetailPage from "@/pages/VendorDetailPage";
 import ItemsPage from "@/pages/ItemsPage";
 import ReportsPage from "@/pages/ReportsPage";
 import RecordsLibraryPage from "@/pages/RecordsLibraryPage";
@@ -40,6 +41,7 @@ function App() {
           <Route path="/expenses" element={<ProtectedRoute><ExpensesPage /></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute><SalesPage /></ProtectedRoute>} />
           <Route path="/vendors" element={<ProtectedRoute><VendorsPage /></ProtectedRoute>} />
+          <Route path="/vendors/:id" element={<ProtectedRoute><VendorDetailPage /></ProtectedRoute>} />
           <Route path="/items" element={<ProtectedRoute><ItemsPage /></ProtectedRoute>} />
           <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
           <Route path="/records" element={<ProtectedRoute><RecordsLibraryPage /></ProtectedRoute>} />
