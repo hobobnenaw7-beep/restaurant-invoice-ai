@@ -43,6 +43,17 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Better prompts for accurate extraction
 - [x] Support in both Expenses (Raw Materials) and Sales forms
 
+### Vendor Detail Page (March 19, 2026)
+- [x] Vendor list rows are clickable → navigates to /vendors/:id
+- [x] Detail page shows: vendor name, total spent, invoice count, contact, phone, email, address
+- [x] All purchase records listed with date, invoice #, item count, total, approval status
+- [x] Purchase detail modal: full line items (name, qty, unit, price, total) + subtotal/tax/total
+- [x] Delete from vendor detail removes record and updates totals immediately
+- [x] Search by invoice number filter
+- [x] Date range filter (from/to)
+- [x] Back navigation to vendors list
+- [x] Empty state when vendor has no purchases
+
 ### Bug Fixes (March 19, 2026)
 - [x] Bug 1: App works correctly from completely empty database — all endpoints return valid data, dashboard shows proper empty state, all CRUD operations work from zero records
 - [x] Bug 2: Auto-create vendors and items from expenses — when saving a purchase with a new vendor/item name, they are automatically added to the master Vendors and Items lists with case-insensitive dedup
