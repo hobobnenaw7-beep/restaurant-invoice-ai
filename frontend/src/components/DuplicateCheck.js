@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { AlertTriangle, Loader2 } from 'lucide-react';
@@ -11,7 +11,7 @@ export function useDuplicateCheck() {
   const [checking, setChecking] = useState(false);
   const [duplicates, setDuplicates] = useState([]);
   const [showWarning, setShowWarning] = useState(false);
-  const [pendingSave, setPendingSave] = useState(null);
+  const pendingSaveRef = useRef(null);
 
   const checkDuplicates = useCallback(async (recordType, data, api, saveFn) => {
     setChecking(true);
@@ -19,10 +19,10 @@ export function useDuplicateCheck() {
       const res = await api.post('/duplicates/check', { record_type: recordType, data });
       if (res.data.has_duplicates) {
         setDuplicates(res.data.matches);
-        setPendingSave(() => saveFn);
+        pendingSaveRef.current = saveFn;
         setShowWarning(true);
         setChecking(false);
-        return; // Don't save yet
+        return;
       }
     } catch {
       // If check fails, just proceed with save
@@ -32,20 +32,19 @@ export function useDuplicateCheck() {
   }, []);
 
   const confirmSave = useCallback(async () => {
+    const saveFn = pendingSaveRef.current;
+    pendingSaveRef.current = null;
     setShowWarning(false);
     setDuplicates([]);
-    if (pendingSave) {
-      // Defer save so the warning dialog's exit animation completes
-      await new Promise(r => setTimeout(r, 150));
-      await pendingSave();
-    }
-    setPendingSave(null);
-  }, [pendingSave]);
+    // Call save directly — no artificial delay needed.
+    // The warning dialog uses a Portal so its DOM cleanup won't conflict.
+    if (saveFn) await saveFn();
+  }, []);
 
   const cancelSave = useCallback(() => {
+    pendingSaveRef.current = null;
     setShowWarning(false);
     setDuplicates([]);
-    setPendingSave(null);
   }, []);
 
   return { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates };
@@ -55,7 +54,7 @@ function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { m
 
 export function DuplicateWarningDialog({ open, onClose, onConfirm, duplicates = [], saving }) {
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v && !saving) onClose(); }}>
       <DialogContent className="max-w-md" data-testid="duplicate-warning-dialog">
         <DialogHeader>
           <DialogTitle className="font-heading text-lg flex items-center gap-2 text-amber-700">
@@ -92,7 +91,7 @@ export function DuplicateWarningDialog({ open, onClose, onConfirm, duplicates = 
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" onClick={onClose} className="h-9 text-xs" data-testid="duplicate-cancel-btn">
+          <Button variant="outline" onClick={onClose} className="h-9 text-xs" disabled={saving} data-testid="duplicate-cancel-btn">
             Cancel
           </Button>
           <Button onClick={onConfirm} disabled={saving} className="bg-amber-600 hover:bg-amber-700 text-white h-9 text-xs" data-testid="duplicate-save-anyway-btn">

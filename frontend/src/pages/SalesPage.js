@@ -17,12 +17,14 @@ import {
 import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/DuplicateCheck';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
+let _salesKeySeq = 0;
+function nextSalesKey() { return `sk${++_salesKeySeq}_${Date.now()}`; }
 
 const emptySale = () => ({
   date_from: new Date().toISOString().split('T')[0],
   date_to: new Date().toISOString().split('T')[0],
   total_sales: 0,
-  items: [{ menu_item: '', quantity: 1, revenue: 0 }],
+  items: [{ _key: nextSalesKey(), menu_item: '', quantity: 1, revenue: 0 }],
 });
 
 export default function SalesPage() {
@@ -46,9 +48,10 @@ export default function SalesPage() {
   const fileCameraRef = useRef(null);
   const fileExcelRef = useRef(null);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
+  const savedRef = useRef(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (showSkeleton = false) => {
+    if (showSkeleton) setLoading(true);
     try {
       const res = await api.get('/sales', { params: { date_from: dateFrom, date_to: dateTo, sort_by: sortBy, sort_order: sortOrder } });
       setSales(res.data);
@@ -56,7 +59,12 @@ export default function SalesPage() {
     finally { setLoading(false); }
   }, [api, dateFrom, dateTo, sortBy, sortOrder]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(true); }, [load]);
+
+  // Refresh list when dialog closes after a successful save
+  useEffect(() => {
+    if (!showAdd && savedRef.current) { savedRef.current = false; load(false); }
+  }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleSort = (field) => {
     if (sortBy === field) setSortOrder(o => o === 'desc' ? 'asc' : 'desc');
@@ -65,7 +73,7 @@ export default function SalesPage() {
 
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this sales report?')) return;
-    try { await api.delete(`/sales/${id}`); toast.success('Deleted'); load(); } catch { toast.error('Failed'); }
+    try { await api.delete(`/sales/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); }
   };
 
   const updateField = (key, val) => setForm(f => ({ ...f, [key]: val }));
@@ -77,7 +85,7 @@ export default function SalesPage() {
     });
   };
   const removeItem = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
-  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { menu_item: '', quantity: 1, revenue: 0 }] }));
+  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { _key: nextSalesKey(), menu_item: '', quantity: 1, revenue: 0 }] }));
 
   const openAddForm = () => {
     setForm(emptySale());
@@ -124,7 +132,7 @@ export default function SalesPage() {
         date_to: d.date_to || extractedDate,
         report_date: extractedDate,
         total_sales: parseFloat(d.total_sales) || 0,
-        items: (d.items || []).map(it => ({ menu_item: it.menu_item || '', quantity: parseFloat(it.quantity) || 0, revenue: parseFloat(it.revenue) || 0 })),
+        items: (d.items || []).map(it => ({ _key: nextSalesKey(), menu_item: it.menu_item || '', quantity: parseFloat(it.quantity) || 0, revenue: parseFloat(it.revenue) || 0 })),
       });
       const msg = res.data.message || `Extracted ${res.data.row_count || 'all'} items. Review and save.`;
       toast.success(msg);
@@ -138,12 +146,11 @@ export default function SalesPage() {
     if (!form.date_from) { toast.error('From Date is required'); return; }
     if (!form.date_to) { toast.error('To Date is required'); return; }
     if (form.date_to < form.date_from) { toast.error('To Date cannot be earlier than From Date'); return; }
-    const payload = { ...form, report_date: form.date_from };
+    const payload = { ...form, report_date: form.date_from, items: form.items.map(({ _key, ...rest }) => rest) };
     const doSave = async () => {
       setSaving(true);
       try {
         const res = await api.post('/sales', payload);
-        // Auto-save uploaded file to Records Library
         if (uploadFile && res.data?.id) {
           try {
             const fd = new FormData();
@@ -156,11 +163,11 @@ export default function SalesPage() {
             fd.append('transaction_notes', '');
             fd.append('vendor_name', '');
             await api.post('/records/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-          } catch { /* silent — file archive is best-effort */ }
+          } catch { /* silent */ }
         }
         toast.success('Sale saved');
+        savedRef.current = true;
         setShowAdd(false);
-        setTimeout(() => load(), 150);
       } catch (err) {
         toast.error('Save failed: ' + (err.response?.data?.detail || ''));
       } finally { setSaving(false); }
@@ -247,7 +254,7 @@ export default function SalesPage() {
       </Card>
 
       {/* View Detail Dialog */}
-      <Dialog open={!!selected} onOpenChange={() => setSelected(null)}>
+      <Dialog open={!!selected} onOpenChange={(v) => { if (!v) setSelected(null); }}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-heading text-lg">Sales Report</DialogTitle></DialogHeader>
           {selected && (
@@ -294,7 +301,7 @@ export default function SalesPage() {
       </Dialog>
 
       {/* Add Sale Dialog */}
-      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+      <Dialog open={showAdd} onOpenChange={(v) => { if (!saving && !extracting) setShowAdd(v); }}>
         <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-heading text-lg">Add Sale</DialogTitle>
@@ -430,7 +437,7 @@ export default function SalesPage() {
               </div>
               <div className="space-y-1.5">
                 {form.items.map((item, i) => (
-                  <div key={i} className="grid grid-cols-12 gap-1.5 items-center bg-slate-50 rounded-lg p-2" data-testid={`menu-item-${i}`}>
+                  <div key={item._key} className="grid grid-cols-12 gap-1.5 items-center bg-slate-50 rounded-lg p-2" data-testid={`menu-item-${i}`}>
                     <Input className="col-span-5 text-xs h-8" placeholder="Menu item name" value={item.menu_item} onChange={(e) => updateItem(i, 'menu_item', e.target.value)} />
                     <Input className="col-span-3 text-xs h-8" type="number" placeholder="Qty" value={item.quantity || ''} onChange={(e) => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} />
                     <div className="col-span-4 flex items-center gap-1">

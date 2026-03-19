@@ -22,6 +22,11 @@ import {
 import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/DuplicateCheck';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
+let _keySeq = 0;
+function nextKey() { return `k${++_keySeq}_${Date.now()}`; }
+function mkItem(raw_name = '', quantity = 1, unit = 'kg', unit_price = 0, total = 0) {
+  return { _key: nextKey(), raw_name, quantity, unit, unit_price, total };
+}
 
 const OTHER_CATEGORIES = ['Rent', 'Electricity', 'Water', 'Gas', 'Maintenance', 'Equipment', 'Insurance', 'Marketing', 'Other'];
 
@@ -91,7 +96,7 @@ function RawMaterialsTab({ api }) {
   const [sortOrder, setSortOrder] = useState('desc');
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [{ raw_name: '', quantity: 1, unit: 'kg', unit_price: 0, total: 0 }], subtotal: 0, tax: 0, total: 0 });
+  const [form, setForm] = useState({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [mkItem()], subtotal: 0, tax: 0, total: 0 });
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [uploadFile, setUploadFile] = useState(null);
@@ -102,30 +107,39 @@ function RawMaterialsTab({ api }) {
   const fileExcelRef = useRef(null);
   const [knownItems, setKnownItems] = useState([]);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
+  const savedRef = useRef(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (showSkeleton = false) => {
+    if (showSkeleton) setLoading(true);
     try { const res = await api.get('/purchases', { params: { search, date_from: dateFrom, date_to: dateTo, sort_by: sortBy, sort_order: sortOrder } }); setItems(res.data); }
     catch { toast.error('Failed to load'); } finally { setLoading(false); }
   }, [api, search, dateFrom, dateTo, sortBy, sortOrder]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(true); }, [load]);
+
+  // Refresh list when dialog closes after a successful save
+  useEffect(() => {
+    if (!showAdd && savedRef.current) {
+      savedRef.current = false;
+      load(false); // background refresh — no skeleton flash
+    }
+  }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleSort = (f) => { if (sortBy === f) setSortOrder(o => o === 'desc' ? 'asc' : 'desc'); else { setSortBy(f); setSortOrder('desc'); } };
-  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/purchases/${id}`); toast.success('Deleted'); load(); } catch { toast.error('Failed'); } };
+  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/purchases/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };
   const SI = ({ field }) => sortBy === field ? (sortOrder === 'desc' ? <ChevronDown className="w-3 h-3 inline ml-0.5" /> : <ChevronUp className="w-3 h-3 inline ml-0.5" />) : null;
 
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const recalcTotals = (items, tax) => {
-    const subtotal = round2(items.reduce((s, it) => s + (parseFloat(it.total) || 0), 0));
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const recalcTotals = (lineItems, tax) => {
+    const subtotal = round2(lineItems.reduce((s, it) => s + (parseFloat(it.total) || 0), 0));
     return { subtotal, total: round2(subtotal + (parseFloat(tax) || 0)) };
   };
-  const round2 = (n) => Math.round(n * 100) / 100;
   const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
-  const removeItem = (idx) => setForm(f => { const items = f.items.filter((_, i) => i !== idx); const totals = recalcTotals(items, f.tax); return { ...f, items, ...totals }; });
-  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { raw_name: '', quantity: 1, unit: 'kg', unit_price: 0, total: 0 }] }));
+  const removeItem = (idx) => setForm(f => { const newItems = f.items.filter((_, i) => i !== idx); const totals = recalcTotals(newItems, f.tax); return { ...f, items: newItems, ...totals }; });
+  const addItem = () => setForm(f => ({ ...f, items: [...f.items, mkItem()] }));
 
   const openAdd = () => {
-    setForm({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [{ raw_name: '', quantity: 1, unit: 'kg', unit_price: 0, total: 0 }], subtotal: 0, tax: 0, total: 0 });
+    setForm({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [mkItem()], subtotal: 0, tax: 0, total: 0 });
     setUploadFile(null); setUploadPreview(null); setShowAdd(true);
     api.get('/items').then(res => {
       const names = [];
@@ -147,7 +161,7 @@ function RawMaterialsTab({ api }) {
       const ep = isExcelFile(uploadFile) ? '/upload/parse-excel' : '/upload/extract';
       const res = await api.post(ep, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
       const d = res.data.extracted_data;
-      setForm({ supplier_name: d.supplier_name || '', invoice_number: d.invoice_number || '', invoice_date: d.invoice_date || new Date().toISOString().split('T')[0], items: (d.items || []).map(it => ({ raw_name: it.raw_name || '', quantity: parseFloat(it.quantity) || 0, unit: it.unit || '', unit_price: parseFloat(it.unit_price) || 0, total: parseFloat(it.total) || 0 })), subtotal: parseFloat(d.subtotal) || 0, tax: parseFloat(d.tax) || 0, total: parseFloat(d.total) || 0 });
+      setForm({ supplier_name: d.supplier_name || '', invoice_number: d.invoice_number || '', invoice_date: d.invoice_date || new Date().toISOString().split('T')[0], items: (d.items || []).map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.unit || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0)), subtotal: parseFloat(d.subtotal) || 0, tax: parseFloat(d.tax) || 0, total: parseFloat(d.total) || 0 });
       toast.success(res.data.message || 'Data extracted! Review and save.');
     } catch (err) { toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.')); }
     finally { setExtracting(false); }
@@ -158,8 +172,8 @@ function RawMaterialsTab({ api }) {
     const doSave = async () => {
       setSaving(true);
       try {
-        const res = await api.post('/purchases', form);
-        // Auto-save uploaded file to Records Library
+        const payload = { ...form, items: form.items.map(({ _key, ...rest }) => rest) };
+        const res = await api.post('/purchases', payload);
         if (uploadFile && res.data?.id) {
           try {
             const fd = new FormData();
@@ -172,12 +186,11 @@ function RawMaterialsTab({ api }) {
             fd.append('transaction_notes', `Invoice #${form.invoice_number || 'N/A'}`);
             fd.append('vendor_name', form.supplier_name || '');
             await api.post('/records/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-          } catch { /* silent — file archive is best-effort */ }
+          } catch { /* silent */ }
         }
         toast.success('Saved');
+        savedRef.current = true;
         setShowAdd(false);
-        // Defer list refresh so Radix Dialog exit animation completes before re-render
-        setTimeout(() => load(), 150);
       }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
@@ -225,7 +238,7 @@ function RawMaterialsTab({ api }) {
       </Card>
 
       {/* View Detail */}
-      <Dialog open={!!selected} onOpenChange={() => setSelected(null)}>
+      <Dialog open={!!selected} onOpenChange={(v) => { if (!v) setSelected(null); }}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-heading text-lg">Purchase Details</DialogTitle></DialogHeader>
           {selected && <div className="space-y-5">
@@ -239,8 +252,8 @@ function RawMaterialsTab({ api }) {
         </DialogContent>
       </Dialog>
 
-      {/* Add Dialog */}
-      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+      {/* Add Dialog — prevent close during save */}
+      <Dialog open={showAdd} onOpenChange={(v) => { if (!saving && !extracting) setShowAdd(v); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-heading text-lg">Add Raw Material Purchase</DialogTitle></DialogHeader>
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-4" data-testid="raw-material-upload-zone">
@@ -267,7 +280,7 @@ function RawMaterialsTab({ api }) {
             <div>
               <div className="flex items-center justify-between mb-2"><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Line Items</Label><Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={addItem} data-testid="add-line-item-btn"><Plus className="w-3 h-3 mr-1" /> Add Item</Button></div>
               <div className="space-y-1.5">{form.items.map((item, i) => (
-                <div key={i} className="grid grid-cols-12 gap-1.5 items-center bg-slate-50 rounded-lg p-2" data-testid={`line-item-${i}`}>
+                <div key={item._key} className="grid grid-cols-12 gap-1.5 items-center bg-slate-50 rounded-lg p-2" data-testid={`line-item-${i}`}>
                   <ItemAutocomplete value={item.raw_name} onChange={(v) => updateItem(i, 'raw_name', v)} knownItems={knownItems} index={i} />
                   <Input className="col-span-2 text-xs h-8" type="number" placeholder="Qty" value={item.quantity || ''} onChange={(e) => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} />
                   <Input className="col-span-1 text-xs h-8" placeholder="Unit" value={item.unit} onChange={(e) => updateItem(i, 'unit', e.target.value)} />
@@ -282,7 +295,7 @@ function RawMaterialsTab({ api }) {
               <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total</Label><Input className="mt-1 h-9 text-sm font-bold bg-slate-50" type="number" step="0.01" value={form.total || ''} readOnly tabIndex={-1} data-testid="form-total" /></div>
             </div>
           </div>
-          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-raw-material-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Purchase</Button></div>
+          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-raw-material-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Purchase</Button></div>
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
@@ -298,15 +311,20 @@ function SalariesTab({ api }) {
   const [form, setForm] = useState({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' });
   const [saving, setSaving] = useState(false);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
+  const savedRef = useRef(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (showSkeleton = false) => {
+    if (showSkeleton) setLoading(true);
     try { const res = await api.get('/salaries'); setItems(res.data); }
     catch { toast.error('Failed to load salaries'); } finally { setLoading(false); }
   }, [api]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(true); }, [load]);
 
-  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/salaries/${id}`); toast.success('Deleted'); load(); } catch { toast.error('Failed'); } };
+  useEffect(() => {
+    if (!showAdd && savedRef.current) { savedRef.current = false; load(false); }
+  }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/salaries/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const openAdd = () => { setForm({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
@@ -315,12 +333,7 @@ function SalariesTab({ api }) {
     if (!form.amount) { toast.error('Salary amount is required'); return; }
     const doSave = async () => {
       setSaving(true);
-      try {
-        await api.post('/salaries', form);
-        toast.success('Salary saved');
-        setShowAdd(false);
-        setTimeout(() => load(), 150);
-      }
+      try { await api.post('/salaries', form); toast.success('Salary saved'); savedRef.current = true; setShowAdd(false); }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
     };
@@ -359,7 +372,7 @@ function SalariesTab({ api }) {
         </div>}
       </Card>
 
-      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+      <Dialog open={showAdd} onOpenChange={(v) => { if (!saving) setShowAdd(v); }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle className="font-heading text-lg">Add Salary Payment</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -371,7 +384,7 @@ function SalariesTab({ api }) {
             </div>
             <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Notes</Label><Textarea className="mt-1 text-sm min-h-[60px]" value={form.notes} onChange={(e) => updateField('notes', e.target.value)} placeholder="Optional notes" data-testid="form-salary-notes" /></div>
           </div>
-          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-salary-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Salary</Button></div>
+          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-salary-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Salary</Button></div>
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
@@ -387,15 +400,20 @@ function OtherExpensesTab({ api }) {
   const [form, setForm] = useState({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' });
   const [saving, setSaving] = useState(false);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
+  const savedRef = useRef(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (showSkeleton = false) => {
+    if (showSkeleton) setLoading(true);
     try { const res = await api.get('/other-expenses'); setItems(res.data); }
     catch { toast.error('Failed to load expenses'); } finally { setLoading(false); }
   }, [api]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(true); }, [load]);
 
-  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/other-expenses/${id}`); toast.success('Deleted'); load(); } catch { toast.error('Failed'); } };
+  useEffect(() => {
+    if (!showAdd && savedRef.current) { savedRef.current = false; load(false); }
+  }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/other-expenses/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const openAdd = () => { setForm({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
@@ -404,12 +422,7 @@ function OtherExpensesTab({ api }) {
     if (!form.amount) { toast.error('Amount is required'); return; }
     const doSave = async () => {
       setSaving(true);
-      try {
-        await api.post('/other-expenses', form);
-        toast.success('Expense saved');
-        setShowAdd(false);
-        setTimeout(() => load(), 150);
-      }
+      try { await api.post('/other-expenses', form); toast.success('Expense saved'); savedRef.current = true; setShowAdd(false); }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
     };
@@ -453,7 +466,7 @@ function OtherExpensesTab({ api }) {
         </div>}
       </Card>
 
-      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+      <Dialog open={showAdd} onOpenChange={(v) => { if (!saving) setShowAdd(v); }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle className="font-heading text-lg">Add Expense</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -471,7 +484,7 @@ function OtherExpensesTab({ api }) {
             </div>
             <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Notes</Label><Textarea className="mt-1 text-sm min-h-[60px]" value={form.notes} onChange={(e) => updateField('notes', e.target.value)} placeholder="Optional notes" data-testid="form-expense-notes" /></div>
           </div>
-          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-other-expense-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Expense</Button></div>
+          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-other-expense-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Expense</Button></div>
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
