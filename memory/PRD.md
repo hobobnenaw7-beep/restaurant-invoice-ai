@@ -43,6 +43,16 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Better prompts for accurate extraction
 - [x] Support in both Expenses (Raw Materials) and Sales forms
 
+### Settings Page (March 22, 2026)
+- [x] Restaurant Profile: name, logo upload, phone, email, address
+- [x] Your Profile: editable name, read-only email
+- [x] Financial Settings: currency (9 options), default tax rate, default expense category
+- [x] Notification Settings: master toggle + 3 sub-toggles (price increase, cheaper vendor, not ordered)
+- [x] Language & Display: language (6 options), date format (3 options)
+- [x] Data Management: Reset All Data with DELETE confirmation dialog
+- [x] Logo upload with 2MB limit, base64 storage
+- [x] All settings persist to MongoDB restaurant document
+
 ### Critical Frontend Runtime Bug Fixes (March 19, 2026)
 - [x] Fixed "Maximum call stack size exceeded": replaced all setTimeout-based refresh with savedRef + useEffect pattern
 - [x] Fixed "insertBefore / insertOrAppendPlacementNode": no DOM structure change during dialog exit (background refresh without skeleton)
