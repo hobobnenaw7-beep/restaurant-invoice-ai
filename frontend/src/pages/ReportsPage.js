@@ -328,7 +328,7 @@ function VendorReport({ api }) {
     try {
       const res = await api.get('/reports/category/vendor', { params: { date_from: from, date_to: to, vendor } });
       setData(res.data);
-      if (!vendors.length && res.data.vendors) setVendors(res.data.vendors);
+      if (res.data.vendors) setVendors(prev => prev.length ? prev : res.data.vendors);
     } catch { toast.error('Failed'); }
     finally { setLoading(false); }
   }, [api, from, to, vendor]);

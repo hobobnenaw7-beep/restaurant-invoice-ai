@@ -54,16 +54,17 @@ function FilePreviewDialog({ record, open, onClose, api }) {
   const [fileUrl, setFileUrl] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  const recordId = record?.id;
   useEffect(() => {
-    if (!open || !record) { setFileUrl(null); return; }
+    if (!open || !recordId) { setFileUrl(null); return; }
     let revoke;
     setLoading(true);
-    api.get(`/records/${record.id}/file`, { responseType: 'blob' })
+    api.get(`/records/${recordId}/file`, { responseType: 'blob' })
       .then(res => { const url = URL.createObjectURL(res.data); setFileUrl(url); revoke = url; })
       .catch(() => toast.error('Failed to load file'))
       .finally(() => setLoading(false));
     return () => { if (revoke) URL.revokeObjectURL(revoke); };
-  }, [open, record?.id]);
+  }, [open, recordId, api]);
 
   if (!record) return null;
   const ext = (record.file_extension || '').toLowerCase();

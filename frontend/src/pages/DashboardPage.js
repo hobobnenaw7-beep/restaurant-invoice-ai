@@ -32,8 +32,9 @@ function pctChange(curr, prev) {
 }
 
 const DONUT_COLORS = ['#0d9488', '#6366f1', '#f59e0b', '#64748b'];
-const DONUT_LABELS = ['Raw Materials', 'Salaries', 'Utilities', 'Other'];
 const DONUT_BG = ['bg-teal-500', 'bg-indigo-500', 'bg-amber-500', 'bg-slate-500'];
+const EMPTY_ARRAY = [];
+const EMPTY_TRENDS = [];
 
 // ======================== KPI CARD ========================
 function KPI({ label, value, prev, accent, icon: Icon, testId }) {
@@ -63,27 +64,32 @@ const DonutChart = memo(function DonutChart({ raw, salaries, utilities, other, p
   const total = raw + salaries + utilities + other;
   const prevTotal = prevRaw + prevSalaries + prevUtilities + prevOther;
 
-  const segments = [
+  const segments = useMemo(() => [
     { name: 'Raw Materials', value: raw, prev: prevRaw, color: DONUT_COLORS[0] },
     { name: 'Salaries', value: salaries, prev: prevSalaries, color: DONUT_COLORS[1] },
     { name: 'Utilities', value: utilities, prev: prevUtilities, color: DONUT_COLORS[2] },
     { name: 'Other', value: other, prev: prevOther, color: DONUT_COLORS[3] },
-  ].filter(s => s.value > 0);
+  ].filter(s => s.value > 0), [raw, salaries, utilities, other, prevRaw, prevSalaries, prevUtilities, prevOther]);
 
   const pctTotal = pctChange(total, prevTotal);
 
-  // Category insights
-  const insights = [];
-  [{ name: 'Raw Materials', cur: raw, prev: prevRaw },
-   { name: 'Salaries', cur: salaries, prev: prevSalaries },
-   { name: 'Utilities', cur: utilities, prev: prevUtilities },
-   { name: 'Other', cur: other, prev: prevOther }]
-    .forEach(cat => {
-      const pct = pctChange(cat.cur, cat.prev);
-      if (pct !== null && Math.abs(pct) > 3) {
-        insights.push({ name: cat.name, pct: parseFloat(pct), up: pct > 0 });
-      }
-    });
+  const insights = useMemo(() => {
+    const result = [];
+    [{ name: 'Raw Materials', cur: raw, prev: prevRaw },
+     { name: 'Salaries', cur: salaries, prev: prevSalaries },
+     { name: 'Utilities', cur: utilities, prev: prevUtilities },
+     { name: 'Other', cur: other, prev: prevOther }]
+      .forEach(cat => {
+        const pct = pctChange(cat.cur, cat.prev);
+        if (pct !== null && Math.abs(pct) > 3) {
+          result.push({ name: cat.name, pct: parseFloat(pct), up: pct > 0 });
+        }
+      });
+    return result;
+  }, [raw, salaries, utilities, other, prevRaw, prevSalaries, prevUtilities, prevOther]);
+
+  const noDataSegments = useMemo(() => [{ name: 'No data', value: 1 }], []);
+  const donutTooltip = useMemo(() => <DonutTooltip total={total} />, [total]);
 
   return (
     <Card className="border border-slate-100 shadow-sm" data-testid="donut-chart-card">
@@ -105,7 +111,7 @@ const DonutChart = memo(function DonutChart({ raw, salaries, utilities, other, p
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={segments.length > 0 ? segments : [{ name: 'No data', value: 1 }]}
+                  data={segments.length > 0 ? segments : noDataSegments}
                   cx="50%"
                   cy="50%"
                   innerRadius={52}
@@ -119,7 +125,7 @@ const DonutChart = memo(function DonutChart({ raw, salaries, utilities, other, p
                     : <Cell fill="#e2e8f0" />
                   }
                 </Pie>
-                <Tooltip content={<DonutTooltip total={total} />} />
+                <Tooltip content={donutTooltip} />
               </PieChart>
             </ResponsiveContainer>
             {/* Center label */}
@@ -144,7 +150,7 @@ const DonutChart = memo(function DonutChart({ raw, salaries, utilities, other, p
                 { label: 'Utilities', value: utilities, bg: DONUT_BG[2] },
                 { label: 'Other', value: other, bg: DONUT_BG[3] },
               ].map(cat => {
-                const pct = total > 0 ? ((cat.value / total) * 100).toFixed(1) : 0;
+                const pctVal = total > 0 ? ((cat.value / total) * 100).toFixed(1) : 0;
                 return (
                   <div key={cat.label} className="flex items-center justify-between" data-testid={`donut-legend-${cat.label.toLowerCase().replace(/\s/g, '-')}`}>
                     <div className="flex items-center gap-2">
@@ -153,7 +159,7 @@ const DonutChart = memo(function DonutChart({ raw, salaries, utilities, other, p
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-navy-900 tabular-nums">{fmtFull(cat.value)}</span>
-                      <Badge variant="secondary" className="text-[9px] h-4 px-1.5 tabular-nums">{pct}%</Badge>
+                      <Badge variant="secondary" className="text-[9px] h-4 px-1.5 tabular-nums">{pctVal}%</Badge>
                     </div>
                   </div>
                 );
@@ -198,7 +204,6 @@ const ExpenseTrendChart = memo(function ExpenseTrendChart({ trends }) {
 
   const chartData = useMemo(() => {
     if (mode === 'weekly') return trends;
-    // Group into monthly (pairs of 4 weeks)
     const months = [];
     for (let i = 0; i < trends.length; i += 4) {
       const slice = trends.slice(i, i + 4);
@@ -212,6 +217,8 @@ const ExpenseTrendChart = memo(function ExpenseTrendChart({ trends }) {
     }
     return months;
   }, [trends, mode]);
+
+  const trendTooltip = useMemo(() => <TrendTooltip />, []);
 
   return (
     <Card className="border border-slate-100 shadow-sm" data-testid="expense-trend-card">
@@ -240,7 +247,7 @@ const ExpenseTrendChart = memo(function ExpenseTrendChart({ trends }) {
             <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
               <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} dy={8} />
               <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={v => fmt(v)} width={55} />
-              <Tooltip content={<TrendTooltip />} />
+              <Tooltip content={trendTooltip} />
               <Line type="monotone" dataKey="purchases" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: '#0d9488', stroke: '#fff', strokeWidth: 2 }} name="Raw Materials" />
               <Line type="monotone" dataKey="salaries" stroke="#6366f1" strokeWidth={2} dot={{ r: 3, fill: '#6366f1', stroke: '#fff', strokeWidth: 2 }} name="Salaries" />
               <Line type="monotone" dataKey="utilities" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3, fill: '#f59e0b', stroke: '#fff', strokeWidth: 2 }} name="Utilities" />
@@ -423,7 +430,11 @@ export default function DashboardPage() {
   }, [api, load]);
 
   useEffect(() => { load(); }, [load]);
-  const smartAlerts = useMemo(() => data?.smart_alerts || [], [data]);
+  const smartAlerts = useMemo(() => data?.smart_alerts || EMPTY_ARRAY, [data]);
+  const weeklyTrends = useMemo(() => data?.weekly_trends || EMPTY_TRENDS, [data]);
+  const topItems = useMemo(() => data?.top_items || EMPTY_ARRAY, [data]);
+  const topSuppliers = useMemo(() => data?.top_suppliers || EMPTY_ARRAY, [data]);
+  const recentAlerts = useMemo(() => data?.alerts || EMPTY_ARRAY, [data]);
 
   if (loading) return <LoadingSkeleton />;
   const isEmpty = !data || (data.month_sales === 0 && data.month_purchases === 0);
@@ -451,7 +462,7 @@ export default function DashboardPage() {
           prevUtilities={data.prev_month_utilities || 0}
           prevOther={data.prev_month_other_expenses || 0}
         />
-        <ExpenseTrendChart trends={data.weekly_trends || []} />
+        <ExpenseTrendChart trends={weeklyTrends} />
       </div>
 
       {/* Primary KPIs */}
@@ -509,7 +520,7 @@ export default function DashboardPage() {
           <CardContent className="px-2 pb-4 pt-2">
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data.weekly_trends || []} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                <AreaChart data={weeklyTrends} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="gSales" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0d9488" stopOpacity={0.18} /><stop offset="100%" stopColor="#0d9488" stopOpacity={0} /></linearGradient>
                     <linearGradient id="gPurch" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0f172a" stopOpacity={0.1} /><stop offset="100%" stopColor="#0f172a" stopOpacity={0} /></linearGradient>
@@ -530,7 +541,7 @@ export default function DashboardPage() {
           <CardContent className="px-2 pb-4 pt-2">
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.top_items || []} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
+                <BarChart data={topItems} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
                   <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} tickFormatter={v => `$${(v/1000).toFixed(0)}k`} />
                   <YAxis dataKey="name" type="category" width={100} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#475569' }} />
                   <Tooltip content={<CustomTooltip />} />
@@ -548,8 +559,8 @@ export default function DashboardPage() {
           <CardHeader className="pb-3 pt-5 px-6"><CardTitle className="font-heading text-sm font-bold text-navy-900 uppercase tracking-wide">Top Vendors</CardTitle></CardHeader>
           <CardContent className="px-6 pb-5">
             <div className="space-y-2.5">
-              {(data.top_suppliers || []).map((s, i) => {
-                const maxVal = data.top_suppliers[0]?.total || 1;
+              {topSuppliers.map((s, i) => {
+                const maxVal = topSuppliers[0]?.total || 1;
                 return (
                   <div key={i} className="group">
                     <div className="flex items-center justify-between mb-1"><span className="text-sm font-medium text-navy-900">{s.name}</span><span className="text-sm font-bold text-navy-900 tabular-nums">{fmt(s.total)}</span></div>
@@ -557,7 +568,7 @@ export default function DashboardPage() {
                   </div>
                 );
               })}
-              {!data.top_suppliers?.length && <p className="text-sm text-slate-400 py-6 text-center">No vendor data yet</p>}
+              {!topSuppliers.length && <p className="text-sm text-slate-400 py-6 text-center">No vendor data yet</p>}
             </div>
           </CardContent>
         </Card>
@@ -566,13 +577,13 @@ export default function DashboardPage() {
           <CardHeader className="pb-3 pt-5 px-6"><CardTitle className="font-heading text-sm font-bold text-navy-900 uppercase tracking-wide">Recent Activity</CardTitle></CardHeader>
           <CardContent className="px-6 pb-5">
             <div className="space-y-2">
-              {(data.alerts || []).slice(0, 5).map((a, i) => (
+              {recentAlerts.slice(0, 5).map((a, i) => (
                 <div key={i} className={`flex items-start gap-3 p-3 rounded-lg ${a.severity === 'high' ? 'bg-red-50/60' : a.severity === 'medium' ? 'bg-amber-50/60' : 'bg-slate-50'}`}>
                   <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${a.severity === 'high' ? 'bg-red-500' : a.severity === 'medium' ? 'bg-amber-500' : 'bg-slate-400'}`} />
                   <p className="text-xs text-slate-600 leading-relaxed">{a.message}</p>
                 </div>
               ))}
-              {!data.alerts?.length && <p className="text-sm text-slate-400 py-6 text-center">No recent activity</p>}
+              {!recentAlerts.length && <p className="text-sm text-slate-400 py-6 text-center">No recent activity</p>}
             </div>
           </CardContent>
         </Card>
