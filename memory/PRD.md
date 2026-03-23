@@ -117,7 +117,14 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Market Insights section: max 5 actionable alerts (price increases, cheaper vendors, not ordered)
 - [x] Dashboard answers ONLY: "Where am I spending?" and "Where should I buy today?"
 - [x] Smart Alerts limited to 5 items sorted by severity (high first)
-- [x] Notification bell with alert dropdown
+### Dashboard Drill-Down Feature (March 23, 2026)
+- [x] Donut chart categories are clickable (legend buttons + pie slices)
+- [x] Raw Materials drill-down: items sorted by spend, expandable vendor comparison, CHEAPEST badge, price ranges, external links to vendor detail pages
+- [x] Salaries drill-down: employee cards with name, position, amount, % of total, progress bars
+- [x] Other Expenses drill-down: expenses grouped by category with totals and item details
+- [x] Backend: new GET /api/dashboard/drill-down/{category} endpoint (raw_materials, salaries, other)
+- [x] Sheet panel with clean close behavior (requestAnimationFrame for animation safety)
+- [x] No re-render loops, no console errors
 
 ### Expenses (3 tabs)
 - [x] Raw Materials: CRUD, upload/extract, auto-calculation, vendor autocomplete
