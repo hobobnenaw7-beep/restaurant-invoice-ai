@@ -102,12 +102,21 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Tax field auto-updates total
 - [x] Subtotal = sum of line item totals, Total = subtotal + tax
 
-### Dashboard
+### Dashboard Enhancement — Expense Visualization (March 23, 2026)
+- [x] Monthly Spending donut chart with 4 categories: Raw Materials, Salaries, Utilities, Other
+- [x] Total expense in center with month-over-month % change
+- [x] Per-category dollar amounts and percentages in legend
+- [x] Category insights: auto-generated messages like "Raw Materials decreased by 33.5% this month"
+- [x] Expense Trends line chart with weekly/monthly toggle
+- [x] All 4 expense categories plotted as separate lines
+- [x] Backend provides month_utilities + month_other_expenses split from other_expenses collection
+- [x] weekly_trends includes utilities breakdown per week
+- [x] All charts use real data, auto-update, no crashes
 - [x] Smart Alerts at top (Price Increases, Cheaper Vendors, Not Ordered)
 - [x] Summary cards: Today/Week/Month sales, purchases, expenses
 - [x] Profit calculation cards
 - [x] Top 5 items and vendors
-- [x] Weekly trend charts
+- [x] Weekly Sales vs Purchases area chart
 - [x] Notification bell with alert dropdown
 
 ### Expenses (3 tabs)
@@ -153,16 +162,15 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 ## Prioritized Backlog
 
 ### P1
+- Core Workflow Polish: review and harden Expenses, Sales, Records, Reports, Vendors/Items flows
 - Implement Real Chat Assistant Backend (GPT-5.2 with financial data context)
-- Implement Audit Log (track user/record actions)
-- Build Item Normalization UI
 
 ### P2
-- Implement Settings page functionality
+- Implement Audit Log (track user/record actions)
+- Build Item Normalization UI
 - Enhance Vendor/Item CRUD (edit purchases, more filters)
-- Refactoring: extract backend routes into separate files
+- Backend Refactoring: extract monolithic server.py into modular route files
 
-### Deferred
-- AI Chat Assistant backend
-- Audit log
-- Settings page
+### Deferred (by user)
+- AI Chat Assistant backend (deferred)
+- Audit log (deferred)
