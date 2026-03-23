@@ -671,6 +671,66 @@ async def dashboard_summary(user=Depends(get_user)):
     smart_alerts.sort(key=lambda a: severity_order.get(a.get("severity", "low"), 2))
     smart_alerts = smart_alerts[:5]
 
+    # Find most recent data update timestamp
+    all_dates = []
+    for p in purchases:
+        d = p.get("created_at", p.get("invoice_date", ""))
+        if d:
+            all_dates.append(str(d))
+    for s in salaries:
+        d = s.get("created_at", s.get("payment_date", ""))
+        if d:
+            all_dates.append(str(d))
+    for e in other_exp:
+        d = e.get("created_at", e.get("expense_date", ""))
+        if d:
+            all_dates.append(str(d))
+    all_dates.sort(reverse=True)
+    last_update = all_dates[0] if all_dates else now.isoformat()
+
+    # Best opportunity: pick top saving AND top risk for balance
+    savings = []
+    risks = []
+    for sa in smart_alerts:
+        if sa["type"] == "cheaper_vendor":
+            savings.append({
+                "type": "saving",
+                "item_name": sa["item_name"],
+                "vendor": sa.get("cheaper_vendor", ""),
+                "current_vendor": sa.get("vendor", ""),
+                "savings_pct": sa.get("savings_pct", 0),
+                "cheaper_price": sa.get("cheaper_price", 0),
+                "current_price": sa.get("current_price", 0),
+            })
+        elif sa["type"] == "price_increase":
+            risks.append({
+                "type": "risk",
+                "item_name": sa["item_name"],
+                "vendor": sa.get("vendor", ""),
+                "change_pct": sa.get("change_pct", 0),
+                "old_price": sa.get("old_price", 0),
+                "new_price": sa.get("new_price", 0),
+            })
+    # Also check full alerts (not just top 5) for best saving
+    all_alerts = await _generate_smart_alerts(rid)
+    for sa in all_alerts:
+        if sa["type"] == "cheaper_vendor" and not savings:
+            savings.append({
+                "type": "saving",
+                "item_name": sa["item_name"],
+                "vendor": sa.get("cheaper_vendor", ""),
+                "current_vendor": sa.get("vendor", ""),
+                "savings_pct": sa.get("savings_pct", 0),
+                "cheaper_price": sa.get("cheaper_price", 0),
+                "current_price": sa.get("current_price", 0),
+            })
+    best_opportunities = []
+    if savings:
+        best_opportunities.append(savings[0])
+    if risks:
+        best_opportunities.append(risks[0])
+    best_opportunities = best_opportunities[:2]
+
     return {
         "month_raw_materials": round(sum_p(month_start, today), 2),
         "month_salaries": round(sum_sal(month_start, today), 2),
@@ -679,6 +739,9 @@ async def dashboard_summary(user=Depends(get_user)):
         "prev_month_salaries": round(sum_sal(prev_month_start, prev_month_end), 2),
         "prev_month_other_expenses": round(sum_oe(prev_month_start, prev_month_end), 2),
         "smart_alerts": smart_alerts,
+        "last_data_update": last_update,
+        "best_opportunities": best_opportunities,
+        "purchase_count": len(purchases),
     }
 
 
@@ -2831,7 +2894,13 @@ async def send_chat(data: ChatMessageIn, user=Depends(get_user)):
     if smart_alerts:
         sa_lines = []
         for sa in smart_alerts:
-            sa_lines.append(f"- [{sa['type'].upper()}] {sa['title']} — {sa['detail']}")
+            t = sa.get("type", "")
+            if t == "price_increase":
+                sa_lines.append(f"- [PRICE INCREASE] {sa.get('item_name','')} went from ${sa.get('old_price',0):.2f} to ${sa.get('new_price',0):.2f} (+{sa.get('change_pct',0)}%) at {sa.get('vendor','')}")
+            elif t == "cheaper_vendor":
+                sa_lines.append(f"- [CHEAPER VENDOR] Save {sa.get('savings_pct',0)}% on {sa.get('item_name','')} — switch from {sa.get('vendor','')} (${sa.get('current_price',0):.2f}) to {sa.get('cheaper_vendor','')} (${sa.get('cheaper_price',0):.2f})")
+            elif t == "not_ordered":
+                sa_lines.append(f"- [NOT ORDERED] {sa.get('item_name','')} not ordered in {sa.get('days_since',0)} days (last from {sa.get('vendor','')} at ${sa.get('last_price',0):.2f})")
         smart_alerts_ctx = "\nSMART ALERTS (active issues detected):\n" + "\n".join(sa_lines)
 
     context = f"""RESTAURANT FINANCIAL DATA (as of {now.strftime('%A, %B %d, %Y')}):

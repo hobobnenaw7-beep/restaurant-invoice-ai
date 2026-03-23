@@ -12,7 +12,8 @@ import {
   TrendingUp, TrendingDown, ArrowRightLeft,
   Loader2, BarChart3, Search, Package, Store, Tag,
   PieChart as PieChartIcon, Lightbulb, X,
-  ChevronRight, Users, Receipt, ExternalLink
+  ChevronRight, Users, Receipt, ExternalLink,
+  Plus, Upload, GitCompare, FileBarChart, Clock, Zap, ArrowRight, ShieldAlert
 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -588,11 +589,142 @@ function EmptyDashboard({ onSeed, seeding }) {
   );
 }
 
+/* ═══════════════════ QUICK ACTIONS ═══════════════════ */
+const QUICK_ACTIONS = [
+  { label: 'Add Expense', icon: Plus, path: '/expenses', color: 'bg-teal-600', hoverColor: 'hover:bg-teal-700' },
+  { label: 'Upload Invoice', icon: Upload, path: '/expenses', state: { upload: true }, color: 'bg-indigo-600', hoverColor: 'hover:bg-indigo-700' },
+  { label: 'Compare Vendors', icon: GitCompare, path: '/purchase-decisions', color: 'bg-amber-600', hoverColor: 'hover:bg-amber-700' },
+  { label: 'View Reports', icon: FileBarChart, path: '/reports', color: 'bg-slate-700', hoverColor: 'hover:bg-slate-800' },
+];
+
+function QuickActions({ navigate }) {
+  return (
+    <div className="flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide" data-testid="quick-actions">
+      {QUICK_ACTIONS.map((action, i) => (
+        <button
+          key={i}
+          onClick={() => navigate(action.path, action.state ? { state: action.state } : undefined)}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl ${action.color} ${action.hoverColor} text-white text-xs font-semibold whitespace-nowrap transition-all hover:shadow-md active:scale-[0.97] flex-shrink-0`}
+          data-testid={`quick-action-${i}`}
+        >
+          <action.icon className="w-3.5 h-3.5" />
+          {action.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ═══════════════════ DATA FRESHNESS ═══════════════════ */
+function DataFreshness({ lastUpdate, purchaseCount }) {
+  const label = useMemo(() => {
+    if (!lastUpdate) return null;
+    try {
+      const d = new Date(lastUpdate);
+      const now = new Date();
+      const diffMs = now - d;
+      const diffMin = Math.floor(diffMs / 60000);
+      const diffHr = Math.floor(diffMin / 60);
+      const diffDay = Math.floor(diffHr / 24);
+      let ago;
+      if (diffMin < 1) ago = 'just now';
+      else if (diffMin < 60) ago = `${diffMin}m ago`;
+      else if (diffHr < 24) ago = `${diffHr}h ago`;
+      else ago = `${diffDay}d ago`;
+      return ago;
+    } catch { return null; }
+  }, [lastUpdate]);
+
+  if (!label) return null;
+
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] text-slate-400" data-testid="data-freshness">
+      <Clock className="w-3 h-3" />
+      <span>Updated {label}</span>
+      <span className="text-slate-300">·</span>
+      <span>Based on {purchaseCount || 0} purchase records</span>
+    </div>
+  );
+}
+
+/* ═══════════════════ BEST OPPORTUNITY ═══════════════════ */
+function BestOpportunityCard({ opportunities, navigate }) {
+  if (!opportunities || !opportunities.length) return null;
+
+  return (
+    <Card className="border-2 border-dashed border-teal-200 bg-gradient-to-r from-teal-50/40 to-white shadow-sm" data-testid="best-opportunity-card">
+      <CardContent className="py-4 px-5">
+        <div className="flex items-center gap-2 mb-3">
+          <Zap className="w-4 h-4 text-amber-500" />
+          <span className="text-xs font-bold text-navy-900 uppercase tracking-wide">Today's Best Opportunities</span>
+        </div>
+        <div className="space-y-2.5">
+          {opportunities.map((opp, i) => (
+            <OpportunityRow key={i} opp={opp} index={i} navigate={navigate} />
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function OpportunityRow({ opp, index, navigate }) {
+  if (opp.type === 'saving') {
+    return (
+      <button
+        onClick={() => navigate('/purchase-decisions')}
+        className="w-full flex items-center justify-between p-3 rounded-xl bg-teal-50 border border-teal-100 hover:border-teal-300 hover:shadow-sm transition-all group text-left"
+        data-testid={`opportunity-${index}`}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center flex-shrink-0">
+            <ArrowRightLeft className="w-4 h-4 text-white" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm text-slate-700">
+              Buy <span className="font-bold text-navy-900">{opp.item_name}</span> from <span className="font-bold text-teal-700">{opp.vendor}</span>
+            </p>
+            <p className="text-xs text-teal-600 font-semibold mt-0.5">
+              Save {opp.savings_pct}% · {fmtPrice(opp.cheaper_price)} vs {fmtPrice(opp.current_price)}
+            </p>
+          </div>
+        </div>
+        <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-teal-600 transition-colors flex-shrink-0" />
+      </button>
+    );
+  }
+
+  // risk / price_increase
+  return (
+    <button
+      onClick={() => navigate('/expenses')}
+      className="w-full flex items-center justify-between p-3 rounded-xl bg-red-50 border border-red-100 hover:border-red-300 hover:shadow-sm transition-all group text-left"
+      data-testid={`opportunity-${index}`}
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="w-8 h-8 rounded-lg bg-red-500 flex items-center justify-center flex-shrink-0">
+          <ShieldAlert className="w-4 h-4 text-white" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm text-slate-700">
+            <span className="font-bold text-navy-900">{opp.item_name}</span> price increased at <span className="font-bold text-red-600">{opp.vendor}</span>
+          </p>
+          <p className="text-xs text-red-600 font-semibold mt-0.5">
+            +{opp.change_pct}% · {fmtPrice(opp.old_price)} → {fmtPrice(opp.new_price)}
+          </p>
+        </div>
+      </div>
+      <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-red-500 transition-colors flex-shrink-0" />
+    </button>
+  );
+}
+
 /* ═══════════════════ MAIN PAGE ═══════════════════ */
 const EMPTY_ALERTS = [];
 
 export default function DashboardPage() {
   const { api } = useAuth();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
@@ -613,6 +745,7 @@ export default function DashboardPage() {
 
   useEffect(() => { load(); }, [load]);
   const smartAlerts = useMemo(() => data?.smart_alerts || EMPTY_ALERTS, [data]);
+  const bestOpps = useMemo(() => data?.best_opportunities || EMPTY_ALERTS, [data]);
 
   const openDrillDown = useCallback((category) => setDrillDown(category), []);
   const closeDrillDown = useCallback(() => setDrillDown(null), []);
@@ -627,7 +760,7 @@ export default function DashboardPage() {
   if (isEmpty) return <EmptyDashboard onSeed={seedData} seeding={seeding} />;
 
   return (
-    <div className="space-y-6 max-w-[1100px]" data-testid="dashboard-page">
+    <div className="space-y-5 max-w-[1100px]" data-testid="dashboard-page">
       <div>
         <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-navy-900 tracking-tight">Dashboard</h1>
         <p className="text-sm text-slate-400 mt-1">Where am I spending? Where should I buy?</p>
@@ -635,7 +768,12 @@ export default function DashboardPage() {
 
       <ItemSearch api={api} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" data-testid="dashboard-main-row">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <QuickActions navigate={navigate} />
+        <DataFreshness lastUpdate={data.last_data_update} purchaseCount={data.purchase_count} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5" data-testid="dashboard-main-row">
         <DonutChart
           raw={data.month_raw_materials || 0}
           salaries={data.month_salaries || 0}
@@ -647,6 +785,8 @@ export default function DashboardPage() {
         />
         <MarketInsights alerts={smartAlerts} />
       </div>
+
+      <BestOpportunityCard opportunities={bestOpps} navigate={navigate} />
 
       <DrillDownSheet
         open={!!drillDown}
