@@ -133,6 +133,18 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Backend: dashboard summary returns last_data_update, purchase_count, best_opportunities (prioritizes 1 saving + 1 risk)
 - [x] All cards are actionable buttons with navigation
 
+### Audit Log System (March 23, 2026)
+- [x] Immutable audit log collection in MongoDB (no edit/delete endpoints)
+- [x] Tracks 7 action types: CREATE, UPDATE, DELETE, APPROVE, REJECT, LOGIN, ROLE_CHANGE
+- [x] Tracks 5 entity types: Expense, Sale, Vendor, Item, User
+- [x] Each entry: id, user_id, user_name, user_role, action_type, entity_type, entity_id, description, old_value, new_value, timestamp
+- [x] Instrumented all CRUD endpoints: purchases, salaries, other_expenses, sales, suppliers, items, users, approvals, permissions, login
+- [x] Manager-only access (403 for non-managers)
+- [x] Paginated GET /api/audit-logs with filters: action_type, entity_type, user_id, search (regex), date_from, date_to
+- [x] Frontend: Table view with action icons, entity badges, user info, expandable row details
+- [x] Frontend: Filter panel with 5 controls + keyword search
+- [x] Frontend: Pagination controls
+
 ### Expenses (3 tabs)
 - [x] Raw Materials: CRUD, upload/extract, auto-calculation, vendor autocomplete
 - [x] Salaries: CRUD, payment tracking
@@ -180,11 +192,9 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - Implement Real Chat Assistant Backend (GPT-5.2 with financial data context)
 
 ### P2
-- Implement Audit Log (track user/record actions)
 - Build Item Normalization UI
 - Enhance Vendor/Item CRUD (edit purchases, more filters)
 - Backend Refactoring: extract monolithic server.py into modular route files
 
 ### Deferred (by user)
-- AI Chat Assistant backend (deferred)
-- Audit log (deferred)
+- AI Chat Assistant backend (deferred) - now implemented via floating assistant
