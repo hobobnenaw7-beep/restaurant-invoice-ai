@@ -648,113 +648,102 @@ async def dashboard_summary(user=Depends(get_user)):
     rid = user["restaurant_id"]
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
-    week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
     month_start = now.strftime("%Y-%m-01")
-    year_start = now.strftime("%Y-01-01")
-    prev_week_start = (now - timedelta(days=now.weekday() + 7)).strftime("%Y-%m-%d")
-    prev_week_end = (now - timedelta(days=now.weekday() + 1)).strftime("%Y-%m-%d")
     prev_month = now.replace(day=1) - timedelta(days=1)
     prev_month_start = prev_month.strftime("%Y-%m-01")
     prev_month_end = prev_month.strftime("%Y-%m-%d")
-    prev_year_start = f"{now.year - 1}-01-01"
-    prev_year_end = f"{now.year - 1}-12-31"
 
-    # Only count approved records in dashboard (backwards-compatible: no approval_status = approved)
     _approved = {"$or": [{"approval_status": {"$exists": False}}, {"approval_status": "approved"}]}
     purchases = await db.purchases.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
-    sales = await db.sales.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
     salaries = await db.salaries.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
     other_exp = await db.other_expenses.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
 
     def sum_p(df, dt=None):
         return sum(p["total"] for p in purchases if p.get("invoice_date", "") >= df and (not dt or p.get("invoice_date", "") <= dt))
-    def sum_s(df, dt=None):
-        return sum(s["total_sales"] for s in sales if s.get("report_date", "") >= df and (not dt or s.get("report_date", "") <= dt))
     def sum_sal(df, dt=None):
         return sum(s["amount"] for s in salaries if s.get("payment_date", "") >= df and (not dt or s.get("payment_date", "") <= dt))
     def sum_oe(df, dt=None):
         return sum(e["amount"] for e in other_exp if e.get("expense_date", "") >= df and (not dt or e.get("expense_date", "") <= dt))
-    def sum_util(df, dt=None):
-        return sum(e["amount"] for e in other_exp if e.get("category", "").lower() == "utilities" and e.get("expense_date", "") >= df and (not dt or e.get("expense_date", "") <= dt))
-    def sum_other(df, dt=None):
-        return sum(e["amount"] for e in other_exp if e.get("category", "").lower() != "utilities" and e.get("expense_date", "") >= df and (not dt or e.get("expense_date", "") <= dt))
 
-    def total_expenses(df, dt=None):
-        return sum_p(df, dt) + sum_sal(df, dt) + sum_oe(df, dt)
-
-    def profit(df, dt=None):
-        return round(sum_s(df, dt) - total_expenses(df, dt), 2)
-
-    item_spend = {}
-    for p in purchases:
-        for it in p.get("items", []):
-            n = it.get("raw_name", "Unknown")
-            item_spend[n] = item_spend.get(n, 0) + float(it.get("total", 0))
-    top_items = [{"name": n, "total": round(t, 2)} for n, t in sorted(item_spend.items(), key=lambda x: -x[1])[:5]]
-
-    sup_spend = {}
-    for p in purchases:
-        n = p.get("supplier_name", "Unknown")
-        sup_spend[n] = sup_spend.get(n, 0) + p["total"]
-    top_suppliers = [{"name": n, "total": round(t, 2)} for n, t in sorted(sup_spend.items(), key=lambda x: -x[1])[:5]]
-
-    weekly_trends = []
-    for i in range(7, -1, -1):
-        ws = (now - timedelta(weeks=i, days=now.weekday())).strftime("%Y-%m-%d")
-        we = (now - timedelta(weeks=i, days=now.weekday() - 6)).strftime("%Y-%m-%d")
-        weekly_trends.append({
-            "week": f"W{8-i}",
-            "purchases": round(sum_p(ws, we), 2),
-            "sales": round(sum_s(ws, we), 2),
-            "salaries": round(sum_sal(ws, we), 2),
-            "utilities": round(sum_util(ws, we), 2),
-            "other_expenses": round(sum_other(ws, we), 2),
-        })
-
-    alerts = await db.alerts.find({"restaurant_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(10)
     smart_alerts = await _generate_smart_alerts(rid)
-    price_alerts = await db.alerts.find(
-        {"restaurant_id": rid, "type": "price_increase"},
-        {"_id": 0}
-    ).sort("created_at", -1).to_list(20)
-
-    week_end = (now - timedelta(days=now.weekday() - 6)).strftime("%Y-%m-%d")
-    if week_end > today:
-        week_end = today
+    # Limit to top 5 most actionable insights (high severity first)
+    severity_order = {"high": 0, "medium": 1, "low": 2}
+    smart_alerts.sort(key=lambda a: severity_order.get(a.get("severity", "low"), 2))
+    smart_alerts = smart_alerts[:5]
 
     return {
-        "today_sales": round(sum_s(today, today), 2), "today_purchases": round(sum_p(today, today), 2),
-        "week_sales": round(sum_s(week_start, week_end), 2), "week_purchases": round(sum_p(week_start, week_end), 2),
-        "month_sales": round(sum_s(month_start, today), 2), "month_purchases": round(sum_p(month_start, today), 2),
-        "prev_week_sales": round(sum_s(prev_week_start, prev_week_end), 2),
-        "prev_week_purchases": round(sum_p(prev_week_start, prev_week_end), 2),
-        "prev_month_sales": round(sum_s(prev_month_start, prev_month_end), 2),
-        "prev_month_purchases": round(sum_p(prev_month_start, prev_month_end), 2),
         "month_raw_materials": round(sum_p(month_start, today), 2),
         "month_salaries": round(sum_sal(month_start, today), 2),
-        "month_utilities": round(sum_util(month_start, today), 2),
-        "month_other_expenses": round(sum_other(month_start, today), 2),
+        "month_other_expenses": round(sum_oe(month_start, today), 2),
         "prev_month_raw_materials": round(sum_p(prev_month_start, prev_month_end), 2),
         "prev_month_salaries": round(sum_sal(prev_month_start, prev_month_end), 2),
-        "prev_month_utilities": round(sum_util(prev_month_start, prev_month_end), 2),
-        "prev_month_other_expenses": round(sum_other(prev_month_start, prev_month_end), 2),
-        "top_items": top_items, "top_suppliers": top_suppliers,
-        "weekly_trends": weekly_trends, "alerts": alerts,
+        "prev_month_other_expenses": round(sum_oe(prev_month_start, prev_month_end), 2),
         "smart_alerts": smart_alerts,
-        "price_alerts": price_alerts,
-        "daily_profit": profit(today, today),
-        "weekly_profit": profit(week_start, week_end),
-        "monthly_profit": profit(month_start, today),
-        "yearly_profit": profit(year_start, today),
-        "prev_weekly_profit": profit(prev_week_start, prev_week_end),
-        "prev_monthly_profit": profit(prev_month_start, prev_month_end),
-        "prev_yearly_profit": profit(prev_year_start, prev_year_end),
-        "daily_expenses": round(total_expenses(today, today), 2),
-        "weekly_expenses": round(total_expenses(week_start, week_end), 2),
-        "monthly_expenses": round(total_expenses(month_start, today), 2),
-        "yearly_expenses": round(total_expenses(year_start, today), 2),
-        "yearly_sales": round(sum_s(year_start, today), 2),
     }
+
+
+@api_router.get("/dashboard/item-search")
+async def dashboard_item_search(q: str = "", user=Depends(get_user)):
+    """Search for an item across all purchases and return vendor/price comparison."""
+    rid = user["restaurant_id"]
+    if not q or len(q.strip()) < 2:
+        return {"results": []}
+
+    query_lower = q.strip().lower()
+    _approved = {"$or": [{"approval_status": {"$exists": False}}, {"approval_status": "approved"}]}
+    purchases = await db.purchases.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
+
+    # Build per-item, per-vendor price data
+    item_vendor_data = {}
+    for p in purchases:
+        vendor = p.get("supplier_name", "Unknown")
+        inv_date = p.get("invoice_date", "")
+        for it in p.get("items", []):
+            raw_name = it.get("raw_name", "")
+            if not raw_name or query_lower not in raw_name.lower():
+                continue
+            key = raw_name.lower()
+            if key not in item_vendor_data:
+                item_vendor_data[key] = {"name": raw_name, "vendors": {}}
+            vd = item_vendor_data[key]["vendors"]
+            if vendor not in vd:
+                vd[vendor] = {"prices": [], "dates": [], "unit": it.get("unit", "")}
+            unit_price = float(it.get("unit_price", 0))
+            if unit_price > 0:
+                vd[vendor]["prices"].append(unit_price)
+                vd[vendor]["dates"].append(inv_date)
+
+    results = []
+    for key, item_data in item_vendor_data.items():
+        vendors = []
+        for vname, vinfo in item_data["vendors"].items():
+            if not vinfo["prices"]:
+                continue
+            latest_idx = vinfo["dates"].index(max(vinfo["dates"])) if vinfo["dates"] else 0
+            vendors.append({
+                "vendor": vname,
+                "latest_price": round(vinfo["prices"][latest_idx], 2),
+                "avg_price": round(sum(vinfo["prices"]) / len(vinfo["prices"]), 2),
+                "min_price": round(min(vinfo["prices"]), 2),
+                "max_price": round(max(vinfo["prices"]), 2),
+                "purchase_count": len(vinfo["prices"]),
+                "last_date": max(vinfo["dates"]) if vinfo["dates"] else "",
+                "unit": vinfo["unit"],
+            })
+        if not vendors:
+            continue
+        vendors.sort(key=lambda v: v["latest_price"])
+        cheapest = vendors[0]
+        results.append({
+            "item_name": item_data["name"],
+            "vendors": vendors,
+            "cheapest_vendor": cheapest["vendor"],
+            "cheapest_price": cheapest["latest_price"],
+            "vendor_count": len(vendors),
+        })
+
+    results.sort(key=lambda r: r["item_name"].lower())
+    return {"results": results}
 
 # ==================== UPLOAD / EXTRACT ====================
 
