@@ -126,6 +126,13 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Sheet panel with clean close behavior (requestAnimationFrame for animation safety)
 - [x] No re-render loops, no console errors
 
+### Dashboard Quick Actions, Freshness & Opportunities (March 23, 2026)
+- [x] Quick Actions row: 4 colored buttons (Add Expense, Upload Invoice, Compare Vendors, View Reports) with icons, responsive horizontal scroll
+- [x] Data Freshness indicator: "Updated 4d ago · Based on 50 purchase records" with auto-computed relative time
+- [x] Today's Best Opportunity card: 1 saving (green) + 1 risk (red), clickable to navigate to relevant pages
+- [x] Backend: dashboard summary returns last_data_update, purchase_count, best_opportunities (prioritizes 1 saving + 1 risk)
+- [x] All cards are actionable buttons with navigation
+
 ### Expenses (3 tabs)
 - [x] Raw Materials: CRUD, upload/extract, auto-calculation, vendor autocomplete
 - [x] Salaries: CRUD, payment tracking
