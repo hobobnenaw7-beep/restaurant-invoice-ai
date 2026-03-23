@@ -13,7 +13,7 @@ import {
   Loader2, BarChart3, Search, Package, Store, Tag,
   PieChart as PieChartIcon, Lightbulb, X,
   ChevronRight, Users, Receipt, ExternalLink,
-  Plus, Upload, GitCompare, FileBarChart, Clock, Zap, ArrowRight, ShieldAlert
+  Plus, DollarSign, GitCompare, FileBarChart, Clock, Zap, ArrowRight, ShieldAlert, Calendar
 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -172,6 +172,84 @@ function DonutTooltip({ active, payload, total }) {
   );
 }
 
+/* ═══════════════════ SALES DONUT ═══════════════════ */
+const SalesDonut = memo(function SalesDonut({ sales, prevSales, onCategoryClick }) {
+  const pctSales = pctChange(sales, prevSales);
+  const segments = useMemo(() => sales > 0 ? [{ name: 'Sales', value: sales, color: '#0d9488' }] : [], [sales]);
+  const noData = useMemo(() => [{ name: 'No data', value: 1 }], []);
+  const tooltipEl = useMemo(() => <DonutTooltip total={sales} />, [sales]);
+
+  return (
+    <Card className="border border-slate-100 shadow-sm" data-testid="sales-donut-card">
+      <CardHeader className="pb-2 pt-5 px-6">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center">
+            <DollarSign className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <CardTitle className="font-heading text-sm font-bold text-navy-900">Monthly Sales</CardTitle>
+            <p className="text-[10px] text-slate-400">Click to see sales details</p>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="px-6 pb-5">
+        <div className="flex items-center gap-6">
+          <div className="relative w-36 h-36 flex-shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={segments.length > 0 ? segments : noData}
+                  cx="50%" cy="50%"
+                  innerRadius={44} outerRadius={60}
+                  dataKey="value" stroke="none"
+                  onClick={() => onCategoryClick?.('sales')}
+                  className="cursor-pointer"
+                >
+                  {segments.length > 0
+                    ? segments.map((s, i) => <Cell key={i} fill={s.color} className="cursor-pointer hover:opacity-80 transition-opacity" />)
+                    : <Cell fill="#e2e8f0" />}
+                </Pie>
+                <Tooltip content={tooltipEl} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Revenue</span>
+              <span className="text-base font-extrabold text-navy-900 tabular-nums">{fmt(sales)}</span>
+              {pctSales !== null && (
+                <span className={`text-[10px] font-semibold ${pctSales > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {pctSales > 0 ? '+' : ''}{pctSales}%
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex-1 space-y-3">
+            <button
+              onClick={() => onCategoryClick?.('sales')}
+              className="w-full flex items-center justify-between p-2.5 rounded-lg hover:bg-slate-50 transition-colors group"
+              data-testid="sales-donut-legend"
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-sm bg-teal-500" />
+                <span className="text-xs text-slate-600 group-hover:text-navy-900">Total Sales</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-navy-900 tabular-nums">{fmtFull(sales)}</span>
+                <ChevronRight className="w-3 h-3 text-slate-300 group-hover:text-teal-600 transition-colors" />
+              </div>
+            </button>
+            {pctSales !== null && (
+              <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs ${parseFloat(pctSales) > 0 ? 'bg-emerald-50/70 text-emerald-700' : 'bg-red-50/70 text-red-700'}`}>
+                {parseFloat(pctSales) > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                <span>Sales {parseFloat(pctSales) > 0 ? 'up' : 'down'} <span className="font-bold">{Math.abs(parseFloat(pctSales))}%</span> vs last month</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+});
+
 /* ═══════════════════ DRILL-DOWN SHEET ═══════════════════ */
 function DrillDownSheet({ open, onClose, category, api }) {
   const [data, setData] = useState(null);
@@ -179,17 +257,39 @@ function DrillDownSheet({ open, onClose, category, api }) {
   const navigate = useNavigate();
   const catKey = useRef(null);
 
-  useEffect(() => {
-    if (!open || !category) return;
-    if (catKey.current === category && data) return;
-    catKey.current = category;
+  const now = new Date();
+  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  const todayStr = now.toISOString().slice(0, 10);
+
+  const [dateFrom, setDateFrom] = useState(monthStart);
+  const [dateTo, setDateTo] = useState(todayStr);
+
+  const fetchData = useCallback((cat, df, dt) => {
+    if (!cat) return;
     setLoading(true);
     setData(null);
-    api.get(`/dashboard/drill-down/${category}`)
+    const params = {};
+    if (df) params.date_from = df;
+    if (dt) params.date_to = dt;
+    api.get(`/dashboard/drill-down/${cat}`, { params })
       .then(res => setData(res.data))
       .catch(() => toast.error('Failed to load details'))
       .finally(() => setLoading(false));
-  }, [open, category, api, data]);
+  }, [api]);
+
+  useEffect(() => {
+    if (!open || !category) return;
+    if (catKey.current !== category) {
+      setDateFrom(monthStart);
+      setDateTo(todayStr);
+    }
+    catKey.current = category;
+    fetchData(category, catKey.current !== category ? monthStart : dateFrom, catKey.current !== category ? todayStr : dateTo);
+  }, [open, category]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const applyDateFilter = useCallback(() => {
+    fetchData(category, dateFrom, dateTo);
+  }, [fetchData, category, dateFrom, dateTo]);
 
   const handleClose = useCallback((isOpen) => {
     if (!isOpen) {
@@ -201,9 +301,9 @@ function DrillDownSheet({ open, onClose, category, api }) {
     }
   }, [onClose]);
 
-  const catLabel = category === 'raw_materials' ? 'Raw Materials' : category === 'salaries' ? 'Salaries' : 'Other Expenses';
-  const catColor = category === 'raw_materials' ? 'teal' : category === 'salaries' ? 'indigo' : 'slate';
-  const CatIcon = category === 'raw_materials' ? Package : category === 'salaries' ? Users : Receipt;
+  const catLabel = category === 'raw_materials' ? 'Raw Materials' : category === 'salaries' ? 'Salaries' : category === 'sales' ? 'Sales' : 'Other Expenses';
+  const catColor = category === 'raw_materials' ? 'teal' : category === 'salaries' ? 'indigo' : category === 'sales' ? 'teal' : 'slate';
+  const CatIcon = category === 'raw_materials' ? Package : category === 'salaries' ? Users : category === 'sales' ? DollarSign : Receipt;
 
   return (
     <Sheet open={open} onOpenChange={handleClose}>
@@ -225,6 +325,17 @@ function DrillDownSheet({ open, onClose, category, api }) {
         </SheetHeader>
 
         <div className="px-6 py-5">
+          {/* Date Filters */}
+          <div className="flex items-center gap-2 mb-4 pb-4 border-b border-slate-100" data-testid="drill-down-dates">
+            <Calendar className="w-4 h-4 text-slate-400 flex-shrink-0" />
+            <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 text-xs flex-1" data-testid="drill-down-date-from" />
+            <span className="text-xs text-slate-400">to</span>
+            <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-8 text-xs flex-1" data-testid="drill-down-date-to" />
+            <Button size="sm" onClick={applyDateFilter} className="h-8 px-3 text-xs bg-teal-600 hover:bg-teal-700 text-white" data-testid="drill-down-apply-dates">
+              Apply
+            </Button>
+          </div>
+
           {loading && (
             <div className="space-y-4" data-testid="drill-down-loading">
               {[1,2,3].map(i => <Skeleton key={i} className="h-20 rounded-lg" />)}
@@ -239,6 +350,9 @@ function DrillDownSheet({ open, onClose, category, api }) {
           )}
           {!loading && data && category === 'other' && (
             <OtherDrillDown categories={data.categories} />
+          )}
+          {!loading && data && category === 'sales' && (
+            <SalesDrillDown records={data.records} total={data.total} />
           )}
         </div>
       </SheetContent>
@@ -398,6 +512,40 @@ function OtherDrillDown({ categories }) {
                 <span className="text-sm font-bold text-navy-900 tabular-nums flex-shrink-0 ml-3">{fmtFull(item.amount)}</span>
               </div>
             ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─── Sales Drill-Down ─── */
+function SalesDrillDown({ records, total }) {
+  if (!records.length) return (
+    <div className="text-center py-10">
+      <DollarSign className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+      <p className="text-sm text-slate-400">No sales in this date range</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-2" data-testid="sales-drill-list">
+      <p className="text-xs text-slate-400 mb-3">{records.length} sale{records.length !== 1 ? 's' : ''} in this period — Total: <span className="font-bold text-teal-700">{fmtFull(total)}</span></p>
+      {records.map((rec, idx) => (
+        <div key={idx} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 hover:border-teal-100 transition-colors" data-testid={`sale-row-${idx}`}>
+          <div className="min-w-0">
+            <span className="text-sm font-semibold text-navy-900">{rec.report_date}</span>
+            {rec.source && <span className="text-[11px] text-slate-400 ml-2">{rec.source}</span>}
+            {rec.notes && <p className="text-[11px] text-slate-400 mt-0.5 truncate">{rec.notes}</p>}
+          </div>
+          <div className="text-right flex-shrink-0 ml-3">
+            <span className="text-sm font-bold text-teal-700 tabular-nums">{fmtFull(rec.total_sales)}</span>
+            {(rec.total_tax > 0 || rec.total_tips > 0) && (
+              <div className="text-[10px] text-slate-400 tabular-nums">
+                {rec.total_tax > 0 && <span>Tax: {fmtPrice(rec.total_tax)}</span>}
+                {rec.total_tips > 0 && <span className="ml-2">Tips: {fmtPrice(rec.total_tips)}</span>}
+              </div>
+            )}
           </div>
         </div>
       ))}
@@ -592,7 +740,7 @@ function EmptyDashboard({ onSeed, seeding }) {
 /* ═══════════════════ QUICK ACTIONS ═══════════════════ */
 const QUICK_ACTIONS = [
   { label: 'Add Expense', icon: Plus, path: '/expenses', color: 'bg-teal-600', hoverColor: 'hover:bg-teal-700' },
-  { label: 'Upload Invoice', icon: Upload, path: '/expenses', state: { upload: true }, color: 'bg-indigo-600', hoverColor: 'hover:bg-indigo-700' },
+  { label: 'Sales', icon: DollarSign, path: '/sales', color: 'bg-indigo-600', hoverColor: 'hover:bg-indigo-700' },
   { label: 'Compare Vendors', icon: GitCompare, path: '/purchase-decisions', color: 'bg-amber-600', hoverColor: 'hover:bg-amber-700' },
   { label: 'View Reports', icon: FileBarChart, path: '/reports', color: 'bg-slate-700', hoverColor: 'hover:bg-slate-800' },
 ];
@@ -773,7 +921,7 @@ export default function DashboardPage() {
         <DataFreshness lastUpdate={data.last_data_update} purchaseCount={data.purchase_count} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5" data-testid="dashboard-main-row">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="dashboard-main-row">
         <DonutChart
           raw={data.month_raw_materials || 0}
           salaries={data.month_salaries || 0}
@@ -781,6 +929,11 @@ export default function DashboardPage() {
           prevRaw={data.prev_month_raw_materials || 0}
           prevSalaries={data.prev_month_salaries || 0}
           prevOther={data.prev_month_other_expenses || 0}
+          onCategoryClick={openDrillDown}
+        />
+        <SalesDonut
+          sales={data.month_sales || 0}
+          prevSales={data.prev_month_sales || 0}
           onCategoryClick={openDrillDown}
         />
         <MarketInsights alerts={smartAlerts} />

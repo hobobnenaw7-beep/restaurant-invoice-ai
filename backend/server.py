@@ -755,6 +755,7 @@ async def dashboard_summary(user=Depends(get_user)):
     purchases = await db.purchases.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
     salaries = await db.salaries.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
     other_exp = await db.other_expenses.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
+    sales = await db.sales.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
 
     def sum_p(df, dt=None):
         return sum(p["total"] for p in purchases if p.get("invoice_date", "") >= df and (not dt or p.get("invoice_date", "") <= dt))
@@ -762,6 +763,8 @@ async def dashboard_summary(user=Depends(get_user)):
         return sum(s["amount"] for s in salaries if s.get("payment_date", "") >= df and (not dt or s.get("payment_date", "") <= dt))
     def sum_oe(df, dt=None):
         return sum(e["amount"] for e in other_exp if e.get("expense_date", "") >= df and (not dt or e.get("expense_date", "") <= dt))
+    def sum_s(df, dt=None):
+        return sum(s["total_sales"] for s in sales if s.get("report_date", "") >= df and (not dt or s.get("report_date", "") <= dt))
 
     smart_alerts = await _generate_smart_alerts(rid)
     # Limit to top 5 most actionable insights (high severity first)
@@ -836,6 +839,8 @@ async def dashboard_summary(user=Depends(get_user)):
         "prev_month_raw_materials": round(sum_p(prev_month_start, prev_month_end), 2),
         "prev_month_salaries": round(sum_sal(prev_month_start, prev_month_end), 2),
         "prev_month_other_expenses": round(sum_oe(prev_month_start, prev_month_end), 2),
+        "month_sales": round(sum_s(month_start, today), 2),
+        "prev_month_sales": round(sum_s(prev_month_start, prev_month_end), 2),
         "smart_alerts": smart_alerts,
         "last_data_update": last_update,
         "best_opportunities": best_opportunities,
@@ -908,22 +913,19 @@ async def dashboard_item_search(q: str = "", user=Depends(get_user)):
 
 
 @api_router.get("/dashboard/drill-down/{category}")
-async def dashboard_drill_down(category: str, user=Depends(get_user)):
-    """Drill-down data for a spending category."""
+async def dashboard_drill_down(category: str, date_from: str = "", date_to: str = "", user=Depends(get_user)):
+    """Drill-down data for a spending/sales category with optional date filters."""
     rid = user["restaurant_id"]
     now = datetime.now(timezone.utc)
-    month_start = now.strftime("%Y-%m-01")
-    today = now.strftime("%Y-%m-%d")
+    df = date_from or now.strftime("%Y-%m-01")
+    dt = date_to or now.strftime("%Y-%m-%d")
     _approved = {"$or": [{"approval_status": {"$exists": False}}, {"approval_status": "approved"}]}
 
     if category == "raw_materials":
-        purchases = await db.purchases.find(
-            {"restaurant_id": rid, **_approved}, {"_id": 0}
-        ).to_list(10000)
-        month_purchases = [p for p in purchases if month_start <= p.get("invoice_date", "") <= today]
-
+        purchases = await db.purchases.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
+        filtered = [p for p in purchases if df <= p.get("invoice_date", "") <= dt]
         item_map = {}
-        for p in month_purchases:
+        for p in filtered:
             vendor = p.get("supplier_name", "Unknown")
             supplier_id = p.get("supplier_id", "")
             inv_date = p.get("invoice_date", "")
@@ -932,8 +934,7 @@ async def dashboard_drill_down(category: str, user=Depends(get_user)):
                 key = name.lower()
                 if key not in item_map:
                     item_map[key] = {"name": name, "total_spent": 0, "vendors": {}}
-                total = float(it.get("total", 0))
-                item_map[key]["total_spent"] += total
+                item_map[key]["total_spent"] += float(it.get("total", 0))
                 vd = item_map[key]["vendors"]
                 if vendor not in vd:
                     vd[vendor] = {"prices": [], "dates": [], "unit": it.get("unit", ""), "supplier_id": supplier_id}
@@ -941,7 +942,6 @@ async def dashboard_drill_down(category: str, user=Depends(get_user)):
                 if up > 0:
                     vd[vendor]["prices"].append(up)
                     vd[vendor]["dates"].append(inv_date)
-
         items = []
         for key, im in item_map.items():
             vendors = []
@@ -950,74 +950,67 @@ async def dashboard_drill_down(category: str, user=Depends(get_user)):
                     continue
                 latest_idx = vi["dates"].index(max(vi["dates"])) if vi["dates"] else 0
                 vendors.append({
-                    "vendor": vname,
-                    "supplier_id": vi["supplier_id"],
+                    "vendor": vname, "supplier_id": vi["supplier_id"],
                     "latest_price": round(vi["prices"][latest_idx], 2),
                     "avg_price": round(sum(vi["prices"]) / len(vi["prices"]), 2),
-                    "min_price": round(min(vi["prices"]), 2),
-                    "max_price": round(max(vi["prices"]), 2),
+                    "min_price": round(min(vi["prices"]), 2), "max_price": round(max(vi["prices"]), 2),
                     "purchase_count": len(vi["prices"]),
-                    "last_date": max(vi["dates"]) if vi["dates"] else "",
-                    "unit": vi["unit"],
+                    "last_date": max(vi["dates"]) if vi["dates"] else "", "unit": vi["unit"],
                 })
             vendors.sort(key=lambda v: v["latest_price"])
             cheapest = vendors[0]["vendor"] if vendors else ""
-            items.append({
-                "item_name": im["name"],
-                "total_spent": round(im["total_spent"], 2),
-                "vendors": vendors,
-                "cheapest_vendor": cheapest,
-                "vendor_count": len(vendors),
-            })
+            items.append({"item_name": im["name"], "total_spent": round(im["total_spent"], 2), "vendors": vendors, "cheapest_vendor": cheapest, "vendor_count": len(vendors)})
         items.sort(key=lambda x: -x["total_spent"])
-        return {"category": "raw_materials", "items": items, "total": round(sum(i["total_spent"] for i in items), 2)}
+        return {"category": "raw_materials", "items": items, "total": round(sum(i["total_spent"] for i in items), 2), "date_from": df, "date_to": dt}
 
     elif category == "salaries":
-        sals = await db.salaries.find(
-            {"restaurant_id": rid, **_approved}, {"_id": 0}
-        ).to_list(10000)
-        month_sals = [s for s in sals if month_start <= s.get("payment_date", "") <= today]
+        sals = await db.salaries.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
+        filtered = [s for s in sals if df <= s.get("payment_date", "") <= dt]
         employees = []
-        for s in month_sals:
+        for s in filtered:
             employees.append({
-                "name": s.get("employee_name", "Unknown"),
-                "position": s.get("position", ""),
-                "amount": round(s.get("amount", 0), 2),
-                "payment_date": s.get("payment_date", ""),
+                "name": s.get("employee_name", "Unknown"), "position": s.get("position", ""),
+                "amount": round(s.get("amount", 0), 2), "payment_date": s.get("payment_date", ""),
                 "payment_method": s.get("payment_method", ""),
             })
         employees.sort(key=lambda e: -e["amount"])
-        return {"category": "salaries", "employees": employees, "total": round(sum(e["amount"] for e in employees), 2)}
+        return {"category": "salaries", "employees": employees, "total": round(sum(e["amount"] for e in employees), 2), "date_from": df, "date_to": dt}
 
     elif category == "other":
-        expenses = await db.other_expenses.find(
-            {"restaurant_id": rid, **_approved}, {"_id": 0}
-        ).to_list(10000)
-        month_exp = [e for e in expenses if month_start <= e.get("expense_date", "") <= today]
-        by_category = {}
-        for e in month_exp:
+        expenses = await db.other_expenses.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
+        filtered = [e for e in expenses if df <= e.get("expense_date", "") <= dt]
+        by_cat = {}
+        for e in filtered:
             cat = e.get("category", "Uncategorized") or "Uncategorized"
-            if cat not in by_category:
-                by_category[cat] = {"items": [], "total": 0}
-            by_category[cat]["items"].append({
-                "title": e.get("title", "Untitled"),
-                "amount": round(e.get("amount", 0), 2),
-                "expense_date": e.get("expense_date", ""),
-                "vendor": e.get("vendor", ""),
-                "notes": e.get("notes", ""),
+            if cat not in by_cat:
+                by_cat[cat] = {"items": [], "total": 0}
+            by_cat[cat]["items"].append({
+                "title": e.get("title", "Untitled"), "amount": round(e.get("amount", 0), 2),
+                "expense_date": e.get("expense_date", ""), "vendor": e.get("vendor", ""), "notes": e.get("notes", ""),
             })
-            by_category[cat]["total"] += e.get("amount", 0)
+            by_cat[cat]["total"] += e.get("amount", 0)
         categories = []
-        for cname, cdata in sorted(by_category.items(), key=lambda x: -x[1]["total"]):
+        for cname, cdata in sorted(by_cat.items(), key=lambda x: -x[1]["total"]):
             cdata["items"].sort(key=lambda x: -x["amount"])
-            categories.append({
-                "category_name": cname,
-                "total": round(cdata["total"], 2),
-                "items": cdata["items"],
-            })
-        return {"category": "other", "categories": categories, "total": round(sum(c["total"] for c in categories), 2)}
+            categories.append({"category_name": cname, "total": round(cdata["total"], 2), "items": cdata["items"]})
+        return {"category": "other", "categories": categories, "total": round(sum(c["total"] for c in categories), 2), "date_from": df, "date_to": dt}
 
-    return {"error": "Invalid category. Use: raw_materials, salaries, other"}
+    elif category == "sales":
+        sales_data = await db.sales.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
+        filtered = [s for s in sales_data if df <= s.get("report_date", "") <= dt]
+        records = []
+        for s in filtered:
+            records.append({
+                "id": s.get("id", ""), "report_date": s.get("report_date", ""),
+                "total_sales": round(s.get("total_sales", 0), 2),
+                "total_tax": round(s.get("total_tax", 0) or 0, 2),
+                "total_tips": round(s.get("total_tips", 0) or 0, 2),
+                "source": s.get("source", ""), "notes": s.get("notes", ""),
+            })
+        records.sort(key=lambda r: r["report_date"], reverse=True)
+        return {"category": "sales", "records": records, "total": round(sum(r["total_sales"] for r in records), 2), "date_from": df, "date_to": dt}
+
+    return {"error": "Invalid category. Use: raw_materials, salaries, other, sales"}
 
 # ==================== UPLOAD / EXTRACT ====================
 

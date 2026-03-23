@@ -8,11 +8,11 @@ import FloatingAssistant from '@/components/FloatingAssistant';
 import {
   LayoutDashboard, Receipt, DollarSign, Users,
   Package, FileText, FolderArchive, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat, UserCog, ClipboardCheck,
-  TrendingUp, ArrowRightLeft, Clock, ChevronDown, ShoppingCart, Shield
+  TrendingUp, ArrowRightLeft, Clock, ChevronDown, ShoppingCart, Shield, Home
 } from 'lucide-react';
 
 const mainNav = [
-  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { path: '/dashboard', label: 'Home', icon: Home },
   { path: '/expenses', label: 'Expenses', icon: Receipt },
   { path: '/sales', label: 'Sales', icon: DollarSign },
   { path: '/vendors', label: 'Vendors', icon: Users },
