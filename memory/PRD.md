@@ -43,6 +43,16 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Better prompts for accurate extraction
 - [x] Support in both Expenses (Raw Materials) and Sales forms
 
+### Smart Purchase Decisions (March 23, 2026)
+- [x] Backend: GET /api/purchase-decisions computes per-item per-vendor price analysis from real purchase data
+- [x] For each item: tracks all vendor prices, latest price, average price, purchase count
+- [x] Best vendor identification per item with saving_per_unit calculation
+- [x] Weekly price comparison (this week vs last week avg, % change)
+- [x] Actionable insights: "Best vendor for X: Y (saving $Z/unit)" and "X price increased by N%"
+- [x] Summary cards: Potential Weekly Savings, Vendor Switch Opportunities, Weekly Price Changes
+- [x] Item Price Comparison table with search filter
+- [x] Sidebar navigation added as "Smart Purchases"
+
 ### Settings Page (March 22, 2026)
 - [x] Restaurant Profile: name, logo upload, phone, email, address
 - [x] Your Profile: editable name, read-only email
