@@ -61,7 +61,7 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Monthly Sales donut chart with revenue total and month-over-month % change
 - [x] 3-column layout: Spending donut | Sales donut | Market Insights
 - [x] Quick Actions: Add Expense, Sales, Compare Vendors, View Reports (Upload Invoice removed)
-- [x] Home navigation button in sidebar (first item)
+- [x] Home button centered in top header (home icon + "Dashboard" label), visible on all pages
 - [x] Drill-down sheets for all 4 categories (Raw Materials, Salaries, Other, Sales)
 - [x] Date range filters (from/to) in all drill-down views with Apply button
 - [x] "Where Should I Buy?" item search bar with vendor price comparison

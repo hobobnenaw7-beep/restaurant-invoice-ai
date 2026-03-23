@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 
 const mainNav = [
-  { path: '/dashboard', label: 'Home', icon: Home },
   { path: '/expenses', label: 'Expenses', icon: Receipt },
   { path: '/sales', label: 'Sales', icon: DollarSign },
   { path: '/vendors', label: 'Vendors', icon: Users },
@@ -21,7 +20,6 @@ const mainNav = [
   { path: '/purchase-decisions', label: 'Smart Purchases', icon: ShoppingCart },
   { path: '/records', label: 'Records Library', icon: FolderArchive },
   { path: '/audit-log', label: 'Audit Log', icon: Shield },
-  { path: '/chat', label: 'Chat Assistant', icon: MessageCircle },
 ];
 
 const managerNav = [
@@ -237,6 +235,7 @@ const SidebarContent = memo(function SidebarContent({ user, pathname, onNavigate
 export default function Layout({ children }) {
   const { user, api, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [alerts, setAlerts] = useState([]);
@@ -274,30 +273,41 @@ export default function Layout({ children }) {
 
       <main className="flex-1 flex flex-col overflow-hidden">
         <header className="h-14 flex items-center justify-between px-4 lg:px-6 glass-header border-b border-slate-200/50 sticky top-0 z-10" data-testid="top-header">
-          <button
-            onClick={() => setMobileOpen(true)}
-            className="lg:hidden p-2 rounded-md hover:bg-slate-100 transition-colors"
-            data-testid="mobile-menu-btn"
-          >
-            <Menu className="w-5 h-5 text-slate-600" />
-          </button>
-          <div className="flex-1" />
-          <div className="relative" ref={bellContainerRef}>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="relative"
-              onClick={handleToggleAlerts}
-              data-testid="notifications-btn"
+          <div className="flex items-center w-20">
+            <button
+              onClick={() => setMobileOpen(true)}
+              className="lg:hidden p-2 rounded-md hover:bg-slate-100 transition-colors"
+              data-testid="mobile-menu-btn"
             >
-              <Bell className="w-[18px] h-[18px] text-slate-500" />
-              {alerts.length > 0 && (
-                <Badge className={`absolute -top-0.5 -right-0.5 h-4 min-w-4 p-0 px-0.5 flex items-center justify-center text-[10px] border-0 ${highCount > 0 ? 'bg-red-500 text-white' : 'bg-amber-500 text-white'}`} data-testid="alert-count-badge">
-                  {alerts.length}
-                </Badge>
-              )}
-            </Button>
-            <NotificationPanel alerts={alerts} open={alertsOpen} onClose={handleCloseAlerts} containerRef={bellContainerRef} />
+              <Menu className="w-5 h-5 text-slate-600" />
+            </button>
+          </div>
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors group"
+            data-testid="header-home-btn"
+          >
+            <Home className="w-4 h-4 text-slate-400 group-hover:text-slate-600 transition-colors" />
+            <span className="text-xs font-medium text-slate-400 group-hover:text-slate-600 transition-colors hidden sm:inline">Dashboard</span>
+          </button>
+          <div className="flex items-center justify-end w-20">
+            <div className="relative" ref={bellContainerRef}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative"
+                onClick={handleToggleAlerts}
+                data-testid="notifications-btn"
+              >
+                <Bell className="w-[18px] h-[18px] text-slate-500" />
+                {alerts.length > 0 && (
+                  <Badge className={`absolute -top-0.5 -right-0.5 h-4 min-w-4 p-0 px-0.5 flex items-center justify-center text-[10px] border-0 ${highCount > 0 ? 'bg-red-500 text-white' : 'bg-amber-500 text-white'}`} data-testid="alert-count-badge">
+                    {alerts.length}
+                  </Badge>
+                )}
+              </Button>
+              <NotificationPanel alerts={alerts} open={alertsOpen} onClose={handleCloseAlerts} containerRef={bellContainerRef} />
+            </div>
           </div>
         </header>
 
