@@ -698,7 +698,13 @@ async def dashboard_summary(user=Depends(get_user)):
     for i in range(7, -1, -1):
         ws = (now - timedelta(weeks=i, days=now.weekday())).strftime("%Y-%m-%d")
         we = (now - timedelta(weeks=i, days=now.weekday() - 6)).strftime("%Y-%m-%d")
-        weekly_trends.append({"week": f"W{8-i}", "purchases": round(sum_p(ws, we), 2), "sales": round(sum_s(ws, we), 2)})
+        weekly_trends.append({
+            "week": f"W{8-i}",
+            "purchases": round(sum_p(ws, we), 2),
+            "sales": round(sum_s(ws, we), 2),
+            "salaries": round(sum_sal(ws, we), 2),
+            "other_expenses": round(sum_oe(ws, we), 2),
+        })
 
     alerts = await db.alerts.find({"restaurant_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(10)
     smart_alerts = await _generate_smart_alerts(rid)
