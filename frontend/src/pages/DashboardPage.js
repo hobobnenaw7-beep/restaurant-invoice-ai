@@ -206,6 +206,7 @@ const ExpenseTrendChart = memo(function ExpenseTrendChart({ trends }) {
         week: `M${Math.floor(i / 4) + 1}`,
         purchases: slice.reduce((s, w) => s + (w.purchases || 0), 0),
         salaries: slice.reduce((s, w) => s + (w.salaries || 0), 0),
+        utilities: slice.reduce((s, w) => s + (w.utilities || 0), 0),
         other_expenses: slice.reduce((s, w) => s + (w.other_expenses || 0), 0),
       });
     }
@@ -242,13 +243,14 @@ const ExpenseTrendChart = memo(function ExpenseTrendChart({ trends }) {
               <Tooltip content={<TrendTooltip />} />
               <Line type="monotone" dataKey="purchases" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: '#0d9488', stroke: '#fff', strokeWidth: 2 }} name="Raw Materials" />
               <Line type="monotone" dataKey="salaries" stroke="#6366f1" strokeWidth={2} dot={{ r: 3, fill: '#6366f1', stroke: '#fff', strokeWidth: 2 }} name="Salaries" />
-              <Line type="monotone" dataKey="other_expenses" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3, fill: '#f59e0b', stroke: '#fff', strokeWidth: 2 }} name="Other" />
+              <Line type="monotone" dataKey="utilities" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3, fill: '#f59e0b', stroke: '#fff', strokeWidth: 2 }} name="Utilities" />
+              <Line type="monotone" dataKey="other_expenses" stroke="#64748b" strokeWidth={2} dot={{ r: 3, fill: '#64748b', stroke: '#fff', strokeWidth: 2 }} name="Other" />
             </LineChart>
           </ResponsiveContainer>
         </div>
         {/* Legend */}
         <div className="flex items-center justify-center gap-5 mt-2">
-          {[{ label: 'Raw Materials', color: '#0d9488' }, { label: 'Salaries', color: '#6366f1' }, { label: 'Other', color: '#f59e0b' }].map(l => (
+          {[{ label: 'Raw Materials', color: '#0d9488' }, { label: 'Salaries', color: '#6366f1' }, { label: 'Utilities', color: '#f59e0b' }, { label: 'Other', color: '#64748b' }].map(l => (
             <div key={l.label} className="flex items-center gap-1.5">
               <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: l.color }} />
               <span className="text-[10px] font-semibold text-slate-500">{l.label}</span>
@@ -442,12 +444,12 @@ export default function DashboardPage() {
         <DonutChart
           raw={data.month_raw_materials || 0}
           salaries={data.month_salaries || 0}
-          utilities={data.month_other_expenses || 0}
-          other={0}
+          utilities={data.month_utilities || 0}
+          other={data.month_other_expenses || 0}
           prevRaw={data.prev_month_raw_materials || 0}
           prevSalaries={data.prev_month_salaries || 0}
-          prevUtilities={data.prev_month_other_expenses || 0}
-          prevOther={0}
+          prevUtilities={data.prev_month_utilities || 0}
+          prevOther={data.prev_month_other_expenses || 0}
         />
         <ExpenseTrendChart trends={data.weekly_trends || []} />
       </div>

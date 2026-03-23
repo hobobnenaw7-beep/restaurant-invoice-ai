@@ -674,6 +674,10 @@ async def dashboard_summary(user=Depends(get_user)):
         return sum(s["amount"] for s in salaries if s.get("payment_date", "") >= df and (not dt or s.get("payment_date", "") <= dt))
     def sum_oe(df, dt=None):
         return sum(e["amount"] for e in other_exp if e.get("expense_date", "") >= df and (not dt or e.get("expense_date", "") <= dt))
+    def sum_util(df, dt=None):
+        return sum(e["amount"] for e in other_exp if e.get("category", "").lower() == "utilities" and e.get("expense_date", "") >= df and (not dt or e.get("expense_date", "") <= dt))
+    def sum_other(df, dt=None):
+        return sum(e["amount"] for e in other_exp if e.get("category", "").lower() != "utilities" and e.get("expense_date", "") >= df and (not dt or e.get("expense_date", "") <= dt))
 
     def total_expenses(df, dt=None):
         return sum_p(df, dt) + sum_sal(df, dt) + sum_oe(df, dt)
@@ -703,7 +707,8 @@ async def dashboard_summary(user=Depends(get_user)):
             "purchases": round(sum_p(ws, we), 2),
             "sales": round(sum_s(ws, we), 2),
             "salaries": round(sum_sal(ws, we), 2),
-            "other_expenses": round(sum_oe(ws, we), 2),
+            "utilities": round(sum_util(ws, we), 2),
+            "other_expenses": round(sum_other(ws, we), 2),
         })
 
     alerts = await db.alerts.find({"restaurant_id": rid}, {"_id": 0}).sort("created_at", -1).to_list(10)
@@ -727,10 +732,12 @@ async def dashboard_summary(user=Depends(get_user)):
         "prev_month_purchases": round(sum_p(prev_month_start, prev_month_end), 2),
         "month_raw_materials": round(sum_p(month_start, today), 2),
         "month_salaries": round(sum_sal(month_start, today), 2),
-        "month_other_expenses": round(sum_oe(month_start, today), 2),
+        "month_utilities": round(sum_util(month_start, today), 2),
+        "month_other_expenses": round(sum_other(month_start, today), 2),
         "prev_month_raw_materials": round(sum_p(prev_month_start, prev_month_end), 2),
         "prev_month_salaries": round(sum_sal(prev_month_start, prev_month_end), 2),
-        "prev_month_other_expenses": round(sum_oe(prev_month_start, prev_month_end), 2),
+        "prev_month_utilities": round(sum_util(prev_month_start, prev_month_end), 2),
+        "prev_month_other_expenses": round(sum_other(prev_month_start, prev_month_end), 2),
         "top_items": top_items, "top_suppliers": top_suppliers,
         "weekly_trends": weekly_trends, "alerts": alerts,
         "smart_alerts": smart_alerts,
