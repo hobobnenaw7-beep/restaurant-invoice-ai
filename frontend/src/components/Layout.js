@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   LayoutDashboard, Receipt, DollarSign, Users,
   Package, FileText, FolderArchive, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat, UserCog, ClipboardCheck,
-  TrendingUp, ArrowRightLeft, Clock, ChevronDown
+  TrendingUp, ArrowRightLeft, Clock, ChevronDown, ShoppingCart
 } from 'lucide-react';
 
 const mainNav = [
@@ -17,6 +17,7 @@ const mainNav = [
   { path: '/vendors', label: 'Vendors', icon: Users },
   { path: '/items', label: 'Items', icon: Package },
   { path: '/reports', label: 'Reports', icon: FileText },
+  { path: '/purchase-decisions', label: 'Smart Purchases', icon: ShoppingCart },
   { path: '/records', label: 'Records Library', icon: FolderArchive },
   { path: '/chat', label: 'Chat Assistant', icon: MessageCircle },
 ];
