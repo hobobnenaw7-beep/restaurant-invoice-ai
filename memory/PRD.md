@@ -103,20 +103,20 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Subtotal = sum of line item totals, Total = subtotal + tax
 
 ### Dashboard Enhancement — Expense Visualization (March 23, 2026)
-- [x] Monthly Spending donut chart with 4 categories: Raw Materials, Salaries, Utilities, Other
+- [x] Monthly Spending donut chart with 3 categories: Raw Materials, Salaries, Other
 - [x] Total expense in center with month-over-month % change
 - [x] Per-category dollar amounts and percentages in legend
 - [x] Category insights: auto-generated messages like "Raw Materials decreased by 33.5% this month"
-- [x] Expense Trends line chart with weekly/monthly toggle
-- [x] All 4 expense categories plotted as separate lines
-- [x] Backend provides month_utilities + month_other_expenses split from other_expenses collection
-- [x] weekly_trends includes utilities breakdown per week
-- [x] All charts use real data, auto-update, no crashes
-- [x] Smart Alerts at top (Price Increases, Cheaper Vendors, Not Ordered)
-- [x] Summary cards: Today/Week/Month sales, purchases, expenses
-- [x] Profit calculation cards
-- [x] Top 5 items and vendors
-- [x] Weekly Sales vs Purchases area chart
+
+### Dashboard Radical Cleanup (March 23, 2026)
+- [x] Removed all accounting clutter: Sales cards, Net Profit, Weekly Sales vs Purchases chart, Top Items, Top Vendors, Expense Trends chart
+- [x] Removed Utilities category completely from all charts and backend logic
+- [x] Added "Where Should I Buy?" item search bar with debounced search
+- [x] Item search shows all vendors for an item, prices, cheapest option with BEST badge
+- [x] Backend: new GET /api/dashboard/item-search?q= endpoint with per-vendor price analysis
+- [x] Market Insights section: max 5 actionable alerts (price increases, cheaper vendors, not ordered)
+- [x] Dashboard answers ONLY: "Where am I spending?" and "Where should I buy today?"
+- [x] Smart Alerts limited to 5 items sorted by severity (high first)
 - [x] Notification bell with alert dropdown
 
 ### Expenses (3 tabs)
