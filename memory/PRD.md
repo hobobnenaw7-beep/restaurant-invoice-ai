@@ -16,7 +16,7 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 4. Purchase Invoice extraction flow (vendor, date, items, totals)
 5. Sales Report extraction flow (date, total, items)
 6. Pages: Dashboard, Expenses, Sales, Vendors, Items, Reports, Chat, Settings
-7. Item normalization (raw names → canonical items)
+7. Item normalization (raw names -> canonical items)
 8. Weekly/Monthly/Yearly reports with financial metrics
 9. Alerts for price/spending changes
 10. AI Chat Assistant using GPT-5.2
@@ -44,143 +44,62 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Support in both Expenses (Raw Materials) and Sales forms
 
 ### Smart Purchase Decisions (March 23, 2026)
-- [x] Backend: GET /api/purchase-decisions computes per-item per-vendor price analysis from real purchase data
-- [x] For each item: tracks all vendor prices, latest price, average price, purchase count
+- [x] Backend: GET /api/purchase-decisions computes per-item per-vendor price analysis
 - [x] Best vendor identification per item with saving_per_unit calculation
 - [x] Weekly price comparison (this week vs last week avg, % change)
-- [x] Actionable insights: "Best vendor for X: Y (saving $Z/unit)" and "X price increased by N%"
-- [x] Summary cards: Potential Weekly Savings, Vendor Switch Opportunities, Weekly Price Changes
+- [x] Actionable insights and Summary cards
 - [x] Item Price Comparison table with search filter
 - [x] Sidebar navigation added as "Smart Purchases"
 
 ### Settings Page (March 22, 2026)
-- [x] Restaurant Profile: name, logo upload, phone, email, address
-- [x] Your Profile: editable name, read-only email
-- [x] Financial Settings: currency (9 options), default tax rate, default expense category
-- [x] Notification Settings: master toggle + 3 sub-toggles (price increase, cheaper vendor, not ordered)
-- [x] Language & Display: language (6 options), date format (3 options)
-- [x] Data Management: Reset All Data with DELETE confirmation dialog
+- [x] Restaurant Profile, Your Profile, Financial Settings, Notifications, Language & Display, Data Management
 - [x] Logo upload with 2MB limit, base64 storage
-- [x] All settings persist to MongoDB restaurant document
+- [x] All settings persist to MongoDB
 
-### Critical Frontend Runtime Bug Fixes (March 19, 2026)
-- [x] Fixed "Maximum call stack size exceeded": replaced all setTimeout-based refresh with savedRef + useEffect pattern
-- [x] Fixed "insertBefore / insertOrAppendPlacementNode": no DOM structure change during dialog exit (background refresh without skeleton)
-- [x] Fixed line item reconciliation: stable _key per item instead of array index
-- [x] Fixed DuplicateCheck: removed stacked setTimeout(150ms), uses useRef for pendingSave
-- [x] Fixed dialog dismiss during save: onOpenChange blocked when saving/extracting
-- [x] All 13 critical tests passed with ZERO console errors
-
-### Vendor Detail Page (March 19, 2026)
-- [x] Vendor list rows are clickable → navigates to /vendors/:id
-- [x] Detail page shows: vendor name, total spent, invoice count, contact, phone, email, address
-- [x] All purchase records listed with date, invoice #, item count, total, approval status
-- [x] Purchase detail modal: full line items (name, qty, unit, price, total) + subtotal/tax/total
-- [x] Delete from vendor detail removes record and updates totals immediately
-- [x] Search by invoice number filter
-- [x] Date range filter (from/to)
-- [x] Back navigation to vendors list
-- [x] Empty state when vendor has no purchases
-
-### Bug Fixes (March 19, 2026)
-- [x] Bug 1: App works correctly from completely empty database — all endpoints return valid data, dashboard shows proper empty state, all CRUD operations work from zero records
-- [x] Bug 2: Auto-create vendors and items from expenses — when saving a purchase with a new vendor/item name, they are automatically added to the master Vendors and Items lists with case-insensitive dedup
-
-### Stability & Performance (March 17, 2026)
-- [x] Fixed infinite re-render risk: moved NavLink and SidebarContent outside Layout as memo'd components
-- [x] Fixed NotificationPanel useEffect loop: used ref for onClose callback instead of dependency
-- [x] Memoized Dashboard: load (useCallback), smartAlerts (useMemo), SmartAlertsSection (memo), CustomTooltip (memo)
-- [x] Memoized Layout callbacks: handleCloseAlerts, handleCloseMobile, handleToggleAlerts (useCallback)
-- [x] Fixed Expenses page runtime error: deferred list refresh after dialog close (all 3 tabs + Sales page)
-- [x] Fixed DuplicateCheck confirmSave timing: deferred save after warning dialog exit animation
-- [x] Stress-tested: rapid navigation through 7 pages + rapid bell toggling — zero crashes
-
-### Financial Calculation Accuracy (March 17, 2026)
-- [x] Dashboard and Reports show consistent numbers (bounded date ranges)
-- [x] All report endpoints filter by approval_status (approved only)
-- [x] Expenses form auto-calculates subtotal and total from line items
-- [x] Tax field auto-updates total
-- [x] Subtotal = sum of line item totals, Total = subtotal + tax
-
-### Dashboard Enhancement — Expense Visualization (March 23, 2026)
+### Dashboard — Final Enhancement (March 23, 2026)
 - [x] Monthly Spending donut chart with 3 categories: Raw Materials, Salaries, Other
-- [x] Total expense in center with month-over-month % change
-- [x] Per-category dollar amounts and percentages in legend
-- [x] Category insights: auto-generated messages like "Raw Materials decreased by 33.5% this month"
-
-### Dashboard Radical Cleanup (March 23, 2026)
-- [x] Removed all accounting clutter: Sales cards, Net Profit, Weekly Sales vs Purchases chart, Top Items, Top Vendors, Expense Trends chart
-- [x] Removed Utilities category completely from all charts and backend logic
-- [x] Added "Where Should I Buy?" item search bar with debounced search
-- [x] Item search shows all vendors for an item, prices, cheapest option with BEST badge
-- [x] Backend: new GET /api/dashboard/item-search?q= endpoint with per-vendor price analysis
-- [x] Market Insights section: max 5 actionable alerts (price increases, cheaper vendors, not ordered)
-- [x] Dashboard answers ONLY: "Where am I spending?" and "Where should I buy today?"
-- [x] Smart Alerts limited to 5 items sorted by severity (high first)
-### Dashboard Drill-Down Feature (March 23, 2026)
-- [x] Donut chart categories are clickable (legend buttons + pie slices)
-- [x] Raw Materials drill-down: items sorted by spend, expandable vendor comparison, CHEAPEST badge, price ranges, external links to vendor detail pages
-- [x] Salaries drill-down: employee cards with name, position, amount, % of total, progress bars
-- [x] Other Expenses drill-down: expenses grouped by category with totals and item details
-- [x] Backend: new GET /api/dashboard/drill-down/{category} endpoint (raw_materials, salaries, other)
-- [x] Sheet panel with clean close behavior (requestAnimationFrame for animation safety)
-- [x] No re-render loops, no console errors
-
-### Dashboard Quick Actions, Freshness & Opportunities (March 23, 2026)
-- [x] Quick Actions row: 4 colored buttons (Add Expense, Upload Invoice, Compare Vendors, View Reports) with icons, responsive horizontal scroll
-- [x] Data Freshness indicator: "Updated 4d ago · Based on 50 purchase records" with auto-computed relative time
-- [x] Today's Best Opportunity card: 1 saving (green) + 1 risk (red), clickable to navigate to relevant pages
-- [x] Backend: dashboard summary returns last_data_update, purchase_count, best_opportunities (prioritizes 1 saving + 1 risk)
-- [x] All cards are actionable buttons with navigation
+- [x] Monthly Sales donut chart with revenue total and month-over-month % change
+- [x] 3-column layout: Spending donut | Sales donut | Market Insights
+- [x] Quick Actions: Add Expense, Sales, Compare Vendors, View Reports (Upload Invoice removed)
+- [x] Home navigation button in sidebar (first item)
+- [x] Drill-down sheets for all 4 categories (Raw Materials, Salaries, Other, Sales)
+- [x] Date range filters (from/to) in all drill-down views with Apply button
+- [x] "Where Should I Buy?" item search bar with vendor price comparison
+- [x] Market Insights: max 5 actionable alerts sorted by severity
+- [x] Data Freshness indicator
+- [x] Today's Best Opportunities cards (1 saving + 1 risk)
+- [x] Category insights showing month-over-month % changes
 
 ### Audit Log System (March 23, 2026)
-- [x] Immutable audit log collection in MongoDB (no edit/delete endpoints)
-- [x] Tracks 7 action types: CREATE, UPDATE, DELETE, APPROVE, REJECT, LOGIN, ROLE_CHANGE
-- [x] Tracks 5 entity types: Expense, Sale, Vendor, Item, User
-- [x] Each entry: id, user_id, user_name, user_role, action_type, entity_type, entity_id, description, old_value, new_value, timestamp
-- [x] Instrumented all CRUD endpoints: purchases, salaries, other_expenses, sales, suppliers, items, users, approvals, permissions, login
-- [x] Manager-only access (403 for non-managers)
-- [x] Paginated GET /api/audit-logs with filters: action_type, entity_type, user_id, search (regex), date_from, date_to
-- [x] Frontend: Table view with action icons, entity badges, user info, expandable row details
-- [x] Frontend: Filter panel with 5 controls + keyword search
-- [x] Frontend: Pagination controls
+- [x] Immutable audit log collection in MongoDB
+- [x] Tracks 7 action types, 5 entity types
+- [x] Manager-only access with paginated, filterable UI
+- [x] All CRUD endpoints instrumented
+
+### Floating AI Assistant (March 23, 2026)
+- [x] Site-wide chat widget powered by GPT-5.2
+- [x] Contextual financial advice based on user data
+
+### Vendor Detail Page (March 19, 2026)
+- [x] Clickable vendor rows, purchase records, detail modals, filters
 
 ### Expenses (3 tabs)
-- [x] Raw Materials: CRUD, upload/extract, auto-calculation, vendor autocomplete
-- [x] Salaries: CRUD, payment tracking
-- [x] Other Expenses: CRUD with categories (Rent, Electricity, etc.)
-- [x] Duplicate entry detection for all 3 types
+- [x] Raw Materials, Salaries, Other Expenses: full CRUD, upload/extract, duplicate detection
 
 ### Sales
-- [x] CRUD with date range support (from/to dates)
-- [x] Upload/extract from images, PDFs, Excel
-- [x] Extraction properly sets date_from/date_to
-- [x] Duplicate entry detection
+- [x] CRUD with date range support, upload/extract, duplicate detection
 
 ### Records Library
-- [x] View-only archive (uploads happen through Sales/Expense forms)
-- [x] Sales Files and Expense Files tabs
-- [x] Search, date filter, file type filter
-- [x] Expense Category filter on Expense Files tab
-- [x] File preview, download, delete
-- [x] Auto-linked to transactions
+- [x] View-only archive with search, date, file type, category filters
 
 ### Reports
-- [x] 6-tab layout: Sales, Raw Materials, Salaries, Other Expenses, Vendors, Profit
-- [x] Date range filtering
-- [x] PDF and Excel export
-- [x] All reports filter approved records only
+- [x] 6-tab layout with date range filtering, PDF/Excel export
 
 ### Vendors & Items
-- [x] Vendors: CRUD with spending totals and invoice counts
-- [x] Items: CRUD with aliases, price history charts, vendor comparison
-- [x] Price alert generation on new purchases
+- [x] Full CRUD with spending totals, price history charts, vendor comparison
 
-### Other Features
-- [x] Premium SaaS UI/UX (dark sidebar, light content)
-- [x] Demo data seeding
-- [x] Duplicate file detection in Records Library
-- [x] Sortable columns throughout
+### Stability & Performance
+- [x] Fixed infinite re-renders, memoized components, stress-tested navigation
 
 ## Credentials
 - Test: demo@test.com / testpassword
@@ -188,13 +107,10 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 ## Prioritized Backlog
 
 ### P1
-- Core Workflow Polish: review and harden Expenses, Sales, Records, Reports, Vendors/Items flows
-- Implement Real Chat Assistant Backend (GPT-5.2 with financial data context)
+- AI Chat Assistant Page Polish: improve UX of floating assistant
+- Core Workflow Polish: review and harden all main flows
 
 ### P2
 - Build Item Normalization UI
+- Backend Refactoring: extract monolithic server.py (3200+ lines) into modular route files
 - Enhance Vendor/Item CRUD (edit purchases, more filters)
-- Backend Refactoring: extract monolithic server.py into modular route files
-
-### Deferred (by user)
-- AI Chat Assistant backend (deferred) - now implemented via floating assistant
