@@ -154,6 +154,86 @@ def require_manager(user):
     if user.get("role") != "manager":
         raise HTTPException(403, "Manager access required")
 
+# ==================== AUDIT LOG HELPER ====================
+
+async def audit_log(
+    user: dict,
+    action_type: str,
+    entity_type: str,
+    entity_id: str,
+    description: str,
+    old_value: dict = None,
+    new_value: dict = None,
+):
+    """Create an immutable audit log entry."""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "restaurant_id": user["restaurant_id"],
+        "user_id": user["id"],
+        "user_name": user.get("name", "Unknown"),
+        "user_role": user.get("role", "staff"),
+        "action_type": action_type,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "description": description,
+        "old_value": old_value,
+        "new_value": new_value,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.audit_logs.insert_one(doc)
+
+# ==================== AUDIT LOG API ====================
+
+@api_router.get("/audit-logs")
+async def list_audit_logs(
+    user=Depends(get_user),
+    page: int = 1,
+    page_size: int = 25,
+    action_type: str = "",
+    entity_type: str = "",
+    user_id: str = "",
+    search: str = "",
+    date_from: str = "",
+    date_to: str = "",
+):
+    """List audit logs with filtering and pagination. Manager only."""
+    require_manager(user)
+    rid = user["restaurant_id"]
+    query = {"restaurant_id": rid}
+    if action_type:
+        query["action_type"] = action_type
+    if entity_type:
+        query["entity_type"] = entity_type
+    if user_id:
+        query["user_id"] = user_id
+    if search:
+        query["description"] = {"$regex": search, "$options": "i"}
+    if date_from:
+        query.setdefault("timestamp", {})["$gte"] = date_from
+    if date_to:
+        query.setdefault("timestamp", {})["$lte"] = date_to + "T23:59:59"
+
+    total = await db.audit_logs.count_documents(query)
+    skip = (max(page, 1) - 1) * page_size
+    logs = await db.audit_logs.find(query, {"_id": 0}).sort("timestamp", -1).skip(skip).limit(page_size).to_list(page_size)
+
+    # Get unique users for filter dropdown
+    user_ids = await db.audit_logs.distinct("user_id", {"restaurant_id": rid})
+    users_list = []
+    for uid in user_ids:
+        u = await db.users.find_one({"id": uid}, {"_id": 0, "id": 1, "name": 1})
+        if u:
+            users_list.append({"id": u["id"], "name": u["name"]})
+
+    return {
+        "logs": logs,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, -(-total // page_size)),
+        "users": users_list,
+    }
+
 # ==================== AUTH ROUTES ====================
 
 @api_router.post("/auth/register")
@@ -174,6 +254,7 @@ async def login(data: UserLogin):
     if u.get("status") == "inactive":
         raise HTTPException(403, "Account is deactivated. Contact your manager.")
     r = await db.restaurants.find_one({"id": u["restaurant_id"]}, {"_id": 0})
+    await audit_log(u, "LOGIN", "User", u["id"], f'{u["name"]} logged in')
     return {"token": make_token(u["id"]), "user": {"id": u["id"], "email": u["email"], "name": u["name"], "restaurant_id": u["restaurant_id"], "restaurant_name": r["name"] if r else "", "role": u.get("role", "staff")}}
 
 @api_router.get("/auth/me")
@@ -305,6 +386,7 @@ async def create_user(data: UserCreate, user=Depends(get_user)):
     }
     await db.users.insert_one(doc)
     doc.pop("_id", None)
+    await audit_log(user, "CREATE", "User", uid, f'{user["name"]} created user {data.name} ({data.role})', new_value={"name": data.name, "email": data.email, "role": data.role})
     return _safe_user(doc)
 
 @api_router.put("/users/{user_id}")
@@ -353,8 +435,16 @@ async def update_user(user_id: str, data: UserUpdate, user=Depends(get_user)):
     if not updates:
         raise HTTPException(400, "No fields to update")
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    old_vals = {k: target.get(k) for k in updates if k != "updated_at" and k != "password_hash"}
     await db.users.update_one({"id": user_id}, {"$set": updates})
     updated = await db.users.find_one({"id": user_id}, {"_id": 0})
+    desc = f'{user["name"]} updated user {target.get("name", "")}'
+    action = "UPDATE"
+    if "role" in updates and updates["role"] != target.get("role"):
+        action = "ROLE_CHANGE"
+        desc = f'{user["name"]} changed {target["name"]} role from {target.get("role")} to {updates["role"]}'
+    new_vals = {k: updates[k] for k in updates if k != "updated_at" and k != "password_hash"}
+    await audit_log(user, action, "User", user_id, desc, old_value=old_vals, new_value=new_vals)
     return _safe_user(updated)
 
 @api_router.delete("/users/{user_id}")
@@ -367,6 +457,7 @@ async def delete_user(user_id: str, user=Depends(get_user)):
     if not target:
         raise HTTPException(404, "User not found")
     await db.users.delete_one({"id": user_id, "restaurant_id": rid})
+    await audit_log(user, "DELETE", "User", user_id, f'{user["name"]} deleted user {target.get("name", "")}', old_value={"name": target.get("name"), "email": target.get("email"), "role": target.get("role")})
     return {"status": "deleted"}
 
 @api_router.get("/users/permissions/defaults")
@@ -386,8 +477,10 @@ async def update_user_permissions(user_id: str, permissions: Dict[str, bool], us
     clean_perms = {}
     for p in ALL_PERMISSIONS:
         clean_perms[p] = bool(permissions.get(p, False))
+    old_perms = target.get("permissions", {})
     await db.users.update_one({"id": user_id}, {"$set": {"permissions": clean_perms, "updated_at": datetime.now(timezone.utc).isoformat()}})
     updated = await db.users.find_one({"id": user_id}, {"_id": 0})
+    await audit_log(user, "ROLE_CHANGE", "User", user_id, f'{user["name"]} updated permissions for {target.get("name", "")}', old_value={"permissions": old_perms}, new_value={"permissions": clean_perms})
     return _safe_user(updated)
 
 
@@ -501,6 +594,11 @@ async def process_approval(record_type: str, record_id: str, data: ApprovalActio
 
     await coll.update_one({"id": record_id}, {"$set": updates})
     updated = await coll.find_one({"id": record_id}, {"_id": 0})
+    action = "APPROVE" if data.action == "approve" else "REJECT"
+    entity_label = record_type.replace("_", " ").title()
+    amt = rec.get("total", rec.get("amount", rec.get("total_sales", "")))
+    desc = f'{user["name"]} {data.action}d {entity_label} ${amt}' if amt else f'{user["name"]} {data.action}d {entity_label}'
+    await audit_log(user, action, entity_label, record_id, desc, old_value={"approval_status": rec.get("approval_status", "pending")}, new_value={"approval_status": updates["approval_status"]})
     return updated
 
 
@@ -1554,6 +1652,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
             }
             await db.alerts.insert_one(alert_doc)
 
+    await audit_log(user, "CREATE", "Expense", doc["id"], f'{user["name"]} created expense ${doc.get("total", 0)} ({doc.get("supplier_name", "")})', new_value={"supplier": doc.get("supplier_name"), "total": doc.get("total"), "invoice_date": doc.get("invoice_date"), "items_count": len(doc.get("items", []))})
     return doc
 
 @api_router.put("/purchases/{pid}")
@@ -1561,16 +1660,21 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No data")
-    result = await db.purchases.update_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
-    if result.matched_count == 0:
+    old = await db.purchases.find_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not old:
         raise HTTPException(404, "Not found")
+    old_vals = {k: old.get(k) for k in update_data}
+    await db.purchases.update_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    await audit_log(user, "UPDATE", "Expense", pid, f'{user["name"]} updated expense ({old.get("supplier_name", "")})', old_value=old_vals, new_value=update_data)
     return await db.purchases.find_one({"id": pid}, {"_id": 0})
 
 @api_router.delete("/purchases/{pid}")
 async def delete_purchase(pid: str, user=Depends(get_user)):
-    result = await db.purchases.delete_one({"id": pid, "restaurant_id": user["restaurant_id"]})
-    if result.deleted_count == 0:
+    old = await db.purchases.find_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not old:
         raise HTTPException(404, "Not found")
+    await db.purchases.delete_one({"id": pid, "restaurant_id": user["restaurant_id"]})
+    await audit_log(user, "DELETE", "Expense", pid, f'{user["name"]} deleted expense ${old.get("total", 0)} ({old.get("supplier_name", "")})', old_value={"supplier": old.get("supplier_name"), "total": old.get("total"), "invoice_date": old.get("invoice_date")})
     return {"status": "deleted"}
 
 # ==================== SALARIES CRUD ====================
@@ -1595,13 +1699,16 @@ async def create_salary(data: SalaryCreate, user=Depends(get_user)):
     doc["approval_status"] = _compute_approval_status(user, doc.get("amount", 0))
     await db.salaries.insert_one(doc)
     doc.pop("_id", None)
+    await audit_log(user, "CREATE", "Expense", doc["id"], f'{user["name"]} created salary ${doc.get("amount", 0)} ({doc.get("employee_name", "")})', new_value={"employee": doc.get("employee_name"), "amount": doc.get("amount"), "payment_date": doc.get("payment_date")})
     return doc
 
 @api_router.delete("/salaries/{sid}")
 async def delete_salary(sid: str, user=Depends(get_user)):
-    result = await db.salaries.delete_one({"id": sid, "restaurant_id": user["restaurant_id"]})
-    if result.deleted_count == 0:
+    old = await db.salaries.find_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not old:
         raise HTTPException(404, "Not found")
+    await db.salaries.delete_one({"id": sid, "restaurant_id": user["restaurant_id"]})
+    await audit_log(user, "DELETE", "Expense", sid, f'{user["name"]} deleted salary ${old.get("amount", 0)} ({old.get("employee_name", "")})', old_value={"employee": old.get("employee_name"), "amount": old.get("amount")})
     return {"status": "deleted"}
 
 # ==================== OTHER EXPENSES CRUD ====================
@@ -1628,13 +1735,17 @@ async def create_other_expense(data: OtherExpenseCreate, user=Depends(get_user))
     doc["approval_status"] = _compute_approval_status(user, doc.get("amount", 0))
     await db.other_expenses.insert_one(doc)
     doc.pop("_id", None)
+    await audit_log(user, "CREATE", "Expense", doc["id"], f'{user["name"]} created expense ${doc.get("amount", 0)} ({doc.get("title", "")})', new_value={"title": doc.get("title"), "amount": doc.get("amount"), "category": doc.get("category")})
     return doc
 
 @api_router.delete("/other-expenses/{eid}")
 async def delete_other_expense(eid: str, user=Depends(get_user)):
-    result = await db.other_expenses.delete_one({"id": eid, "restaurant_id": user["restaurant_id"]})
-    if result.deleted_count == 0:
+    old = await db.other_expenses.find_one({"id": eid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not old:
         raise HTTPException(404, "Not found")
+    await db.other_expenses.delete_one({"id": eid, "restaurant_id": user["restaurant_id"]})
+    await audit_log(user, "DELETE", "Expense", eid, f'{user["name"]} deleted expense ${old.get("amount", 0)} ({old.get("title", "")})', old_value={"title": old.get("title"), "amount": old.get("amount"), "category": old.get("category")})
+    return {"status": "deleted"}
     return {"status": "deleted"}
 
 # ==================== SALES CRUD ====================
@@ -1676,6 +1787,7 @@ async def create_sale(data: SalesCreate, user=Depends(get_user)):
     doc["approval_status"] = _compute_approval_status(user, doc.get("total_sales", 0))
     await db.sales.insert_one(doc)
     doc.pop("_id", None)
+    await audit_log(user, "CREATE", "Sale", doc["id"], f'{user["name"]} created sale ${doc.get("total_sales", 0)} ({doc.get("report_date", "")})', new_value={"total_sales": doc.get("total_sales"), "report_date": doc.get("report_date")})
     return doc
 
 @api_router.put("/sales/{sid}")
@@ -1683,14 +1795,21 @@ async def update_sale(sid: str, data: SalesUpdate, user=Depends(get_user)):
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No data")
+    old = await db.sales.find_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not old:
+        raise HTTPException(404, "Not found")
+    old_vals = {k: old.get(k) for k in update_data}
     await db.sales.update_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    await audit_log(user, "UPDATE", "Sale", sid, f'{user["name"]} updated sale ({old.get("report_date", "")})', old_value=old_vals, new_value=update_data)
     return await db.sales.find_one({"id": sid}, {"_id": 0})
 
 @api_router.delete("/sales/{sid}")
 async def delete_sale(sid: str, user=Depends(get_user)):
-    result = await db.sales.delete_one({"id": sid, "restaurant_id": user["restaurant_id"]})
-    if result.deleted_count == 0:
+    old = await db.sales.find_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not old:
         raise HTTPException(404, "Not found")
+    await db.sales.delete_one({"id": sid, "restaurant_id": user["restaurant_id"]})
+    await audit_log(user, "DELETE", "Sale", sid, f'{user["name"]} deleted sale ${old.get("total_sales", 0)} ({old.get("report_date", "")})', old_value={"total_sales": old.get("total_sales"), "report_date": old.get("report_date")})
     return {"status": "deleted"}
 
 # ==================== SUPPLIERS CRUD ====================
@@ -1715,18 +1834,26 @@ async def create_supplier(data: SupplierCreate, user=Depends(get_user)):
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
     await db.suppliers.insert_one(doc)
     doc.pop("_id", None)
+    await audit_log(user, "CREATE", "Vendor", doc["id"], f'{user["name"]} created vendor {doc.get("name", "")}', new_value={"name": doc.get("name"), "contact_name": doc.get("contact_name"), "phone": doc.get("phone")})
     return doc
 
 @api_router.put("/suppliers/{sid}")
 async def update_supplier(sid: str, data: SupplierCreate, user=Depends(get_user)):
-    await db.suppliers.update_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"$set": data.model_dump()})
-    return await db.suppliers.find_one({"id": sid}, {"_id": 0})
+    old = await db.suppliers.find_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    update_data = data.model_dump()
+    old_vals = {k: old.get(k) for k in update_data} if old else {}
+    await db.suppliers.update_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    updated = await db.suppliers.find_one({"id": sid}, {"_id": 0})
+    await audit_log(user, "UPDATE", "Vendor", sid, f'{user["name"]} updated vendor {old.get("name", "") if old else ""}', old_value=old_vals, new_value=update_data)
+    return updated
 
 @api_router.delete("/suppliers/{sid}")
 async def delete_supplier(sid: str, user=Depends(get_user)):
-    result = await db.suppliers.delete_one({"id": sid, "restaurant_id": user["restaurant_id"]})
-    if result.deleted_count == 0:
+    old = await db.suppliers.find_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not old:
         raise HTTPException(404, "Not found")
+    await db.suppliers.delete_one({"id": sid, "restaurant_id": user["restaurant_id"]})
+    await audit_log(user, "DELETE", "Vendor", sid, f'{user["name"]} deleted vendor {old.get("name", "")}', old_value={"name": old.get("name")})
     return {"status": "deleted"}
 
 @api_router.get("/suppliers/{sid}/detail")
@@ -1782,17 +1909,24 @@ async def create_item(data: CanonicalItemCreate, user=Depends(get_user)):
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
     await db.canonical_items.insert_one(doc)
     doc.pop("_id", None)
+    await audit_log(user, "CREATE", "Item", doc["id"], f'{user["name"]} created item {doc.get("name", "")}', new_value={"name": doc.get("name"), "unit": doc.get("unit"), "category": doc.get("category")})
     return doc
 
 @api_router.put("/items/{iid}")
 async def update_item(iid: str, data: CanonicalItemCreate, user=Depends(get_user)):
-    await db.canonical_items.update_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"$set": data.model_dump()})
+    old = await db.canonical_items.find_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    update_data = data.model_dump()
+    old_vals = {k: old.get(k) for k in update_data} if old else {}
+    await db.canonical_items.update_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    await audit_log(user, "UPDATE", "Item", iid, f'{user["name"]} updated item {old.get("name", "") if old else ""}', old_value=old_vals, new_value=update_data)
     return await db.canonical_items.find_one({"id": iid}, {"_id": 0})
 
 @api_router.delete("/items/{iid}")
 async def delete_item(iid: str, user=Depends(get_user)):
+    old = await db.canonical_items.find_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
     await db.canonical_items.delete_one({"id": iid, "restaurant_id": user["restaurant_id"]})
     await db.item_aliases.delete_many({"canonical_item_id": iid})
+    await audit_log(user, "DELETE", "Item", iid, f'{user["name"]} deleted item {old.get("name", "") if old else ""}', old_value={"name": old.get("name")} if old else None)
     return {"status": "deleted"}
 
 @api_router.post("/aliases")
