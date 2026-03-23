@@ -1,18 +1,22 @@
 import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { toast } from 'sonner';
 import {
   TrendingUp, TrendingDown, ArrowRightLeft,
   Loader2, BarChart3, Search, Package, Store, Tag,
-  PieChart as PieChartIcon, Lightbulb, X
+  PieChart as PieChartIcon, Lightbulb, X,
+  ChevronRight, Users, Receipt, ExternalLink
 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
+/* ─── helpers ─── */
 function fmt(n) {
   if (n == null) return '$0';
   if (Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(1)}k`;
@@ -29,17 +33,18 @@ function pctChange(curr, prev) {
 
 const DONUT_COLORS = ['#0d9488', '#6366f1', '#64748b'];
 const DONUT_BG = ['bg-teal-500', 'bg-indigo-500', 'bg-slate-500'];
-const CATS = ['Raw Materials', 'Salaries', 'Other'];
+const CAT_KEYS = ['raw_materials', 'salaries', 'other'];
+const CAT_LABELS = ['Raw Materials', 'Salaries', 'Other'];
 
-// ======================== DONUT CHART ========================
-const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, prevSalaries, prevOther }) {
+/* ═══════════════════ DONUT CHART ═══════════════════ */
+const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, prevSalaries, prevOther, onCategoryClick }) {
   const total = raw + salaries + other;
   const prevTotal = prevRaw + prevSalaries + prevOther;
 
   const segments = useMemo(() => [
-    { name: 'Raw Materials', value: raw, color: DONUT_COLORS[0] },
-    { name: 'Salaries', value: salaries, color: DONUT_COLORS[1] },
-    { name: 'Other', value: other, color: DONUT_COLORS[2] },
+    { name: 'Raw Materials', key: 'raw_materials', value: raw, color: DONUT_COLORS[0] },
+    { name: 'Salaries', key: 'salaries', value: salaries, color: DONUT_COLORS[1] },
+    { name: 'Other', key: 'other', value: other, color: DONUT_COLORS[2] },
   ].filter(s => s.value > 0), [raw, salaries, other]);
 
   const pctTotal = pctChange(total, prevTotal);
@@ -60,6 +65,10 @@ const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, pre
     return result;
   }, [raw, salaries, other, prevRaw, prevSalaries, prevOther]);
 
+  const handlePieClick = useCallback((_, idx) => {
+    if (segments[idx]) onCategoryClick?.(segments[idx].key);
+  }, [segments, onCategoryClick]);
+
   return (
     <Card className="border border-slate-100 shadow-sm" data-testid="donut-chart-card">
       <CardHeader className="pb-2 pt-5 px-6">
@@ -69,7 +78,7 @@ const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, pre
           </div>
           <div>
             <CardTitle className="font-heading text-sm font-bold text-navy-900">Monthly Spending</CardTitle>
-            <p className="text-[10px] text-slate-400">Where your money goes this month</p>
+            <p className="text-[10px] text-slate-400">Click a category to see details</p>
           </div>
         </div>
       </CardHeader>
@@ -84,9 +93,11 @@ const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, pre
                   innerRadius={52} outerRadius={72}
                   paddingAngle={segments.length > 1 ? 3 : 0}
                   dataKey="value" stroke="none"
+                  onClick={handlePieClick}
+                  className="cursor-pointer"
                 >
                   {segments.length > 0
-                    ? segments.map((s, i) => <Cell key={i} fill={s.color} />)
+                    ? segments.map((s, i) => <Cell key={i} fill={s.color} className="cursor-pointer hover:opacity-80 transition-opacity" />)
                     : <Cell fill="#e2e8f0" />}
                 </Pie>
                 <Tooltip content={tooltipEl} />
@@ -104,24 +115,30 @@ const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, pre
           </div>
 
           <div className="flex-1 space-y-3 w-full">
-            <div className="space-y-2.5">
+            <div className="space-y-1">
               {[
-                { label: 'Raw Materials', value: raw, bg: DONUT_BG[0] },
-                { label: 'Salaries', value: salaries, bg: DONUT_BG[1] },
-                { label: 'Other', value: other, bg: DONUT_BG[2] },
+                { label: 'Raw Materials', key: 'raw_materials', value: raw, bg: DONUT_BG[0], color: DONUT_COLORS[0] },
+                { label: 'Salaries', key: 'salaries', value: salaries, bg: DONUT_BG[1], color: DONUT_COLORS[1] },
+                { label: 'Other', key: 'other', value: other, bg: DONUT_BG[2], color: DONUT_COLORS[2] },
               ].map(cat => {
                 const pctVal = total > 0 ? ((cat.value / total) * 100).toFixed(1) : 0;
                 return (
-                  <div key={cat.label} className="flex items-center justify-between" data-testid={`donut-legend-${cat.label.toLowerCase().replace(/\s/g, '-')}`}>
+                  <button
+                    key={cat.label}
+                    onClick={() => onCategoryClick?.(cat.key)}
+                    className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 transition-colors group"
+                    data-testid={`donut-legend-${cat.key}`}
+                  >
                     <div className="flex items-center gap-2">
                       <div className={`w-2.5 h-2.5 rounded-sm ${cat.bg}`} />
-                      <span className="text-xs text-slate-600">{cat.label}</span>
+                      <span className="text-xs text-slate-600 group-hover:text-navy-900 transition-colors">{cat.label}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-navy-900 tabular-nums">{fmtFull(cat.value)}</span>
                       <Badge variant="secondary" className="text-[9px] h-4 px-1.5 tabular-nums">{pctVal}%</Badge>
+                      <ChevronRight className="w-3 h-3 text-slate-300 group-hover:text-teal-600 transition-colors" />
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -130,9 +147,7 @@ const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, pre
                 {insights.map((ins, i) => (
                   <div key={i} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs ${ins.up ? 'bg-red-50/70 text-red-700' : 'bg-emerald-50/70 text-emerald-700'}`} data-testid={`category-insight-${i}`}>
                     {ins.up ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                    <span>
-                      <span className="font-bold">{ins.name}</span> {ins.up ? 'increased' : 'decreased'} by <span className="font-bold">{Math.abs(ins.pct)}%</span> this month
-                    </span>
+                    <span><span className="font-bold">{ins.name}</span> {ins.up ? 'increased' : 'decreased'} by <span className="font-bold">{Math.abs(ins.pct)}%</span> this month</span>
                   </div>
                 ))}
               </div>
@@ -156,7 +171,240 @@ function DonutTooltip({ active, payload, total }) {
   );
 }
 
-// ======================== MARKET INSIGHTS ========================
+/* ═══════════════════ DRILL-DOWN SHEET ═══════════════════ */
+function DrillDownSheet({ open, onClose, category, api }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+  const catKey = useRef(null);
+
+  useEffect(() => {
+    if (!open || !category) return;
+    if (catKey.current === category && data) return;
+    catKey.current = category;
+    setLoading(true);
+    setData(null);
+    api.get(`/dashboard/drill-down/${category}`)
+      .then(res => setData(res.data))
+      .catch(() => toast.error('Failed to load details'))
+      .finally(() => setLoading(false));
+  }, [open, category, api, data]);
+
+  const handleClose = useCallback((isOpen) => {
+    if (!isOpen) {
+      requestAnimationFrame(() => {
+        onClose();
+        catKey.current = null;
+        setData(null);
+      });
+    }
+  }, [onClose]);
+
+  const catLabel = category === 'raw_materials' ? 'Raw Materials' : category === 'salaries' ? 'Salaries' : 'Other Expenses';
+  const catColor = category === 'raw_materials' ? 'teal' : category === 'salaries' ? 'indigo' : 'slate';
+  const CatIcon = category === 'raw_materials' ? Package : category === 'salaries' ? Users : Receipt;
+
+  return (
+    <Sheet open={open} onOpenChange={handleClose}>
+      <SheetContent className="w-full sm:max-w-lg overflow-y-auto p-0" data-testid="drill-down-sheet">
+        <SheetHeader className={`sticky top-0 z-10 bg-${catColor}-50 border-b border-${catColor}-100 px-6 py-5`}>
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl bg-${catColor}-600 flex items-center justify-center`}>
+              <CatIcon className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <SheetTitle className="font-heading text-lg font-bold text-navy-900" data-testid="drill-down-title">{catLabel}</SheetTitle>
+              {!loading && data && (
+                <p className="text-sm font-semibold text-slate-500" data-testid="drill-down-total">
+                  Total: <span className={`text-${catColor}-700`}>{fmtFull(data.total)}</span>
+                </p>
+              )}
+            </div>
+          </div>
+        </SheetHeader>
+
+        <div className="px-6 py-5">
+          {loading && (
+            <div className="space-y-4" data-testid="drill-down-loading">
+              {[1,2,3].map(i => <Skeleton key={i} className="h-20 rounded-lg" />)}
+            </div>
+          )}
+
+          {!loading && data && category === 'raw_materials' && (
+            <RawMaterialsDrillDown items={data.items} navigate={navigate} />
+          )}
+          {!loading && data && category === 'salaries' && (
+            <SalariesDrillDown employees={data.employees} total={data.total} />
+          )}
+          {!loading && data && category === 'other' && (
+            <OtherDrillDown categories={data.categories} />
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/* ─── Raw Materials Drill-Down ─── */
+function RawMaterialsDrillDown({ items, navigate }) {
+  const [expanded, setExpanded] = useState(null);
+
+  if (!items.length) return (
+    <div className="text-center py-10">
+      <Package className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+      <p className="text-sm text-slate-400">No raw material purchases this month</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-2" data-testid="raw-materials-list">
+      <p className="text-xs text-slate-400 mb-3">{items.length} items purchased this month. Tap to compare vendors.</p>
+      {items.map((item, idx) => {
+        const isOpen = expanded === idx;
+        return (
+          <div key={idx} className="border border-slate-100 rounded-lg overflow-hidden" data-testid={`raw-item-${idx}`}>
+            <button
+              onClick={() => setExpanded(isOpen ? null : idx)}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50/60 transition-colors"
+              data-testid={`raw-item-toggle-${idx}`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Tag className="w-3.5 h-3.5 text-teal-600 flex-shrink-0" />
+                <span className="text-sm font-semibold text-navy-900 truncate">{item.item_name}</span>
+                <span className="text-[10px] text-slate-400 flex-shrink-0">{item.vendor_count} vendor{item.vendor_count !== 1 ? 's' : ''}</span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-sm font-bold text-navy-900 tabular-nums">{fmtFull(item.total_spent)}</span>
+                <ChevronRight className={`w-4 h-4 text-slate-300 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+              </div>
+            </button>
+
+            {isOpen && (
+              <div className="border-t border-slate-100 bg-slate-50/30" data-testid={`raw-item-vendors-${idx}`}>
+                {item.vendors.map((v, vi) => {
+                  const isCheapest = v.vendor === item.cheapest_vendor;
+                  return (
+                    <div key={vi} className={`flex items-center justify-between px-4 py-2.5 border-b last:border-b-0 border-slate-100 ${isCheapest ? 'bg-teal-50/50' : ''}`} data-testid={`raw-vendor-${idx}-${vi}`}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Store className={`w-3.5 h-3.5 flex-shrink-0 ${isCheapest ? 'text-teal-600' : 'text-slate-400'}`} />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-xs truncate ${isCheapest ? 'font-bold text-teal-700' : 'text-slate-600'}`}>{v.vendor}</span>
+                            {isCheapest && <Badge className="bg-teal-600 text-white text-[8px] h-4 px-1.5 font-bold">CHEAPEST</Badge>}
+                          </div>
+                          <span className="text-[10px] text-slate-400">
+                            {v.purchase_count}x purchased · Last: {v.last_date}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <div className="text-right">
+                          <div className={`text-xs font-bold tabular-nums ${isCheapest ? 'text-teal-700' : 'text-navy-900'}`}>
+                            {fmtPrice(v.latest_price)}{v.unit && <span className="text-[10px] text-slate-400 font-normal">/{v.unit}</span>}
+                          </div>
+                          {v.min_price !== v.max_price && (
+                            <div className="text-[10px] text-slate-400 tabular-nums">
+                              {fmtPrice(v.min_price)} – {fmtPrice(v.max_price)}
+                            </div>
+                          )}
+                        </div>
+                        {v.supplier_id && (
+                          <button
+                            onClick={() => navigate(`/vendors/${v.supplier_id}`)}
+                            className="p-1 rounded hover:bg-white transition-colors"
+                            title="View vendor details"
+                            data-testid={`goto-vendor-${idx}-${vi}`}
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 text-slate-400 hover:text-teal-600" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─── Salaries Drill-Down ─── */
+function SalariesDrillDown({ employees, total }) {
+  if (!employees.length) return (
+    <div className="text-center py-10">
+      <Users className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+      <p className="text-sm text-slate-400">No salary payments this month</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-3" data-testid="salaries-list">
+      <p className="text-xs text-slate-400 mb-3">{employees.length} employee{employees.length !== 1 ? 's' : ''} paid this month</p>
+      {employees.map((emp, idx) => {
+        const share = total > 0 ? ((emp.amount / total) * 100).toFixed(0) : 0;
+        return (
+          <div key={idx} className="flex items-center gap-4 p-3 rounded-lg border border-slate-100 hover:border-indigo-100 transition-colors" data-testid={`salary-row-${idx}`}>
+            <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+              <span className="text-sm font-bold text-indigo-600">{emp.name.charAt(0).toUpperCase()}</span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-navy-900 truncate">{emp.name}</span>
+                <span className="text-sm font-bold text-navy-900 tabular-nums flex-shrink-0">{fmtFull(emp.amount)}</span>
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-[11px] text-slate-400">{emp.position || 'Staff'}</span>
+                <span className="text-[10px] text-slate-400">{share}% of total</span>
+              </div>
+              <div className="mt-1.5 h-1 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-full bg-indigo-400 rounded-full transition-all duration-500" style={{ width: `${share}%` }} />
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─── Other Expenses Drill-Down ─── */
+function OtherDrillDown({ categories }) {
+  if (!categories.length) return (
+    <div className="text-center py-10">
+      <Receipt className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+      <p className="text-sm text-slate-400">No other expenses this month</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4" data-testid="other-expenses-list">
+      {categories.map((cat, ci) => (
+        <div key={ci} data-testid={`other-category-${ci}`}>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-navy-900 uppercase tracking-wide">{cat.category_name}</span>
+            <span className="text-xs font-bold text-slate-600 tabular-nums">{fmtFull(cat.total)}</span>
+          </div>
+          <div className="space-y-1.5">
+            {cat.items.map((item, ii) => (
+              <div key={ii} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 hover:border-slate-200 transition-colors" data-testid={`other-item-${ci}-${ii}`}>
+                <div className="min-w-0">
+                  <span className="text-sm font-medium text-navy-900 truncate block">{item.title}</span>
+                  <span className="text-[11px] text-slate-400">{item.expense_date}{item.vendor ? ` · ${item.vendor}` : ''}</span>
+                </div>
+                <span className="text-sm font-bold text-navy-900 tabular-nums flex-shrink-0 ml-3">{fmtFull(item.amount)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ═══════════════════ MARKET INSIGHTS ═══════════════════ */
 const MarketInsights = memo(function MarketInsights({ alerts }) {
   if (!alerts.length) return (
     <Card className="border border-slate-100 shadow-sm" data-testid="market-insights-card">
@@ -198,52 +446,35 @@ function InsightRow({ alert, index }) {
       <div className="flex items-start gap-3 p-3 rounded-lg border border-red-100 bg-red-50/40" data-testid={`insight-${index}`}>
         <TrendingUp className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
         <div className="min-w-0">
-          <p className="text-xs text-slate-700">
-            <span className="font-bold text-navy-900">{alert.item_name}</span> price up <span className="font-bold text-red-600">+{alert.change_pct}%</span>
-          </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            {fmtPrice(alert.old_price)} &rarr; {fmtPrice(alert.new_price)} at {alert.vendor}
-          </p>
+          <p className="text-xs text-slate-700"><span className="font-bold text-navy-900">{alert.item_name}</span> price up <span className="font-bold text-red-600">+{alert.change_pct}%</span></p>
+          <p className="text-[11px] text-slate-400 mt-0.5">{fmtPrice(alert.old_price)} &rarr; {fmtPrice(alert.new_price)} at {alert.vendor}</p>
         </div>
       </div>
     );
   }
-
   if (isCheaper) {
     return (
       <div className="flex items-start gap-3 p-3 rounded-lg border border-teal-100 bg-teal-50/40" data-testid={`insight-${index}`}>
         <ArrowRightLeft className="w-4 h-4 text-teal-600 mt-0.5 flex-shrink-0" />
         <div className="min-w-0">
-          <p className="text-xs text-slate-700">
-            Save <span className="font-bold text-teal-600">{alert.savings_pct}%</span> on <span className="font-bold text-navy-900">{alert.item_name}</span>
-          </p>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            Switch from {alert.vendor} ({fmtPrice(alert.current_price)}) to <span className="font-semibold text-teal-700">{alert.cheaper_vendor}</span> ({fmtPrice(alert.cheaper_price)})
-          </p>
+          <p className="text-xs text-slate-700">Save <span className="font-bold text-teal-600">{alert.savings_pct}%</span> on <span className="font-bold text-navy-900">{alert.item_name}</span></p>
+          <p className="text-[11px] text-slate-400 mt-0.5">Switch from {alert.vendor} ({fmtPrice(alert.current_price)}) to <span className="font-semibold text-teal-700">{alert.cheaper_vendor}</span> ({fmtPrice(alert.cheaper_price)})</p>
         </div>
       </div>
     );
   }
-
-  // not_ordered
   return (
     <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-100 bg-amber-50/40" data-testid={`insight-${index}`}>
       <Package className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
       <div className="min-w-0">
-        <p className="text-xs text-slate-700">
-          <span className="font-bold text-navy-900">{alert.item_name}</span> not ordered in <span className="font-bold text-amber-700">{alert.days_since} days</span>
-        </p>
-        {alert.vendor && (
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            Last from {alert.vendor}{alert.last_price > 0 ? ` at ${fmtPrice(alert.last_price)}` : ''}
-          </p>
-        )}
+        <p className="text-xs text-slate-700"><span className="font-bold text-navy-900">{alert.item_name}</span> not ordered in <span className="font-bold text-amber-700">{alert.days_since} days</span></p>
+        {alert.vendor && <p className="text-[11px] text-slate-400 mt-0.5">Last from {alert.vendor}{alert.last_price > 0 ? ` at ${fmtPrice(alert.last_price)}` : ''}</p>}
       </div>
     </div>
   );
 }
 
-// ======================== ITEM SEARCH ========================
+/* ═══════════════════ ITEM SEARCH ═══════════════════ */
 function ItemSearch({ api }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState(null);
@@ -256,11 +487,8 @@ function ItemSearch({ api }) {
     try {
       const res = await api.get('/dashboard/item-search', { params: { q: q.trim() } });
       setResults(res.data.results);
-    } catch {
-      toast.error('Search failed');
-    } finally {
-      setSearching(false);
-    }
+    } catch { toast.error('Search failed'); }
+    finally { setSearching(false); }
   }, [api]);
 
   const handleChange = useCallback((e) => {
@@ -271,8 +499,7 @@ function ItemSearch({ api }) {
   }, [search]);
 
   const clear = useCallback(() => {
-    setQuery('');
-    setResults(null);
+    setQuery(''); setResults(null);
     if (debounceRef.current) clearTimeout(debounceRef.current);
   }, []);
 
@@ -292,42 +519,19 @@ function ItemSearch({ api }) {
       <CardContent className="px-6 pb-5">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <Input
-            value={query}
-            onChange={handleChange}
-            placeholder="Search item... e.g. Salmon, Olive Oil, Tomatoes"
-            className="pl-9 pr-9 h-10 text-sm border-slate-200 focus:border-teal-500 focus:ring-teal-500/20"
-            data-testid="item-search-input"
-          />
-          {query && (
-            <button onClick={clear} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" data-testid="item-search-clear">
-              <X className="w-4 h-4" />
-            </button>
-          )}
+          <Input value={query} onChange={handleChange} placeholder="Search item... e.g. Salmon, Olive Oil" className="pl-9 pr-9 h-10 text-sm border-slate-200 focus:border-teal-500 focus:ring-teal-500/20" data-testid="item-search-input" />
+          {query && <button onClick={clear} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" data-testid="item-search-clear"><X className="w-4 h-4" /></button>}
         </div>
-
-        {searching && (
-          <div className="flex items-center justify-center py-8" data-testid="item-search-loading">
-            <Loader2 className="w-5 h-5 animate-spin text-teal-600" />
-          </div>
-        )}
-
+        {searching && <div className="flex items-center justify-center py-8" data-testid="item-search-loading"><Loader2 className="w-5 h-5 animate-spin text-teal-600" /></div>}
         {!searching && results !== null && results.length === 0 && query.length >= 2 && (
-          <div className="text-center py-8" data-testid="item-search-empty">
-            <Package className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-            <p className="text-sm text-slate-400">No items found for "{query}"</p>
-          </div>
+          <div className="text-center py-8" data-testid="item-search-empty"><Package className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-400">No items found for "{query}"</p></div>
         )}
-
         {!searching && results && results.length > 0 && (
           <div className="mt-4 space-y-4" data-testid="item-search-results">
             {results.map((item, idx) => (
               <div key={idx} className="border border-slate-100 rounded-lg overflow-hidden" data-testid={`search-result-${idx}`}>
                 <div className="flex items-center justify-between px-4 py-3 bg-slate-50/60">
-                  <div className="flex items-center gap-2">
-                    <Tag className="w-3.5 h-3.5 text-teal-600" />
-                    <span className="text-sm font-bold text-navy-900">{item.item_name}</span>
-                  </div>
+                  <div className="flex items-center gap-2"><Tag className="w-3.5 h-3.5 text-teal-600" /><span className="text-sm font-bold text-navy-900">{item.item_name}</span></div>
                   <span className="text-[10px] text-slate-400 font-semibold">{item.vendor_count} vendor{item.vendor_count !== 1 ? 's' : ''}</span>
                 </div>
                 <div className="divide-y divide-slate-100">
@@ -360,7 +564,7 @@ function ItemSearch({ api }) {
   );
 }
 
-// ======================== HELPERS ========================
+/* ─── Loading / Empty ─── */
 function LoadingSkeleton() {
   return (
     <div className="space-y-6" data-testid="dashboard-loading">
@@ -384,7 +588,7 @@ function EmptyDashboard({ onSeed, seeding }) {
   );
 }
 
-// ======================== MAIN PAGE ========================
+/* ═══════════════════ MAIN PAGE ═══════════════════ */
 const EMPTY_ALERTS = [];
 
 export default function DashboardPage() {
@@ -392,6 +596,7 @@ export default function DashboardPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
+  const [drillDown, setDrillDown] = useState(null);
 
   const load = useCallback(async () => {
     try { const res = await api.get('/dashboard/summary'); setData(res.data); }
@@ -409,6 +614,9 @@ export default function DashboardPage() {
   useEffect(() => { load(); }, [load]);
   const smartAlerts = useMemo(() => data?.smart_alerts || EMPTY_ALERTS, [data]);
 
+  const openDrillDown = useCallback((category) => setDrillDown(category), []);
+  const closeDrillDown = useCallback(() => setDrillDown(null), []);
+
   if (loading) return <LoadingSkeleton />;
 
   const isEmpty = !data || (
@@ -425,10 +633,8 @@ export default function DashboardPage() {
         <p className="text-sm text-slate-400 mt-1">Where am I spending? Where should I buy?</p>
       </div>
 
-      {/* Item Search */}
       <ItemSearch api={api} />
 
-      {/* Donut + Insights side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" data-testid="dashboard-main-row">
         <DonutChart
           raw={data.month_raw_materials || 0}
@@ -437,9 +643,17 @@ export default function DashboardPage() {
           prevRaw={data.prev_month_raw_materials || 0}
           prevSalaries={data.prev_month_salaries || 0}
           prevOther={data.prev_month_other_expenses || 0}
+          onCategoryClick={openDrillDown}
         />
         <MarketInsights alerts={smartAlerts} />
       </div>
+
+      <DrillDownSheet
+        open={!!drillDown}
+        onClose={closeDrillDown}
+        category={drillDown}
+        api={api}
+      />
     </div>
   );
 }

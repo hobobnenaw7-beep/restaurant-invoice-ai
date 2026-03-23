@@ -745,6 +745,119 @@ async def dashboard_item_search(q: str = "", user=Depends(get_user)):
     results.sort(key=lambda r: r["item_name"].lower())
     return {"results": results}
 
+
+@api_router.get("/dashboard/drill-down/{category}")
+async def dashboard_drill_down(category: str, user=Depends(get_user)):
+    """Drill-down data for a spending category."""
+    rid = user["restaurant_id"]
+    now = datetime.now(timezone.utc)
+    month_start = now.strftime("%Y-%m-01")
+    today = now.strftime("%Y-%m-%d")
+    _approved = {"$or": [{"approval_status": {"$exists": False}}, {"approval_status": "approved"}]}
+
+    if category == "raw_materials":
+        purchases = await db.purchases.find(
+            {"restaurant_id": rid, **_approved}, {"_id": 0}
+        ).to_list(10000)
+        month_purchases = [p for p in purchases if month_start <= p.get("invoice_date", "") <= today]
+
+        item_map = {}
+        for p in month_purchases:
+            vendor = p.get("supplier_name", "Unknown")
+            supplier_id = p.get("supplier_id", "")
+            inv_date = p.get("invoice_date", "")
+            for it in p.get("items", []):
+                name = it.get("raw_name", "Unknown")
+                key = name.lower()
+                if key not in item_map:
+                    item_map[key] = {"name": name, "total_spent": 0, "vendors": {}}
+                total = float(it.get("total", 0))
+                item_map[key]["total_spent"] += total
+                vd = item_map[key]["vendors"]
+                if vendor not in vd:
+                    vd[vendor] = {"prices": [], "dates": [], "unit": it.get("unit", ""), "supplier_id": supplier_id}
+                up = float(it.get("unit_price", 0))
+                if up > 0:
+                    vd[vendor]["prices"].append(up)
+                    vd[vendor]["dates"].append(inv_date)
+
+        items = []
+        for key, im in item_map.items():
+            vendors = []
+            for vname, vi in im["vendors"].items():
+                if not vi["prices"]:
+                    continue
+                latest_idx = vi["dates"].index(max(vi["dates"])) if vi["dates"] else 0
+                vendors.append({
+                    "vendor": vname,
+                    "supplier_id": vi["supplier_id"],
+                    "latest_price": round(vi["prices"][latest_idx], 2),
+                    "avg_price": round(sum(vi["prices"]) / len(vi["prices"]), 2),
+                    "min_price": round(min(vi["prices"]), 2),
+                    "max_price": round(max(vi["prices"]), 2),
+                    "purchase_count": len(vi["prices"]),
+                    "last_date": max(vi["dates"]) if vi["dates"] else "",
+                    "unit": vi["unit"],
+                })
+            vendors.sort(key=lambda v: v["latest_price"])
+            cheapest = vendors[0]["vendor"] if vendors else ""
+            items.append({
+                "item_name": im["name"],
+                "total_spent": round(im["total_spent"], 2),
+                "vendors": vendors,
+                "cheapest_vendor": cheapest,
+                "vendor_count": len(vendors),
+            })
+        items.sort(key=lambda x: -x["total_spent"])
+        return {"category": "raw_materials", "items": items, "total": round(sum(i["total_spent"] for i in items), 2)}
+
+    elif category == "salaries":
+        sals = await db.salaries.find(
+            {"restaurant_id": rid, **_approved}, {"_id": 0}
+        ).to_list(10000)
+        month_sals = [s for s in sals if month_start <= s.get("payment_date", "") <= today]
+        employees = []
+        for s in month_sals:
+            employees.append({
+                "name": s.get("employee_name", "Unknown"),
+                "position": s.get("position", ""),
+                "amount": round(s.get("amount", 0), 2),
+                "payment_date": s.get("payment_date", ""),
+                "payment_method": s.get("payment_method", ""),
+            })
+        employees.sort(key=lambda e: -e["amount"])
+        return {"category": "salaries", "employees": employees, "total": round(sum(e["amount"] for e in employees), 2)}
+
+    elif category == "other":
+        expenses = await db.other_expenses.find(
+            {"restaurant_id": rid, **_approved}, {"_id": 0}
+        ).to_list(10000)
+        month_exp = [e for e in expenses if month_start <= e.get("expense_date", "") <= today]
+        by_category = {}
+        for e in month_exp:
+            cat = e.get("category", "Uncategorized") or "Uncategorized"
+            if cat not in by_category:
+                by_category[cat] = {"items": [], "total": 0}
+            by_category[cat]["items"].append({
+                "title": e.get("title", "Untitled"),
+                "amount": round(e.get("amount", 0), 2),
+                "expense_date": e.get("expense_date", ""),
+                "vendor": e.get("vendor", ""),
+                "notes": e.get("notes", ""),
+            })
+            by_category[cat]["total"] += e.get("amount", 0)
+        categories = []
+        for cname, cdata in sorted(by_category.items(), key=lambda x: -x[1]["total"]):
+            cdata["items"].sort(key=lambda x: -x["amount"])
+            categories.append({
+                "category_name": cname,
+                "total": round(cdata["total"], 2),
+                "items": cdata["items"],
+            })
+        return {"category": "other", "categories": categories, "total": round(sum(c["total"] for c in categories), 2)}
+
+    return {"error": "Invalid category. Use: raw_materials, salaries, other"}
+
 # ==================== UPLOAD / EXTRACT ====================
 
 @api_router.post("/upload/parse-excel")
