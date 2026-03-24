@@ -119,14 +119,17 @@ export default function SalesPage() {
       formData.append('document_type', 'sales_report');
       const endpoint = isExcelFile(uploadFile) ? '/upload/parse-excel' : '/upload/extract';
       const res = await api.post(endpoint, formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
-      const d = res.data.extracted_data;
+      const d = res.data?.extracted_data || {};
       const extractedDate = d.report_date || new Date().toISOString().split('T')[0];
+      const items = Array.isArray(d.items) ? d.items : [];
       setForm({
         date_from: d.date_from || extractedDate,
         date_to: d.date_to || extractedDate,
         report_date: extractedDate,
         total_sales: parseFloat(d.total_sales) || 0,
-        items: (d.items || []).map(it => ({ _key: nextSalesKey(), menu_item: it.menu_item || '', quantity: parseFloat(it.quantity) || 0, revenue: parseFloat(it.revenue) || 0 })),
+        items: items.length > 0
+          ? items.map(it => ({ _key: nextSalesKey(), menu_item: it.menu_item || '', quantity: parseFloat(it.quantity) || 0, revenue: parseFloat(it.revenue) || 0 }))
+          : [{ _key: nextSalesKey(), menu_item: '', quantity: 1, revenue: 0 }],
       });
       const msg = res.data.message || `Extracted ${res.data.row_count || 'all'} items. Review and save.`;
       toast.success(msg);

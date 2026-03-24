@@ -36,17 +36,25 @@ function ItemAutocomplete({ value, onChange, knownItems, index }) {
   const [query, setQuery] = useState(value || '');
   const wrapperRef = useRef(null);
 
-  useEffect(() => { setQuery(value || ''); }, [value]);
+  // Sync query from parent value only when value actually changes
+  const prevValueRef = useRef(value);
+  useEffect(() => {
+    if (value !== prevValueRef.current) {
+      prevValueRef.current = value;
+      setQuery(value || '');
+    }
+  }, [value]);
 
   useEffect(() => {
     const handler = (e) => { if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler);
+    return () => { document.removeEventListener('mousedown', handler); document.removeEventListener('touchstart', handler); };
   }, []);
 
   const q = query.toLowerCase().trim();
-  const filtered = q ? knownItems.filter(n => n.toLowerCase().includes(q)).slice(0, 8) : knownItems.slice(0, 8);
-  const exactMatch = knownItems.some(n => n.toLowerCase() === q);
+  const filtered = (knownItems || []).filter(n => !q || n.toLowerCase().includes(q)).slice(0, 8);
+  const exactMatch = (knownItems || []).some(n => n.toLowerCase() === q);
 
   return (
     <div ref={wrapperRef} className="relative col-span-4">
@@ -54,8 +62,8 @@ function ItemAutocomplete({ value, onChange, knownItems, index }) {
         className="text-xs h-8 w-full"
         placeholder="Item name"
         value={query}
-        onChange={(e) => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
+        onChange={(e) => { const v = e.target.value; setQuery(v); onChange(v); setOpen(true); }}
+        onFocus={() => { if (knownItems && knownItems.length > 0) setOpen(true); }}
         data-testid={`line-item-name-${index}`}
       />
       {open && (filtered.length > 0 || (q && !exactMatch)) && (
@@ -151,8 +159,19 @@ function RawMaterialsTab({ api }) {
       const fd = new FormData(); fd.append('file', uploadFile); fd.append('document_type', 'purchase_invoice');
       const ep = isExcelFile(uploadFile) ? '/upload/parse-excel' : '/upload/extract';
       const res = await api.post(ep, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
-      const d = res.data.extracted_data;
-      setForm({ supplier_name: d.supplier_name || '', invoice_number: d.invoice_number || '', invoice_date: d.invoice_date || new Date().toISOString().split('T')[0], items: (d.items || []).map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.unit || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0)), subtotal: parseFloat(d.subtotal) || 0, tax: parseFloat(d.tax) || 0, total: parseFloat(d.total) || 0 });
+      const d = res.data?.extracted_data || {};
+      const items = Array.isArray(d.items) ? d.items : [];
+      setForm({
+        supplier_name: d.supplier_name || '',
+        invoice_number: d.invoice_number || '',
+        invoice_date: d.invoice_date || new Date().toISOString().split('T')[0],
+        items: items.length > 0
+          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.unit || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0))
+          : [mkItem()],
+        subtotal: parseFloat(d.subtotal) || 0,
+        tax: parseFloat(d.tax) || 0,
+        total: parseFloat(d.total) || 0,
+      });
       toast.success(res.data.message || 'Data extracted! Review and save.');
     } catch (err) { toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.')); }
     finally { setExtracting(false); }
