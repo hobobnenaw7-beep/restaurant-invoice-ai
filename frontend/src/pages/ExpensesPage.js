@@ -107,7 +107,6 @@ function RawMaterialsTab({ api }) {
   const fileExcelRef = useRef(null);
   const [knownItems, setKnownItems] = useState([]);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
-  const savedRef = useRef(false);
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -115,16 +114,6 @@ function RawMaterialsTab({ api }) {
     catch { toast.error('Failed to load'); } finally { setLoading(false); }
   }, [api, search, dateFrom, dateTo, sortBy, sortOrder]);
   useEffect(() => { load(true); }, [load]);
-
-  // Refresh list when dialog closes after a successful save
-  // Use a timeout to let dialog exit animation complete before DOM changes
-  useEffect(() => {
-    if (!showAdd && savedRef.current) {
-      savedRef.current = false;
-      const timer = setTimeout(() => load(false), 300);
-      return () => clearTimeout(timer);
-    }
-  }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleSort = (f) => { if (sortBy === f) setSortOrder(o => o === 'desc' ? 'asc' : 'desc'); else { setSortBy(f); setSortOrder('desc'); } };
   const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/purchases/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };
@@ -191,7 +180,9 @@ function RawMaterialsTab({ api }) {
           } catch { /* silent */ }
         }
         toast.success('Saved');
-        savedRef.current = true;
+        // Refresh list while dialog is still open (DOM is stable)
+        try { await load(false); } catch {}
+        // Then close dialog (list is already updated, no race condition)
         setShowAdd(false);
       }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
@@ -313,7 +304,6 @@ function SalariesTab({ api }) {
   const [form, setForm] = useState({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' });
   const [saving, setSaving] = useState(false);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
-  const savedRef = useRef(false);
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -321,14 +311,6 @@ function SalariesTab({ api }) {
     catch { toast.error('Failed to load salaries'); } finally { setLoading(false); }
   }, [api]);
   useEffect(() => { load(true); }, [load]);
-
-  useEffect(() => {
-    if (!showAdd && savedRef.current) {
-      savedRef.current = false;
-      const timer = setTimeout(() => load(false), 300);
-      return () => clearTimeout(timer);
-    }
-  }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/salaries/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -339,7 +321,12 @@ function SalariesTab({ api }) {
     if (!form.amount) { toast.error('Salary amount is required'); return; }
     const doSave = async () => {
       setSaving(true);
-      try { await api.post('/salaries', form); toast.success('Salary saved'); savedRef.current = true; setShowAdd(false); }
+      try {
+        await api.post('/salaries', form);
+        toast.success('Salary saved');
+        try { await load(false); } catch {}
+        setShowAdd(false);
+      }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
     };
@@ -406,7 +393,6 @@ function OtherExpensesTab({ api }) {
   const [form, setForm] = useState({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' });
   const [saving, setSaving] = useState(false);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
-  const savedRef = useRef(false);
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -414,14 +400,6 @@ function OtherExpensesTab({ api }) {
     catch { toast.error('Failed to load expenses'); } finally { setLoading(false); }
   }, [api]);
   useEffect(() => { load(true); }, [load]);
-
-  useEffect(() => {
-    if (!showAdd && savedRef.current) {
-      savedRef.current = false;
-      const timer = setTimeout(() => load(false), 300);
-      return () => clearTimeout(timer);
-    }
-  }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/other-expenses/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -432,7 +410,12 @@ function OtherExpensesTab({ api }) {
     if (!form.amount) { toast.error('Amount is required'); return; }
     const doSave = async () => {
       setSaving(true);
-      try { await api.post('/other-expenses', form); toast.success('Expense saved'); savedRef.current = true; setShowAdd(false); }
+      try {
+        await api.post('/other-expenses', form);
+        toast.success('Expense saved');
+        try { await load(false); } catch {}
+        setShowAdd(false);
+      }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
     };

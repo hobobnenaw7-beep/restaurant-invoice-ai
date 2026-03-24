@@ -48,7 +48,6 @@ export default function SalesPage() {
   const fileCameraRef = useRef(null);
   const fileExcelRef = useRef(null);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
-  const savedRef = useRef(false);
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -60,15 +59,6 @@ export default function SalesPage() {
   }, [api, dateFrom, dateTo, sortBy, sortOrder]);
 
   useEffect(() => { load(true); }, [load]);
-
-  // Refresh list when dialog closes after a successful save
-  useEffect(() => {
-    if (!showAdd && savedRef.current) {
-      savedRef.current = false;
-      const timer = setTimeout(() => load(false), 300);
-      return () => clearTimeout(timer);
-    }
-  }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleSort = (field) => {
     if (sortBy === field) setSortOrder(o => o === 'desc' ? 'asc' : 'desc');
@@ -170,7 +160,9 @@ export default function SalesPage() {
           } catch { /* silent */ }
         }
         toast.success('Sale saved');
-        savedRef.current = true;
+        // Refresh list while dialog is still open (DOM is stable)
+        try { await load(false); } catch {}
+        // Then close dialog (list is already updated)
         setShowAdd(false);
       } catch (err) {
         toast.error('Save failed: ' + (err.response?.data?.detail || ''));

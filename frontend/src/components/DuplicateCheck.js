@@ -36,12 +36,7 @@ export function useDuplicateCheck() {
     pendingSaveRef.current = null;
     setShowWarning(false);
     setDuplicates([]);
-    // Delay save until after warning dialog exit animation completes
-    // to prevent DOM conflict between two simultaneous dialog animations
-    if (saveFn) {
-      await new Promise(r => setTimeout(r, 300));
-      await saveFn();
-    }
+    if (saveFn) await saveFn();
   }, []);
 
   const cancelSave = useCallback(() => {
