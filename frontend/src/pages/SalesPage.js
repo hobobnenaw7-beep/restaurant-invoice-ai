@@ -201,9 +201,9 @@ export default function SalesPage() {
       {/* Table */}
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
         {loading ? (
-          <div className="p-5 space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
+          <div key="loading" className="p-5 space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
         ) : sales.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div key="empty" className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4"><DollarSign className="w-6 h-6 text-slate-300" /></div>
             <h3 className="font-heading text-base font-bold text-navy-900 mb-1">No sales found</h3>
             <p className="text-sm text-slate-400 max-w-xs mb-4">Add a sale or upload a sales report to get started.</p>
@@ -212,7 +212,7 @@ export default function SalesPage() {
             </Button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div key="data" className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">

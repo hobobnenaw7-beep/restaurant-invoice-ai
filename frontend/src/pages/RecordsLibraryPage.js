@@ -294,9 +294,9 @@ export default function RecordsLibraryPage() {
 
       {/* Content */}
       {loading ? (
-        <div className="space-y-2"><Skeleton className="h-12 rounded-lg" /><Skeleton className="h-12 rounded-lg" /><Skeleton className="h-12 rounded-lg" /></div>
+        <div key="loading" className="space-y-2"><Skeleton className="h-12 rounded-lg" /><Skeleton className="h-12 rounded-lg" /><Skeleton className="h-12 rounded-lg" /></div>
       ) : records.length === 0 ? (
-        <Card className="border border-slate-200/80 shadow-sm">
+        <Card key="empty" className="border border-slate-200/80 shadow-sm">
           <CardContent className="flex flex-col items-center py-14 text-center">
             <FolderOpen className="w-12 h-12 text-slate-300 mb-3" />
             <h3 className="font-heading text-sm font-bold text-navy-900 mb-1">{folderLabel} is empty</h3>
@@ -306,7 +306,7 @@ export default function RecordsLibraryPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card className="border border-slate-200/80 shadow-sm overflow-hidden" data-testid="records-table-card">
+        <Card key="data" className="border border-slate-200/80 shadow-sm overflow-hidden" data-testid="records-table-card">
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>

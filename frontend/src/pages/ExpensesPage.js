@@ -234,9 +234,9 @@ function RawMaterialsTab({ api }) {
       </div>
 
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
-        {loading ? <div className="p-5 space-y-3">{[1,2,3,4].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
-        : items.length === 0 ? <div className="flex flex-col items-center py-12 text-center"><Beef className="w-10 h-10 text-slate-300 mb-3" /><h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No raw material purchases</h3><p className="text-xs text-slate-400 mb-3">Upload an invoice or add manually</p><Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add</Button></div>
-        : <div className="overflow-x-auto">
+        {loading ? <div key="loading" className="p-5 space-y-3">{[1,2,3,4].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
+        : items.length === 0 ? <div key="empty" className="flex flex-col items-center py-12 text-center"><Beef className="w-10 h-10 text-slate-300 mb-3" /><h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No raw material purchases</h3><p className="text-xs text-slate-400 mb-3">Upload an invoice or add manually</p><Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add</Button></div>
+        : <div key="data" className="overflow-x-auto">
           <Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
             <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('invoice_date')}>Date <SI field="invoice_date" /></TableHead>
             <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('supplier_name')}>Vendor <SI field="supplier_name" /></TableHead>
@@ -373,9 +373,9 @@ function SalariesTab({ api }) {
       </div>
 
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
-        {loading ? <div className="p-5 space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
-        : items.length === 0 ? <div className="flex flex-col items-center py-12 text-center"><Users2 className="w-10 h-10 text-slate-300 mb-3" /><h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No salary records</h3><p className="text-xs text-slate-400 mb-3">Track employee salary payments</p><Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add Salary</Button></div>
-        : <div className="overflow-x-auto"><Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+        {loading ? <div key="loading" className="p-5 space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
+        : items.length === 0 ? <div key="empty" className="flex flex-col items-center py-12 text-center"><Users2 className="w-10 h-10 text-slate-300 mb-3" /><h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No salary records</h3><p className="text-xs text-slate-400 mb-3">Track employee salary payments</p><Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add Salary</Button></div>
+        : <div key="data" className="overflow-x-auto"><Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Employee</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Position</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date</TableHead>
@@ -467,9 +467,9 @@ function OtherExpensesTab({ api }) {
       </div>
 
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
-        {loading ? <div className="p-5 space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
-        : items.length === 0 ? <div className="flex flex-col items-center py-12 text-center"><Wrench className="w-10 h-10 text-slate-300 mb-3" /><h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No other expenses</h3><p className="text-xs text-slate-400 mb-3">Track rent, utilities, and more</p><Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add Expense</Button></div>
-        : <div className="overflow-x-auto"><Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+        {loading ? <div key="loading" className="p-5 space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
+        : items.length === 0 ? <div key="empty" className="flex flex-col items-center py-12 text-center"><Wrench className="w-10 h-10 text-slate-300 mb-3" /><h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No other expenses</h3><p className="text-xs text-slate-400 mb-3">Track rent, utilities, and more</p><Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add Expense</Button></div>
+        : <div key="data" className="overflow-x-auto"><Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Title</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Category</TableHead>

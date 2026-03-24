@@ -52,15 +52,15 @@ function PriceHistoryDialog({ item, api, onClose }) {
         </DialogHeader>
 
         {loading ? (
-          <div className="space-y-3 py-4">{[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
+          <div key="loading" className="space-y-3 py-4">{[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
         ) : records.length === 0 ? (
-          <div className="flex flex-col items-center py-12 text-center">
+          <div key="empty" className="flex flex-col items-center py-12 text-center">
             <TrendingUp className="w-10 h-10 text-slate-300 mb-3" />
             <h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No price data yet</h3>
             <p className="text-xs text-slate-400">Purchase invoices containing this item will populate the price history.</p>
           </div>
         ) : (
-          <div className="space-y-5">
+          <div key="data" className="space-y-5">
             {/* Summary KPIs */}
             <div className="grid grid-cols-4 gap-3">
               <div className="bg-slate-50 rounded-lg p-3 text-center">
@@ -322,15 +322,15 @@ export default function ItemsPage() {
       </div>
 
       {loading ? (
-        <Card className="border border-slate-100 shadow-sm overflow-hidden"><div className="p-6 space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-12 w-full rounded-lg" />)}</div></Card>
+        <Card key="loading" className="border border-slate-100 shadow-sm overflow-hidden"><div className="p-6 space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-12 w-full rounded-lg" />)}</div></Card>
       ) : items.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div key="empty" className="flex flex-col items-center justify-center py-20 text-center">
           <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4"><Package className="w-6 h-6 text-slate-300" /></div>
           <h3 className="font-heading text-base font-bold text-navy-900 mb-1">No items yet</h3>
           <p className="text-sm text-slate-400">Add items to start normalizing invoice data.</p>
         </div>
       ) : (
-        <Card className="border border-slate-100 shadow-sm overflow-hidden">
+        <Card key="data" className="border border-slate-100 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>

@@ -1,0 +1,82 @@
+{
+  "summary": "All 10 tests PASSED. The SHARED first-insert bug fix is verified working. Adding key props (key='loading'|'empty'|'data') to conditional rendering branches in Card components successfully prevents React DOM reconciliation errors when transitioning from empty state (0 records) to data state (1+ records). No crashes, no DOM errors across all list views.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_36.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Key fix verified: key='loading'|'empty'|'data' props added to conditional branches in ExpensesPage.js (RawMaterialsTab, SalariesTab, OtherExpensesTab), SalesPage.js, VendorsPage.js, ItemsPage.js, RecordsLibraryPage.js",
+    "URL.createObjectURL used instead of FileReader.readAsDataURL for image preview - prevents multi-MB base64 in VDOM",
+    "ItemAutocomplete is fully controlled with no internal state/useEffect - eliminates cascading re-renders",
+    "extractingRef guard prevents double-execution of extraction",
+    "Deterministic save flow: save API → await load(false) → setShowAdd(false)"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Created test data during testing: 1 raw material purchase ($100 - Test Vendor After Reset). Previous test data was reset.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The SHARED first-insert bug has been fixed. The key fix is adding key='loading'|'empty'|'data' to conditional rendering branches inside Card components. This prevents React from attempting to reconcile incompatible DOM subtrees when transitioning from empty state to table. All 10 tests passed including empty dashboard, first expense (CRITICAL), first salary (CRITICAL), first other expense (CRITICAL), first sale (CRITICAL), second expense, dashboard with data, mobile upload+extract, reset+re-add, and console error check.",
+  "tests_executed": {
+    "TEST_1_empty_dashboard": {
+      "status": "PASSED",
+      "description": "Dashboard with 0 data shows full UI - search, quick actions, donut charts ($0), market insights, empty data banner with 'Load Demo Data' button"
+    },
+    "TEST_2_first_expense_CRITICAL": {
+      "status": "PASSED",
+      "description": "First expense saved without crash: vendor='First Vendor', invoice='FIRST-001', item='Chicken', qty=5, price=10. List shows 1 row with $50.00. NO CRASH. This is the core bug test."
+    },
+    "TEST_3_first_salary_CRITICAL": {
+      "status": "PASSED",
+      "description": "First salary saved without crash: employee='John Chef', position='Head Chef', amount=$3000. List shows 1 row. NO CRASH."
+    },
+    "TEST_4_first_other_expense_CRITICAL": {
+      "status": "PASSED",
+      "description": "First other expense saved without crash: title='Rent', category='Rent', amount=$1500. List shows 1 row. NO CRASH."
+    },
+    "TEST_5_first_sale_CRITICAL": {
+      "status": "PASSED",
+      "description": "First sale saved without crash: total_sales=$5000, single day entry. List shows 1 row. NO CRASH."
+    },
+    "TEST_6_second_expense": {
+      "status": "PASSED",
+      "description": "Second expense saved: vendor='Second Vendor', invoice='SEC-001', item='Rice', qty=10, price=5. List shows 2 rows with $100.00 total."
+    },
+    "TEST_7_dashboard_with_data": {
+      "status": "PASSED",
+      "description": "Dashboard shows correct totals - Monthly Spending: $4.6k (Raw Materials $100.00, Salaries $3,000.00, Other $1,500.00), Monthly Sales: $5.0k"
+    },
+    "TEST_8_mobile_upload_extract": {
+      "status": "PASSED",
+      "description": "Mobile viewport (390x844) - Expenses → Add → upload test image → Extract button visible and clickable. No crash during or after extraction."
+    },
+    "TEST_9_reset_readd": {
+      "status": "PASSED",
+      "description": "Reset all data via Settings. Dashboard shows empty state UI with $0 values. Added 1 expense again ('Test Vendor After Reset', $100). No crash."
+    },
+    "TEST_10_console_errors": {
+      "status": "PASSED",
+      "description": "No 'insertBefore', 'insertOrAppendPlacementNode', 'Maximum call stack', 'Cannot read properties of undefined' errors in console. Navigated through all pages."
+    }
+  },
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}
