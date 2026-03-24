@@ -31,19 +31,11 @@ function mkItem(raw_name = '', quantity = 1, unit = 'kg', unit_price = 0, total 
 const OTHER_CATEGORIES = ['Rent', 'Electricity', 'Water', 'Gas', 'Maintenance', 'Equipment', 'Insurance', 'Marketing', 'Other'];
 
 // ======================== ITEM AUTOCOMPLETE ========================
+// Fully controlled: parent owns the value, component owns only dropdown open state.
+// No useEffect syncing — eliminates cascading re-renders on Safari after extraction.
 function ItemAutocomplete({ value, onChange, knownItems, index }) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState(value || '');
   const wrapperRef = useRef(null);
-
-  // Sync query from parent value only when value actually changes
-  const prevValueRef = useRef(value);
-  useEffect(() => {
-    if (value !== prevValueRef.current) {
-      prevValueRef.current = value;
-      setQuery(value || '');
-    }
-  }, [value]);
 
   useEffect(() => {
     const handler = (e) => { if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setOpen(false); };
@@ -52,18 +44,19 @@ function ItemAutocomplete({ value, onChange, knownItems, index }) {
     return () => { document.removeEventListener('mousedown', handler); document.removeEventListener('touchstart', handler); };
   }, []);
 
-  const q = query.toLowerCase().trim();
-  const filtered = (knownItems || []).filter(n => !q || n.toLowerCase().includes(q)).slice(0, 8);
-  const exactMatch = (knownItems || []).some(n => n.toLowerCase() === q);
+  const q = (value || '').toLowerCase().trim();
+  const safeItems = knownItems || [];
+  const filtered = safeItems.filter(n => !q || n.toLowerCase().includes(q)).slice(0, 8);
+  const exactMatch = safeItems.some(n => n.toLowerCase() === q);
 
   return (
     <div ref={wrapperRef} className="relative col-span-4">
       <Input
         className="text-xs h-8 w-full"
         placeholder="Item name"
-        value={query}
-        onChange={(e) => { const v = e.target.value; setQuery(v); onChange(v); setOpen(true); }}
-        onFocus={() => { if (knownItems && knownItems.length > 0) setOpen(true); }}
+        value={value || ''}
+        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => { if (safeItems.length > 0) setOpen(true); }}
         data-testid={`line-item-name-${index}`}
       />
       {open && (filtered.length > 0 || (q && !exactMatch)) && (
@@ -73,7 +66,7 @@ function ItemAutocomplete({ value, onChange, knownItems, index }) {
               key={name}
               type="button"
               className={`w-full text-left px-3 py-1.5 text-xs hover:bg-teal-50 transition-colors ${name.toLowerCase() === q ? 'bg-teal-50 font-semibold text-teal-700' : 'text-navy-900'}`}
-              onMouseDown={(e) => { e.preventDefault(); setQuery(name); onChange(name); setOpen(false); }}
+              onMouseDown={(e) => { e.preventDefault(); onChange(name); setOpen(false); }}
               data-testid={`item-option-${name}`}
             >
               {name}
@@ -83,7 +76,7 @@ function ItemAutocomplete({ value, onChange, knownItems, index }) {
             <>
               {filtered.length > 0 && <div className="border-t border-slate-100" />}
               <div className="px-3 py-1.5 text-[10px] text-slate-400 italic">
-                Use "{query}" as new item
+                Use "{value}" as new item
               </div>
             </>
           )}
@@ -139,6 +132,7 @@ function RawMaterialsTab({ api }) {
 
   const openAdd = () => {
     setForm({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [mkItem()], subtotal: 0, tax: 0, total: 0 });
+    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
     setUploadFile(null); setUploadPreview(null); setShowAdd(true);
     api.get('/items').then(res => {
       const names = [];
@@ -149,12 +143,32 @@ function RawMaterialsTab({ api }) {
       setKnownItems([...new Set(names)].sort());
     }).catch(() => {});
   };
-  const handleFileSelect = (f) => { if (!f) return; setUploadFile(f); if (f.type.startsWith('image/')) { const r = new FileReader(); r.onload = (e) => setUploadPreview(e.target.result); r.readAsDataURL(f); } else setUploadPreview(null); };
-  const clearFile = () => { setUploadFile(null); setUploadPreview(null); };
+  // Use object URLs instead of base64 data URLs for image preview.
+  // iPhone photos can be 5-15MB; base64 inflates that by 33%.
+  // React diffs this string on every re-render — on Safari's smaller stack, this overflows.
+  const handleFileSelect = (f) => {
+    if (!f) return;
+    // Revoke previous object URL to prevent memory leaks
+    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
+    setUploadFile(f);
+    if (f.type.startsWith('image/')) {
+      setUploadPreview(URL.createObjectURL(f));
+    } else {
+      setUploadPreview(null);
+    }
+  };
+  const clearFile = () => {
+    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
+    setUploadFile(null);
+    setUploadPreview(null);
+  };
   const isExcelFile = (f) => { const n = (f?.name || '').toLowerCase(); return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv'); };
 
+  const extractingRef = useRef(false);
   const handleExtract = async () => {
-    if (!uploadFile) return; setExtracting(true);
+    if (!uploadFile || extractingRef.current) return;
+    extractingRef.current = true;
+    setExtracting(true);
     try {
       const fd = new FormData(); fd.append('file', uploadFile); fd.append('document_type', 'purchase_invoice');
       const ep = isExcelFile(uploadFile) ? '/upload/parse-excel' : '/upload/extract';
@@ -174,7 +188,7 @@ function RawMaterialsTab({ api }) {
       });
       toast.success(res.data.message || 'Data extracted! Review and save.');
     } catch (err) { toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.')); }
-    finally { setExtracting(false); }
+    finally { setExtracting(false); extractingRef.current = false; }
   };
 
   const handleSave = async () => {

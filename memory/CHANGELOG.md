@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-03-24 — iOS Safari "Maximum call stack size exceeded" Fix
+
+### Root cause (3 issues combined)
+1. **`FileReader.readAsDataURL()`** stored 4-16MB base64 strings in React state for iPhone photos (12MP+). On every re-render triggered by form updates, React diffed this massive string in the VDOM. Safari's smaller call stack (~10K frames vs Chrome's ~15K) overflowed during recursive reconciliation.
+2. **`ItemAutocomplete` had internal `query` state synced from `value` via `useEffect`**. After extraction populated 10+ items, each autocomplete fired `useEffect → setQuery → re-render`, causing cascading renders.
+3. **No double-execution guard** on `handleExtract` — on mobile, tapping Extract could trigger it twice.
+
+### Fixes
+- Replaced `FileReader.readAsDataURL()` with `URL.createObjectURL()` — preview uses ~50-byte blob URL, not multi-MB base64
+- Added `URL.revokeObjectURL()` cleanup in `clearFile`, `openAdd`, and `openAddForm`
+- Made `ItemAutocomplete` fully controlled — removed internal `query` state and `useEffect` sync entirely. Uses `value` prop directly.
+- Added `extractingRef` guard to prevent double execution of `handleExtract`
+- Added `touchstart` event listener for mobile dropdown close
+- Files: `ExpensesPage.js`, `SalesPage.js`
+
 ## 2026-03-24 — Deterministic Save Flow (removed setTimeout hacks)
 
 ### Architecture change

@@ -83,6 +83,7 @@ export default function SalesPage() {
 
   const openAddForm = () => {
     setForm(emptySale());
+    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
     setUploadFile(null);
     setUploadPreview(null);
     setShowAdd(true);
@@ -90,17 +91,17 @@ export default function SalesPage() {
 
   const handleFileSelect = (file) => {
     if (!file) return;
+    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
     setUploadFile(file);
     if (file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = (e) => setUploadPreview(e.target.result);
-      reader.readAsDataURL(file);
+      setUploadPreview(URL.createObjectURL(file));
     } else {
       setUploadPreview(null);
     }
   };
 
   const clearFile = () => {
+    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
     setUploadFile(null);
     setUploadPreview(null);
   };
@@ -110,8 +111,10 @@ export default function SalesPage() {
     return name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv');
   };
 
+  const extractingRef = useRef(false);
   const handleExtract = async () => {
-    if (!uploadFile) return;
+    if (!uploadFile || extractingRef.current) return;
+    extractingRef.current = true;
     setExtracting(true);
     try {
       const formData = new FormData();
@@ -135,7 +138,7 @@ export default function SalesPage() {
       toast.success(msg);
     } catch (err) {
       toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.'));
-    } finally { setExtracting(false); }
+    } finally { setExtracting(false); extractingRef.current = false; }
   };
 
   const handleSave = async () => {
