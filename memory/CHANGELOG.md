@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-03-24 — Deterministic Save Flow (removed setTimeout hacks)
+
+### Architecture change
+- **Old**: save → close dialog → useEffect detects close → setTimeout(300ms) → refresh list
+- **New**: save → await load(false) while dialog still open → close dialog after list is settled
+
+### What changed
+- `ExpensesPage.js` (RawMaterialsTab, SalariesTab, OtherExpensesTab): Removed `savedRef`, removed `useEffect` watching `showAdd`, doSave now does `await load(false)` before `setShowAdd(false)`
+- `SalesPage.js`: Same pattern
+- `DuplicateCheck.js`: `confirmSave` removed setTimeout, calls saveFn directly
+
+### Why this is correct
+- List refresh happens while dialog DOM is stable (no animation conflict)
+- Dialog closes only after data is settled (deterministic)
+- No race conditions, no timing assumptions, no cleanup required
+
 ## 2026-03-24 — Critical Stability Bug Fixes (3 bugs)
 
 ### Bug 3: Dashboard disappears after reset → FIXED
