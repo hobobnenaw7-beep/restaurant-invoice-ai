@@ -36,9 +36,12 @@ export function useDuplicateCheck() {
     pendingSaveRef.current = null;
     setShowWarning(false);
     setDuplicates([]);
-    // Call save directly — no artificial delay needed.
-    // The warning dialog uses a Portal so its DOM cleanup won't conflict.
-    if (saveFn) await saveFn();
+    // Delay save until after warning dialog exit animation completes
+    // to prevent DOM conflict between two simultaneous dialog animations
+    if (saveFn) {
+      await new Promise(r => setTimeout(r, 300));
+      await saveFn();
+    }
   }, []);
 
   const cancelSave = useCallback(() => {

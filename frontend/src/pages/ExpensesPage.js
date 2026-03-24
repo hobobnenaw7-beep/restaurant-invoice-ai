@@ -117,10 +117,12 @@ function RawMaterialsTab({ api }) {
   useEffect(() => { load(true); }, [load]);
 
   // Refresh list when dialog closes after a successful save
+  // Use a timeout to let dialog exit animation complete before DOM changes
   useEffect(() => {
     if (!showAdd && savedRef.current) {
       savedRef.current = false;
-      load(false); // background refresh — no skeleton flash
+      const timer = setTimeout(() => load(false), 300);
+      return () => clearTimeout(timer);
     }
   }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -321,7 +323,11 @@ function SalariesTab({ api }) {
   useEffect(() => { load(true); }, [load]);
 
   useEffect(() => {
-    if (!showAdd && savedRef.current) { savedRef.current = false; load(false); }
+    if (!showAdd && savedRef.current) {
+      savedRef.current = false;
+      const timer = setTimeout(() => load(false), 300);
+      return () => clearTimeout(timer);
+    }
   }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/salaries/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };
@@ -410,7 +416,11 @@ function OtherExpensesTab({ api }) {
   useEffect(() => { load(true); }, [load]);
 
   useEffect(() => {
-    if (!showAdd && savedRef.current) { savedRef.current = false; load(false); }
+    if (!showAdd && savedRef.current) {
+      savedRef.current = false;
+      const timer = setTimeout(() => load(false), 300);
+      return () => clearTimeout(timer);
+    }
   }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/other-expenses/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };

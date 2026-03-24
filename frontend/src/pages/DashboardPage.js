@@ -900,12 +900,12 @@ export default function DashboardPage() {
 
   if (loading) return <LoadingSkeleton />;
 
-  const isEmpty = !data || (
-    (data.month_raw_materials || 0) === 0 &&
-    (data.month_salaries || 0) === 0 &&
-    (data.month_other_expenses || 0) === 0
+  const hasData = data && (
+    (data.month_raw_materials || 0) > 0 ||
+    (data.month_salaries || 0) > 0 ||
+    (data.month_other_expenses || 0) > 0 ||
+    (data.month_sales || 0) > 0
   );
-  if (isEmpty) return <EmptyDashboard onSeed={seedData} seeding={seeding} />;
 
   return (
     <div className="space-y-5 max-w-[1100px]" data-testid="dashboard-page">
@@ -918,22 +918,35 @@ export default function DashboardPage() {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <QuickActions navigate={navigate} />
-        <DataFreshness lastUpdate={data.last_data_update} purchaseCount={data.purchase_count} />
+        {hasData && <DataFreshness lastUpdate={data.last_data_update} purchaseCount={data.purchase_count} />}
       </div>
+
+      {!hasData && (
+        <Card className="border-2 border-dashed border-slate-200 shadow-sm" data-testid="empty-data-banner">
+          <CardContent className="py-8 text-center">
+            <BarChart3 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <h2 className="font-heading text-base font-bold text-navy-900 mb-1">No financial data yet</h2>
+            <p className="text-xs text-slate-400 mb-4 max-w-sm mx-auto">Upload your first invoice or add an expense to see your charts come to life.</p>
+            <Button onClick={seedData} disabled={seeding} variant="outline" size="sm" className="text-xs" data-testid="seed-data-btn">
+              {seeding ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null} Load Demo Data
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="dashboard-main-row">
         <DonutChart
-          raw={data.month_raw_materials || 0}
-          salaries={data.month_salaries || 0}
-          other={data.month_other_expenses || 0}
-          prevRaw={data.prev_month_raw_materials || 0}
-          prevSalaries={data.prev_month_salaries || 0}
-          prevOther={data.prev_month_other_expenses || 0}
+          raw={data?.month_raw_materials || 0}
+          salaries={data?.month_salaries || 0}
+          other={data?.month_other_expenses || 0}
+          prevRaw={data?.prev_month_raw_materials || 0}
+          prevSalaries={data?.prev_month_salaries || 0}
+          prevOther={data?.prev_month_other_expenses || 0}
           onCategoryClick={openDrillDown}
         />
         <SalesDonut
-          sales={data.month_sales || 0}
-          prevSales={data.prev_month_sales || 0}
+          sales={data?.month_sales || 0}
+          prevSales={data?.prev_month_sales || 0}
           onCategoryClick={openDrillDown}
         />
         <MarketInsights alerts={smartAlerts} />

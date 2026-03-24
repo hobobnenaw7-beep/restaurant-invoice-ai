@@ -1561,6 +1561,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             await db.suppliers.insert_one(vendor_doc)
+            vendor_doc.pop("_id", None)
             logger.info(f"Auto-created vendor: {supplier_name}")
 
     # --- Auto-create items if new ---
@@ -1580,6 +1581,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             await db.canonical_items.insert_one(item_doc)
+            item_doc.pop("_id", None)
             logger.info(f"Auto-created item: {raw_name}")
 
     # --- Generate price alerts for items with price increases ---

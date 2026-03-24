@@ -63,7 +63,11 @@ export default function SalesPage() {
 
   // Refresh list when dialog closes after a successful save
   useEffect(() => {
-    if (!showAdd && savedRef.current) { savedRef.current = false; load(false); }
+    if (!showAdd && savedRef.current) {
+      savedRef.current = false;
+      const timer = setTimeout(() => load(false), 300);
+      return () => clearTimeout(timer);
+    }
   }, [showAdd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleSort = (field) => {
