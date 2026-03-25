@@ -1167,6 +1167,28 @@ async def parse_excel(file: UploadFile = File(...), document_type: str = Form("p
         logger.error(f"Excel parse error: {e}")
         raise HTTPException(500, f"Failed to parse file: {str(e)}")
 
+
+def _normalize_date(raw: str) -> str:
+    """Try to parse various date formats and return YYYY-MM-DD."""
+    if not raw or not raw.strip():
+        return ""
+    raw = raw.strip()
+    from dateutil import parser as dateparser
+    try:
+        dt = dateparser.parse(raw, dayfirst=False)
+        if dt:
+            return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    try:
+        dt = dateparser.parse(raw, dayfirst=True)
+        if dt:
+            return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return raw
+
+
 @api_router.post("/upload/extract")
 async def extract_document(file: UploadFile = File(...), document_type: str = Form(...), user=Depends(get_user)):
     try:
@@ -1194,13 +1216,17 @@ async def extract_document(file: UploadFile = File(...), document_type: str = Fo
             prompt = """You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
 {"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{"raw_name":"","quantity":0,"unit":"","unit_price":0,"total":0}],"subtotal":0,"tax":0,"total":0}
 
-Rules:
-- For each line item, calculate total = quantity × unit_price if not shown
-- If unit_price is missing but total and quantity are known, calculate unit_price = total / quantity
+CRITICAL rules for line items:
+- Look for patterns like: "2 x 5.00", "5.00 x 2", "2 @ 5.00", "Qty 2 Price 5.00"
+- In columnar layouts, match quantity + unit price + total from the same row
+- total = quantity × unit_price for each line item
+- If unit_price is missing but total and quantity are known: unit_price = total / quantity
+- If quantity is missing but total and unit_price are known: quantity = total / unit_price
 - subtotal = sum of all item totals
 - total = subtotal + tax
-- Dates must be in YYYY-MM-DD format
+- Dates must be in YYYY-MM-DD format. Convert any date format you see.
 - Use 0 for any truly missing numeric values
+- Include the unit of measure (kg, lb, each, box, case, etc.) when visible
 - Return ONLY the JSON object, no other text."""
         else:
             prompt = """You are reading a restaurant sales report or receipt. Extract ALL data into this exact JSON format:
@@ -1225,24 +1251,82 @@ Rules:
         else:
             extracted = {"error": "Could not parse extraction results"}
 
-        # Post-process: validate and fix calculations
+        # Post-process: validate and fix calculations, add confidence flags
         if "error" not in extracted:
             if document_type == "purchase_invoice":
-                for item in extracted.get("items", []):
+                warnings = []
+                for idx, item in enumerate(extracted.get("items", [])):
                     qty = float(item.get("quantity", 0) or 0)
                     up = float(item.get("unit_price", 0) or 0)
                     tot = float(item.get("total", 0) or 0)
+                    item_warnings = []
+
+                    # Fill missing values
                     if tot == 0 and qty > 0 and up > 0:
                         item["total"] = round(qty * up, 2)
+                        tot = item["total"]
                     elif up == 0 and tot > 0 and qty > 0:
                         item["unit_price"] = round(tot / qty, 2)
+                        up = item["unit_price"]
                     elif qty == 0 and tot > 0 and up > 0:
                         item["quantity"] = round(tot / up, 2)
+                        qty = item["quantity"]
+
+                    # Cross-check: qty * unit_price should equal total
+                    if qty > 0 and up > 0 and tot > 0:
+                        expected = round(qty * up, 2)
+                        if abs(expected - tot) > 0.02:
+                            item_warnings.append(f"qty×price={expected} but total={tot}")
+                            item["_warning"] = True
+
+                    # Flag zero/missing fields
+                    if qty == 0:
+                        item_warnings.append("missing quantity")
+                        item["_warning"] = True
+                    if up == 0 and tot == 0:
+                        item_warnings.append("missing price and total")
+                        item["_warning"] = True
+                    if not item.get("raw_name", "").strip():
+                        item_warnings.append("missing item name")
+                        item["_warning"] = True
+
+                    if item_warnings:
+                        item["_warning_detail"] = "; ".join(item_warnings)
+                        warnings.extend(item_warnings)
+
                 items_sum = round(sum(float(it.get("total", 0) or 0) for it in extracted.get("items", [])), 2)
                 if not extracted.get("subtotal") and items_sum > 0:
                     extracted["subtotal"] = items_sum
                 if not extracted.get("total") and items_sum > 0:
                     extracted["total"] = round(items_sum + float(extracted.get("tax", 0) or 0), 2)
+
+                # Cross-check subtotal vs items sum
+                subtotal = float(extracted.get("subtotal", 0) or 0)
+                if items_sum > 0 and subtotal > 0 and abs(items_sum - subtotal) > 0.10:
+                    warnings.append(f"Items sum ({items_sum}) differs from subtotal ({subtotal})")
+                    extracted["_subtotal_warning"] = True
+
+                # Cross-check total vs subtotal + tax
+                total = float(extracted.get("total", 0) or 0)
+                tax = float(extracted.get("tax", 0) or 0)
+                if subtotal > 0 and total > 0:
+                    expected_total = round(subtotal + tax, 2)
+                    if abs(expected_total - total) > 0.10:
+                        warnings.append(f"subtotal+tax={expected_total} but total={total}")
+                        extracted["_total_warning"] = True
+
+                # Normalize date
+                raw_date = extracted.get("invoice_date", "")
+                if raw_date:
+                    normalized = _normalize_date(raw_date)
+                    if normalized != raw_date:
+                        extracted["invoice_date"] = normalized
+                        if not normalized:
+                            warnings.append(f"Could not parse date: {raw_date}")
+                            extracted["_date_warning"] = True
+
+                extracted["_warnings"] = warnings
+                extracted["_has_warnings"] = len(warnings) > 0
 
         return {"extracted_data": extracted, "document_type": document_type}
     except Exception as e:

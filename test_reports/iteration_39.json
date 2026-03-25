@@ -1,0 +1,99 @@
+{
+  "summary": "All 14 tests PASSED. Verified extraction review features: auto-recalculation (qty×price→line total), editable line totals, tax calculation, multiple items, add/remove items, save flows for all expense types and sales, tab switching, button text 'Confirm & Save', and backend warning endpoint.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_extraction_review.py",
+    "/app/test_reports/pytest/pytest_extraction_review.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AUTO-RECALC VERIFIED: updateItem in ExpensesPage.js (line 129) correctly recalculates line total when qty or price changes, and clears warning flags",
+    "EDITABLE LINE TOTALS VERIFIED: Line total is now an <input type='number'> with data-testid='line-item-total-0' (line 348)",
+    "TAX CALCULATION VERIFIED: Total = subtotal + tax, recalculated on tax change (line 357)",
+    "WARNING SYSTEM VERIFIED: Backend returns _has_warnings, _warnings, _subtotal_warning, _total_warning, _date_warning fields (server.py lines 1303-1329)",
+    "BUTTON TEXT VERIFIED: Save button says 'Confirm & Save' (line 361)"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (10/10 tests passed)",
+    "frontend": "100% (14/14 tests passed)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Created and cleaned up TEST_ prefixed data during testing",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Extraction review features fully tested and working. Auto-recalculation, editable line totals, warning system, and all CRUD operations verified. App is clean (test data removed).",
+  "tests_executed": {
+    "TEST_1_auto_recalc": {
+      "status": "PASSED",
+      "description": "Add expense → set qty=5, price=10 → line total auto-fills to 50. Subtotal=50, Total=50."
+    },
+    "TEST_2_edit_line_total": {
+      "status": "PASSED",
+      "description": "Change line total from 50 to 55 → subtotal and total update to 55"
+    },
+    "TEST_3_edit_tax": {
+      "status": "PASSED",
+      "description": "Set tax=5 → total becomes subtotal+5 (55+5=60)"
+    },
+    "TEST_4_multiple_items": {
+      "status": "PASSED",
+      "description": "Add 3 items with different prices (20+45+35=100). Subtotal = sum of all line totals. Total = subtotal + tax (100+10=110)."
+    },
+    "TEST_5_add_remove_items": {
+      "status": "PASSED",
+      "description": "Add item button creates new row. Delete button removes row. Totals recalculate."
+    },
+    "TEST_6_save_from_empty": {
+      "status": "PASSED",
+      "description": "First expense save works, list shows 1 row."
+    },
+    "TEST_7_second_save": {
+      "status": "PASSED",
+      "description": "Add another expense. List shows 2 rows."
+    },
+    "TEST_8_salary_save": {
+      "status": "PASSED",
+      "description": "Salaries tab → add → save. No crash."
+    },
+    "TEST_9_other_expense_save": {
+      "status": "PASSED",
+      "description": "Other tab → add → save. No crash."
+    },
+    "TEST_10_sale_save": {
+      "status": "PASSED",
+      "description": "Sales page → add → save. No crash."
+    },
+    "TEST_11_tab_switching": {
+      "status": "PASSED",
+      "description": "Switch between Raw Materials, Salaries, Other tabs. No crash."
+    },
+    "TEST_12_button_text": {
+      "status": "PASSED",
+      "description": "Save button says 'Confirm & Save', not 'Save Purchase'"
+    },
+    "TEST_13_line_total_editable": {
+      "status": "PASSED",
+      "description": "Line total input is an editable number field with data-testid='line-item-total-0'"
+    },
+    "TEST_14_backend_warning_endpoint": {
+      "status": "PASSED",
+      "description": "POST /api/upload/extract with a tiny test image returns valid JSON with _has_warnings and _warnings fields"
+    }
+  },
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}

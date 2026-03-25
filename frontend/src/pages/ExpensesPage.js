@@ -15,7 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import {
   Search, Loader2, Eye, Trash2, ChevronUp, ChevronDown,
-  Plus, Upload, Sparkles, FileText, X,
+  Plus, Upload, Sparkles, FileText, X, AlertTriangle,
   Camera, Image as ImageIcon, FileUp, Sheet,
   Receipt, Beef, Users2, Wrench
 } from 'lucide-react';
@@ -24,8 +24,8 @@ import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/Duplicat
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
 function nextKey() { return `k${++_keySeq}_${Date.now()}`; }
-function mkItem(raw_name = '', quantity = 1, unit = 'kg', unit_price = 0, total = 0) {
-  return { _key: nextKey(), raw_name, quantity, unit, unit_price, total };
+function mkItem(raw_name = '', quantity = 1, unit = 'kg', unit_price = 0, total = 0, warning = false, warning_detail = '') {
+  return { _key: nextKey(), raw_name, quantity, unit, unit_price, total, _warning: warning, _warning_detail: warning_detail };
 }
 
 const OTHER_CATEGORIES = ['Rent', 'Electricity', 'Water', 'Gas', 'Maintenance', 'Equipment', 'Insurance', 'Marketing', 'Other'];
@@ -126,7 +126,7 @@ function RawMaterialsTab({ api }) {
     const subtotal = round2(lineItems.reduce((s, it) => s + (parseFloat(it.total) || 0), 0));
     return { subtotal, total: round2(subtotal + (parseFloat(tax) || 0)) };
   };
-  const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
+  const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') { it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); it[idx]._warning = false; it[idx]._warning_detail = ''; } if (k === 'total') { it[idx]._warning = false; it[idx]._warning_detail = ''; } const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
   const removeItem = (idx) => setForm(f => { const newItems = f.items.filter((_, i) => i !== idx); const totals = recalcTotals(newItems, f.tax); return { ...f, items: newItems, ...totals }; });
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, mkItem()] }));
 
@@ -175,18 +175,28 @@ function RawMaterialsTab({ api }) {
       const res = await api.post(ep, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
       const d = res.data?.extracted_data || {};
       const items = Array.isArray(d.items) ? d.items : [];
+      const hasWarnings = d._has_warnings || false;
       setForm({
         supplier_name: d.supplier_name || '',
         invoice_number: d.invoice_number || '',
         invoice_date: d.invoice_date || new Date().toISOString().split('T')[0],
         items: items.length > 0
-          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.unit || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0))
+          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.unit || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, !!it._warning, it._warning_detail || ''))
           : [mkItem()],
         subtotal: parseFloat(d.subtotal) || 0,
         tax: parseFloat(d.tax) || 0,
         total: parseFloat(d.total) || 0,
+        _has_warnings: hasWarnings,
+        _warnings: d._warnings || [],
+        _subtotal_warning: d._subtotal_warning || false,
+        _total_warning: d._total_warning || false,
+        _date_warning: d._date_warning || false,
       });
-      toast.success(res.data.message || 'Data extracted! Review and save.');
+      if (hasWarnings) {
+        toast.warning('Some fields need review — highlighted in yellow');
+      } else {
+        toast.success(res.data.message || 'Data extracted! Review and save.');
+      }
     } catch (err) { toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.')); }
     finally { setExtracting(false); extractingRef.current = false; }
   };
@@ -196,7 +206,8 @@ function RawMaterialsTab({ api }) {
     const doSave = async () => {
       setSaving(true);
       try {
-        const payload = { ...form, items: form.items.map(({ _key, ...rest }) => rest) };
+        const payload = { ...form, items: form.items.map(({ _key, _warning, _warning_detail, ...rest }) => rest) };
+        delete payload._has_warnings; delete payload._warnings; delete payload._subtotal_warning; delete payload._total_warning; delete payload._date_warning;
         const res = await api.post('/purchases', payload);
         if (uploadFile && res.data?.id) {
           try {
@@ -309,31 +320,45 @@ function RawMaterialsTab({ api }) {
             <input ref={fileExcelRef} type="file" className="hidden" accept=".xlsx,.xls,.csv" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
           </div>
           <Separator />
+          {/* Warning banner for OCR review */}
+          {form._has_warnings && (
+            <div className="flex items-start gap-2.5 p-3 rounded-lg bg-amber-50 border border-amber-200" data-testid="ocr-warning-banner">
+              <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-amber-800">Review needed</p>
+                <p className="text-[10px] text-amber-600 mt-0.5">Some extracted values may be inaccurate. Fields highlighted in yellow need your attention.</p>
+              </div>
+            </div>
+          )}
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Vendor *</Label><Input className="mt-1 h-9 text-sm" value={form.supplier_name} onChange={(e) => updateField('supplier_name', e.target.value)} placeholder="Vendor name" data-testid="form-vendor" /></div>
               <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Invoice #</Label><Input className="mt-1 h-9 text-sm" value={form.invoice_number} onChange={(e) => updateField('invoice_number', e.target.value)} placeholder="INV-001" data-testid="form-invoice-number" /></div>
-              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date</Label><Input className="mt-1 h-9 text-sm" type="date" value={form.invoice_date} onChange={(e) => updateField('invoice_date', e.target.value)} data-testid="form-invoice-date" /></div>
+              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date {form._date_warning && <AlertTriangle className="w-3 h-3 inline text-amber-500" />}</Label><Input className={`mt-1 h-9 text-sm ${form._date_warning ? 'border-amber-300 bg-amber-50/50' : ''}`} type="date" value={form.invoice_date} onChange={(e) => { updateField('invoice_date', e.target.value); setForm(f => ({ ...f, _date_warning: false })); }} data-testid="form-invoice-date" /></div>
             </div>
             <div>
               <div className="flex items-center justify-between mb-2"><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Line Items</Label><Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={addItem} data-testid="add-line-item-btn"><Plus className="w-3 h-3 mr-1" /> Add Item</Button></div>
               <div className="space-y-1.5">{form.items.map((item, i) => (
-                <div key={item._key} className="grid grid-cols-12 gap-1.5 items-center bg-slate-50 rounded-lg p-2" data-testid={`line-item-${i}`}>
+                <div key={item._key} className={`grid grid-cols-12 gap-1.5 items-center rounded-lg p-2 ${item._warning ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'}`} data-testid={`line-item-${i}`}>
                   <ItemAutocomplete value={item.raw_name} onChange={(v) => updateItem(i, 'raw_name', v)} knownItems={knownItems} index={i} />
-                  <Input className="col-span-2 text-xs h-8" type="number" placeholder="Qty" value={item.quantity || ''} onChange={(e) => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} />
+                  <Input className={`col-span-2 text-xs h-8 ${item._warning && (!item.quantity) ? 'border-amber-300' : ''}`} type="number" placeholder="Qty" value={item.quantity || ''} onChange={(e) => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} />
                   <Input className="col-span-1 text-xs h-8" placeholder="Unit" value={item.unit} onChange={(e) => updateItem(i, 'unit', e.target.value)} />
-                  <Input className="col-span-2 text-xs h-8" type="number" step="0.01" placeholder="Price" value={item.unit_price || ''} onChange={(e) => updateItem(i, 'unit_price', parseFloat(e.target.value) || 0)} />
-                  <div className="col-span-3 flex items-center gap-1"><span className="text-xs font-semibold text-navy-900 tabular-nums flex-1 text-right">{fmt(item.total || (item.quantity * item.unit_price) || 0)}</span><Button size="sm" variant="ghost" className="h-6 w-6 p-0 flex-shrink-0" onClick={() => removeItem(i)}><Trash2 className="w-3 h-3 text-red-400" /></Button></div>
+                  <Input className={`col-span-2 text-xs h-8 ${item._warning && (!item.unit_price) ? 'border-amber-300' : ''}`} type="number" step="0.01" placeholder="Price" value={item.unit_price || ''} onChange={(e) => updateItem(i, 'unit_price', parseFloat(e.target.value) || 0)} />
+                  <div className="col-span-3 flex items-center gap-1">
+                    <Input className={`text-xs h-8 font-semibold tabular-nums flex-1 text-right ${item._warning ? 'border-amber-300' : ''}`} type="number" step="0.01" value={item.total || ''} onChange={(e) => updateItem(i, 'total', parseFloat(e.target.value) || 0)} data-testid={`line-item-total-${i}`} />
+                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 flex-shrink-0" onClick={() => removeItem(i)}><Trash2 className="w-3 h-3 text-red-400" /></Button>
+                  </div>
+                  {item._warning_detail && <p className="col-span-12 text-[9px] text-amber-600 -mt-0.5 pl-1"><AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />{item._warning_detail}</p>}
                 </div>
               ))}</div>
             </div>
             <div className="grid grid-cols-3 gap-3">
-              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Subtotal</Label><Input className="mt-1 h-9 text-sm bg-slate-50" type="number" step="0.01" value={form.subtotal || ''} readOnly tabIndex={-1} data-testid="form-subtotal" /></div>
+              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Subtotal {form._subtotal_warning && <AlertTriangle className="w-3 h-3 inline text-amber-500" />}</Label><Input className={`mt-1 h-9 text-sm ${form._subtotal_warning ? 'border-amber-300 bg-amber-50/50' : 'bg-slate-50'}`} type="number" step="0.01" value={form.subtotal || ''} readOnly tabIndex={-1} data-testid="form-subtotal" /></div>
               <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tax</Label><Input className="mt-1 h-9 text-sm" type="number" step="0.01" value={form.tax || ''} onChange={(e) => { const tax = parseFloat(e.target.value) || 0; setForm(f => ({ ...f, tax, total: round2(f.subtotal + tax) })); }} data-testid="form-tax" /></div>
-              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total</Label><Input className="mt-1 h-9 text-sm font-bold bg-slate-50" type="number" step="0.01" value={form.total || ''} readOnly tabIndex={-1} data-testid="form-total" /></div>
+              <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total {form._total_warning && <AlertTriangle className="w-3 h-3 inline text-amber-500" />}</Label><Input className={`mt-1 h-9 text-sm font-bold ${form._total_warning ? 'border-amber-300 bg-amber-50/50' : 'bg-slate-50'}`} type="number" step="0.01" value={form.total || ''} readOnly tabIndex={-1} data-testid="form-total" /></div>
             </div>
           </div>
-          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-raw-material-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Purchase</Button></div>
+          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-raw-material-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Confirm &amp; Save</Button></div>
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
