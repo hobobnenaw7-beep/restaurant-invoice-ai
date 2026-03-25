@@ -28,6 +28,29 @@
 ### Testing
 - 14/14 frontend tests passed (testing_agent_v3_fork iteration 42)
 
+## 2026-03-25 — Styled Delete Confirmation Dialogs
+
+### What was added
+- Created reusable `ConfirmDeleteDialog` component using shadcn AlertDialog
+- Replaced ALL browser `window.confirm()` calls with styled dialogs across the app
+- Added confirmation to line item removal (previously had no confirmation)
+
+### Scope
+- ExpensesPage.js: 3 record deletes + 1 line item delete (Raw Materials form)
+- SalesPage.js: 1 record delete + 1 menu item delete
+- VendorsPage.js: 1 vendor delete
+- ItemsPage.js: 1 item delete
+- VendorDetailPage.js: 1 purchase record delete
+
+### Behavior
+- Every delete shows a styled dialog with contextual message
+- Cancel button aborts the action
+- Delete button proceeds with optimistic update + API call
+- Line item delete recalculates totals automatically
+
+### Testing
+- 10/10 frontend tests passed (testing_agent_v3_fork iteration 43)
+
 
 
 ## 2026-03-25 — Edit Saved Records (All Expense Types)
