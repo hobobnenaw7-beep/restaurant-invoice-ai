@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-03-25 — Receipt Extraction Accuracy + Manual Correction Screen
+
+### Backend improvements
+- Enhanced GPT prompt with explicit receipt patterns (2×5, 5×2, 2@5, columnar layouts)
+- Post-processing now validates qty×price=total for each line item, flags mismatches
+- Cross-checks: items_sum vs subtotal, subtotal+tax vs total
+- Date normalization via python-dateutil (handles MM/DD/YYYY, DD-MM-YYYY, "March 25, 2026", etc.)
+- Returns `_has_warnings`, `_warnings[]`, per-item `_warning`/`_warning_detail`, `_subtotal_warning`, `_total_warning`, `_date_warning`
+
+### Frontend review screen
+- Line totals are now EDITABLE (was read-only)
+- Auto-recalculation: editing qty or price recalculates line total → subtotal → total
+- Editing tax recalculates total
+- OCR warning banner (amber) appears when extraction has issues
+- Per-item warning highlighting (amber background + detail message)
+- Warning flags on date/subtotal/total fields when mismatched
+- Button changed to "Confirm & Save" (clear intent)
+- Warning metadata stripped before sending to backend
+
 ## 2026-03-24 — WebView/In-App Browser insertBefore Crash Fix (FINAL)
 
 ### Root cause
