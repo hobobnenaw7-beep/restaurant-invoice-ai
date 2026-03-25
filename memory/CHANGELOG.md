@@ -1,4 +1,34 @@
 # Changelog
+## 2026-03-25 — Three Priority UX Fixes (Dashboard Nav, Delete, Edit Totals)
+
+### 1. Dashboard Click → Full Page Navigation (P0)
+- Clicking "Raw Materials", "Salaries", or "Other" on the donut chart now navigates to `/expenses` with the correct tab pre-selected
+- Full page navigation, not a modal or drill-down sheet
+- Sales donut still opens drill-down sheet (unchanged)
+- ExpensesPage reads `location.state.tab` and sets activeTab accordingly
+- Files: `DashboardPage.js` (openDrillDown), `ExpensesPage.js` (useLocation + useEffect)
+
+### 2. Optimistic Delete (P1)
+- All delete handlers now use optimistic UI: item removed from list instantly before API call
+- Totals in footer update immediately (computed from filtered list)
+- Dashboard re-fetches via `dataEvents.emit()` called immediately
+- On API failure, list rolls back to previous state
+- Fixed in: Raw Materials, Salaries, Other Expenses (ExpensesPage.js), Sales (SalesPage.js)
+- Testing agent also fixed SalesPage.js bug: was using `items`/`setItems` instead of `sales`/`setSales`
+
+### 3. Read-Only Totals in Edit Form (P2)
+- Line item total: changed from editable input to `readOnly` with `bg-slate-50` styling
+- Auto-recalculates from qty × price when either changes
+- Subtotal: already readOnly ✓
+- Grand Total: already readOnly ✓
+- Tax: remains editable ✓
+- Removed dead code for handling manual total edits in `updateItem`
+- Edit uses PUT to update existing record (not POST)
+
+### Testing
+- 14/14 frontend tests passed (testing_agent_v3_fork iteration 42)
+
+
 
 ## 2026-03-25 — Edit Saved Records (All Expense Types)
 
@@ -51,7 +81,7 @@ Lightweight event bus (`/lib/dataEvents.js`) with subscribe/emit pattern:
 - Returns `_has_warnings`, `_warnings[]`, per-item `_warning`/`_warning_detail`, `_subtotal_warning`, `_total_warning`, `_date_warning`
 
 ### Frontend review screen
-- Line totals are now EDITABLE (was read-only)
+- Line totals are READ-ONLY (auto-calculated from qty × price)
 - Auto-recalculation: editing qty or price recalculates line total → subtotal → total
 - Editing tax recalculates total
 - OCR warning banner (amber) appears when extraction has issues
