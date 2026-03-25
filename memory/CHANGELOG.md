@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-24 — Shared first-insert crash fix (insertBefore / insertOrAppendPlacementNode)
+
+### Root causes (2)
+1. **Save flow batching**: React 18 automatic batching combined `setItems` (empty→data DOM swap) + `setShowAdd(false)` (Dialog Portal removal) + `setSaving(false)` into ONE render commit. React tried to place new DOM nodes using `insertBefore` with sibling references from the Portal that was simultaneously being torn down.
+2. **Tab switching unmount/remount**: Conditional rendering (`{activeTab === 'x' && <Tab />}`) destroyed entire tab components on switch, causing state loss, fresh API calls, and DOM reconstruction conflicts during the empty→skeleton→data transition.
+
+### Fixes
+1. **Save flow**: All 4 `doSave` functions now call `setShowAdd(false)` FIRST (closes dialog), then `load(true)` (fire-and-forget). Dialog close + loading=true batch into ONE safe render (Portal removed + skeleton shown). Items arrive later in a SEPARATE render (skeleton→table). No batching conflict.
+2. **Tab keep-alive**: All 3 expense tabs are always mounted; inactive tabs hidden with `display:none`. No unmount/remount cycles.
+- Files: `ExpensesPage.js`, `SalesPage.js`
+
 ## 2026-03-24 — iOS Safari "Maximum call stack size exceeded" Fix
 
 ### Root cause (3 issues combined)
