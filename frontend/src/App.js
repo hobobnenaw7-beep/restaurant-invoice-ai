@@ -2,6 +2,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
+import { StableErrorBoundary } from "@/components/StableErrorBoundary";
 import Layout from "@/components/Layout";
 import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -23,7 +24,7 @@ function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex h-screen items-center justify-center"><div className="animate-spin w-8 h-8 border-2 border-teal-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
-  return <Layout>{children}</Layout>;
+  return <Layout><StableErrorBoundary>{children}</StableErrorBoundary></Layout>;
 }
 
 function PublicRoute({ children }) {

@@ -237,9 +237,7 @@ function RawMaterialsTab({ api }) {
       </div>
 
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
-        {loading ? <div key="loading" className="p-5 space-y-3">{[1,2,3,4].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
-        : items.length === 0 ? <div key="empty" className="flex flex-col items-center py-12 text-center"><Beef className="w-10 h-10 text-slate-300 mb-3" /><h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No raw material purchases</h3><p className="text-xs text-slate-400 mb-3">Upload an invoice or add manually</p><Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add</Button></div>
-        : <div key="data" className="overflow-x-auto">
+        <div className="overflow-x-auto">
           <Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
             <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('invoice_date')}>Date <SI field="invoice_date" /></TableHead>
             <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('supplier_name')}>Vendor <SI field="supplier_name" /></TableHead>
@@ -248,12 +246,23 @@ function RawMaterialsTab({ api }) {
             <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total')}>Total <SI field="total" /></TableHead>
             <TableHead className="w-20" />
           </TableRow></TableHeader><TableBody>
-            {items.map((p, i) => (
+            {loading ? [1,2,3,4].map(i => (
+              <TableRow key={`skel-${i}`}><TableCell colSpan={6}><Skeleton className="h-8 w-full rounded" /></TableCell></TableRow>
+            )) : items.length === 0 ? (
+              <TableRow><TableCell colSpan={6} className="h-40">
+                <div className="flex flex-col items-center justify-center text-center py-6">
+                  <Beef className="w-10 h-10 text-slate-300 mb-3" />
+                  <h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No raw material purchases</h3>
+                  <p className="text-xs text-slate-400 mb-3">Upload an invoice or add manually</p>
+                  <Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add</Button>
+                </div>
+              </TableCell></TableRow>
+            ) : items.map((p, i) => (
               <TableRow key={p.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} data-testid={`raw-material-row-${i}`}>
                 <TableCell className="text-xs tabular-nums text-slate-600">{p.invoice_date}</TableCell>
                 <TableCell className="text-xs font-semibold text-navy-900">{p.supplier_name}</TableCell>
                 <TableCell><Badge variant="outline" className="text-[10px] font-mono">{p.invoice_number}</Badge></TableCell>
-                <TableCell className="text-xs text-center text-slate-500">{p.items?.length || 0}</TableCell>
+                <TableCell className="text-xs text-center text-slate-500">{(p.items || []).length}</TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(p.total)}</TableCell>
                 <TableCell className="text-right"><div className="flex justify-end gap-0.5">
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(p)}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
@@ -262,8 +271,8 @@ function RawMaterialsTab({ api }) {
               </TableRow>
             ))}
           </TableBody></Table>
-          <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50"><p className="text-[11px] text-slate-400">{items.length} invoice{items.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-navy-900">{fmt(items.reduce((s, p) => s + (p.total || 0), 0))}</span></p></div>
-        </div>}
+          {items.length > 0 && <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50"><p className="text-[11px] text-slate-400">{items.length} invoice{items.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-navy-900">{fmt(items.reduce((s, p) => s + (p.total || 0), 0))}</span></p></div>}
+        </div>
       </Card>
 
       {/* View Detail */}
@@ -376,9 +385,8 @@ function SalariesTab({ api }) {
       </div>
 
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
-        {loading ? <div key="loading" className="p-5 space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
-        : items.length === 0 ? <div key="empty" className="flex flex-col items-center py-12 text-center"><Users2 className="w-10 h-10 text-slate-300 mb-3" /><h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No salary records</h3><p className="text-xs text-slate-400 mb-3">Track employee salary payments</p><Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add Salary</Button></div>
-        : <div key="data" className="overflow-x-auto"><Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+        <div className="overflow-x-auto">
+          <Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Employee</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Position</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date</TableHead>
@@ -386,7 +394,18 @@ function SalariesTab({ api }) {
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Notes</TableHead>
             <TableHead className="w-12" />
           </TableRow></TableHeader><TableBody>
-            {items.map((s, i) => (
+            {loading ? [1,2,3].map(i => (
+              <TableRow key={`skel-${i}`}><TableCell colSpan={6}><Skeleton className="h-8 w-full rounded" /></TableCell></TableRow>
+            )) : items.length === 0 ? (
+              <TableRow><TableCell colSpan={6} className="h-40">
+                <div className="flex flex-col items-center justify-center text-center py-6">
+                  <Users2 className="w-10 h-10 text-slate-300 mb-3" />
+                  <h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No salary records</h3>
+                  <p className="text-xs text-slate-400 mb-3">Track employee salary payments</p>
+                  <Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add Salary</Button>
+                </div>
+              </TableCell></TableRow>
+            ) : items.map((s, i) => (
               <TableRow key={s.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} data-testid={`salary-row-${i}`}>
                 <TableCell className="text-xs font-semibold text-navy-900">{s.employee_name}</TableCell>
                 <TableCell className="text-xs text-slate-500">{s.position}</TableCell>
@@ -397,8 +416,8 @@ function SalariesTab({ api }) {
               </TableRow>
             ))}
           </TableBody></Table>
-          <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50"><p className="text-[11px] text-slate-400">{items.length} record{items.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-navy-900">{fmt(items.reduce((s, r) => s + (r.amount || 0), 0))}</span></p></div>
-        </div>}
+          {items.length > 0 && <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50"><p className="text-[11px] text-slate-400">{items.length} record{items.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-navy-900">{fmt(items.reduce((s, r) => s + (r.amount || 0), 0))}</span></p></div>}
+        </div>
       </Card>
 
       <Dialog open={showAdd} onOpenChange={(v) => { if (!saving) setShowAdd(v); }}>
@@ -470,9 +489,8 @@ function OtherExpensesTab({ api }) {
       </div>
 
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
-        {loading ? <div key="loading" className="p-5 space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
-        : items.length === 0 ? <div key="empty" className="flex flex-col items-center py-12 text-center"><Wrench className="w-10 h-10 text-slate-300 mb-3" /><h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No other expenses</h3><p className="text-xs text-slate-400 mb-3">Track rent, utilities, and more</p><Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add Expense</Button></div>
-        : <div key="data" className="overflow-x-auto"><Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+        <div className="overflow-x-auto">
+          <Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Title</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Category</TableHead>
@@ -480,7 +498,18 @@ function OtherExpensesTab({ api }) {
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Notes</TableHead>
             <TableHead className="w-12" />
           </TableRow></TableHeader><TableBody>
-            {items.map((e, i) => (
+            {loading ? [1,2,3].map(i => (
+              <TableRow key={`skel-${i}`}><TableCell colSpan={6}><Skeleton className="h-8 w-full rounded" /></TableCell></TableRow>
+            )) : items.length === 0 ? (
+              <TableRow><TableCell colSpan={6} className="h-40">
+                <div className="flex flex-col items-center justify-center text-center py-6">
+                  <Wrench className="w-10 h-10 text-slate-300 mb-3" />
+                  <h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No other expenses</h3>
+                  <p className="text-xs text-slate-400 mb-3">Track rent, utilities, and more</p>
+                  <Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add Expense</Button>
+                </div>
+              </TableCell></TableRow>
+            ) : items.map((e, i) => (
               <TableRow key={e.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} data-testid={`other-expense-row-${i}`}>
                 <TableCell className="text-xs tabular-nums text-slate-600">{e.expense_date}</TableCell>
                 <TableCell className="text-xs font-semibold text-navy-900">{e.title}</TableCell>
@@ -491,8 +520,8 @@ function OtherExpensesTab({ api }) {
               </TableRow>
             ))}
           </TableBody></Table>
-          <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50"><p className="text-[11px] text-slate-400">{items.length} expense{items.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-navy-900">{fmt(items.reduce((s, r) => s + (r.amount || 0), 0))}</span></p></div>
-        </div>}
+          {items.length > 0 && <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50"><p className="text-[11px] text-slate-400">{items.length} expense{items.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-navy-900">{fmt(items.reduce((s, r) => s + (r.amount || 0), 0))}</span></p></div>}
+        </div>
       </Card>
 
       <Dialog open={showAdd} onOpenChange={(v) => { if (!saving) setShowAdd(v); }}>

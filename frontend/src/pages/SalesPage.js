@@ -198,59 +198,59 @@ export default function SalesPage() {
 
       {/* Table */}
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
-        {loading ? (
-          <div key="loading" className="p-5 space-y-3">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-11 w-full rounded-lg" />)}</div>
-        ) : sales.length === 0 ? (
-          <div key="empty" className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4"><DollarSign className="w-6 h-6 text-slate-300" /></div>
-            <h3 className="font-heading text-base font-bold text-navy-900 mb-1">No sales found</h3>
-            <p className="text-sm text-slate-400 max-w-xs mb-4">Add a sale or upload a sales report to get started.</p>
-            <Button onClick={openAddForm} variant="outline" size="sm" className="text-xs" data-testid="empty-add-sale-btn">
-              <Plus className="w-3.5 h-3.5 mr-1" /> Add Sale
-            </Button>
-          </div>
-        ) : (
-          <div key="data" className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-                  <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('report_date')}>Date <SI field="report_date" /></TableHead>
-                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Type</TableHead>
-                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Menu Items</TableHead>
-                  <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total_sales')}>Total Revenue <SI field="total_sales" /></TableHead>
-                  <TableHead className="w-20" />
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+                <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('report_date')}>Date <SI field="report_date" /></TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Type</TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Menu Items</TableHead>
+                <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total_sales')}>Total Revenue <SI field="total_sales" /></TableHead>
+                <TableHead className="w-20" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {loading ? [1,2,3,4,5].map(i => (
+                <TableRow key={`skel-${i}`}><TableCell colSpan={5}><Skeleton className="h-8 w-full rounded" /></TableCell></TableRow>
+              )) : sales.length === 0 ? (
+                <TableRow><TableCell colSpan={5} className="h-48">
+                  <div className="flex flex-col items-center justify-center text-center py-6">
+                    <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4"><DollarSign className="w-6 h-6 text-slate-300" /></div>
+                    <h3 className="font-heading text-base font-bold text-navy-900 mb-1">No sales found</h3>
+                    <p className="text-sm text-slate-400 max-w-xs mb-4">Add a sale or upload a sales report to get started.</p>
+                    <Button onClick={openAddForm} variant="outline" size="sm" className="text-xs" data-testid="empty-add-sale-btn">
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add Sale
+                    </Button>
+                  </div>
+                </TableCell></TableRow>
+              ) : sales.map((s, i) => (
+                <TableRow key={s.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} data-testid={`sale-row-${i}`}>
+                  <TableCell className="text-xs font-medium tabular-nums text-slate-600">
+                    {s.date_from && s.date_to && s.date_from !== s.date_to
+                      ? <>{s.date_from} <span className="text-slate-300 mx-0.5">&rarr;</span> {s.date_to}</>
+                      : s.date_from || s.report_date}
+                  </TableCell>
+                  <TableCell>
+                    {s.date_from && s.date_to && s.date_from !== s.date_to
+                      ? <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[9px] font-bold text-violet-600">{Math.round((new Date(s.date_to) - new Date(s.date_from)) / 86400000) + 1}d Range</span>
+                      : <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[9px] font-bold text-sky-600">1 Day</span>}
+                  </TableCell>
+                  <TableCell className="text-xs text-center text-slate-500">{(s.items || []).length}</TableCell>
+                  <TableCell className="text-xs text-right font-bold text-teal-700 tabular-nums">{fmt(s.total_sales)}</TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-0.5">
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(s)} data-testid={`view-sale-${i}`}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(s.id)} data-testid={`delete-sale-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sales.map((s, i) => (
-                  <TableRow key={s.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} data-testid={`sale-row-${i}`}>
-                    <TableCell className="text-xs font-medium tabular-nums text-slate-600">
-                      {s.date_from && s.date_to && s.date_from !== s.date_to
-                        ? <>{s.date_from} <span className="text-slate-300 mx-0.5">&rarr;</span> {s.date_to}</>
-                        : s.date_from || s.report_date}
-                    </TableCell>
-                    <TableCell>
-                      {s.date_from && s.date_to && s.date_from !== s.date_to
-                        ? <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[9px] font-bold text-violet-600">{Math.round((new Date(s.date_to) - new Date(s.date_from)) / 86400000) + 1}d Range</span>
-                        : <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[9px] font-bold text-sky-600">1 Day</span>}
-                    </TableCell>
-                    <TableCell className="text-xs text-center text-slate-500">{s.items?.length || 0}</TableCell>
-                    <TableCell className="text-xs text-right font-bold text-teal-700 tabular-nums">{fmt(s.total_sales)}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-0.5">
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(s)} data-testid={`view-sale-${i}`}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(s.id)} data-testid={`delete-sale-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50">
-              <p className="text-[11px] text-slate-400">{sales.length} report{sales.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-teal-700">{fmt(sales.reduce((s, r) => s + (r.total_sales || 0), 0))}</span></p>
-            </div>
-          </div>
-        )}
+              ))}
+            </TableBody>
+          </Table>
+          {sales.length > 0 && <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50">
+            <p className="text-[11px] text-slate-400">{sales.length} report{sales.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-teal-700">{fmt(sales.reduce((s, r) => s + (r.total_sales || 0), 0))}</span></p>
+          </div>}
+        </div>
       </Card>
 
       {/* View Detail Dialog */}
