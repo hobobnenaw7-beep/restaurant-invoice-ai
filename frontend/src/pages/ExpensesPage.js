@@ -98,6 +98,7 @@ function RawMaterialsTab({ api }) {
   const [sortOrder, setSortOrder] = useState('desc');
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [mkItem()], subtotal: 0, tax: 0, total: 0 });
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
@@ -132,6 +133,7 @@ function RawMaterialsTab({ api }) {
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, mkItem()] }));
 
   const openAdd = () => {
+    setEditingId(null);
     setForm({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [mkItem()], subtotal: 0, tax: 0, total: 0 });
     if (uploadPreview) URL.revokeObjectURL(uploadPreview);
     setUploadFile(null); setUploadPreview(null); setShowAdd(true);
@@ -144,6 +146,26 @@ function RawMaterialsTab({ api }) {
       setKnownItems([...new Set(names)].sort());
     }).catch(() => {});
   };
+  const openEdit = (record) => {
+    setEditingId(record.id);
+    setForm({
+      supplier_name: record.supplier_name || '',
+      invoice_number: record.invoice_number || '',
+      invoice_date: record.invoice_date || '',
+      items: (record.items || []).map(it => mkItem(it.raw_name || '', it.quantity || 0, it.unit || '', it.unit_price || 0, it.total || 0)),
+      subtotal: record.subtotal || 0,
+      tax: record.tax || 0,
+      total: record.total || 0,
+    });
+    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
+    setUploadFile(null); setUploadPreview(null); setShowAdd(true);
+    api.get('/items').then(res => {
+      const names = [];
+      (res.data || []).forEach(item => { names.push(item.name); (item.aliases || []).forEach(a => names.push(a.alias_name)); });
+      setKnownItems([...new Set(names)].sort());
+    }).catch(() => {});
+  };
+
   // Use object URLs instead of base64 data URLs for image preview.
   // iPhone photos can be 5-15MB; base64 inflates that by 33%.
   // React diffs this string on every re-render — on Safari's smaller stack, this overflows.
@@ -209,27 +231,27 @@ function RawMaterialsTab({ api }) {
       try {
         const payload = { ...form, items: form.items.map(({ _key, _warning, _warning_detail, ...rest }) => rest) };
         delete payload._has_warnings; delete payload._warnings; delete payload._subtotal_warning; delete payload._total_warning; delete payload._date_warning;
-        const res = await api.post('/purchases', payload);
-        if (uploadFile && res.data?.id) {
-          try {
-            const fd = new FormData();
-            fd.append('file', uploadFile);
-            fd.append('folder', 'expenses');
-            fd.append('transaction_type', 'raw_material');
-            fd.append('transaction_id', res.data.id);
-            fd.append('transaction_date', form.invoice_date || '');
-            fd.append('transaction_amount', form.total || 0);
-            fd.append('transaction_notes', `Invoice #${form.invoice_number || 'N/A'}`);
-            fd.append('vendor_name', form.supplier_name || '');
-            await api.post('/records/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-          } catch { /* silent */ }
+        if (editingId) {
+          await api.put(`/purchases/${editingId}`, payload);
+          toast.success('Updated');
+        } else {
+          const res = await api.post('/purchases', payload);
+          if (uploadFile && res.data?.id) {
+            try {
+              const fd = new FormData();
+              fd.append('file', uploadFile);
+              fd.append('folder', 'expenses');
+              fd.append('transaction_type', 'raw_material');
+              fd.append('transaction_id', res.data.id);
+              fd.append('transaction_date', form.invoice_date || '');
+              fd.append('transaction_amount', form.total || 0);
+              fd.append('transaction_notes', `Invoice #${form.invoice_number || 'N/A'}`);
+              fd.append('vendor_name', form.supplier_name || '');
+              await api.post('/records/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+            } catch { /* silent */ }
+          }
+          toast.success('Saved');
         }
-        toast.success('Saved');
-        // Close dialog FIRST — removes Portal from DOM in this render batch.
-        // Then fire load(true) which sets loading=true in the SAME batch.
-        // Result: one render that closes dialog + shows skeleton. 
-        // When API returns, items update in a SEPARATE render (skeleton→table).
-        // This prevents batching Portal removal with empty→table DOM swap.
         setShowAdd(false);
         load(true);
         dataEvents.emit();
@@ -237,7 +259,7 @@ function RawMaterialsTab({ api }) {
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
     };
-    await checkDuplicates('purchase', form, api, doSave);
+    if (editingId) { await doSave(); } else { await checkDuplicates('purchase', form, api, doSave); }
   };
 
   return (
@@ -278,8 +300,9 @@ function RawMaterialsTab({ api }) {
                 <TableCell className="text-xs text-center text-slate-500">{(p.items || []).length}</TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(p.total)}</TableCell>
                 <TableCell className="text-right"><div className="flex justify-end gap-0.5">
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(p)}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(p.id)}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(p)} data-testid={`view-purchase-${i}`}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(p)} data-testid={`edit-purchase-${i}`}><FileText className="w-3.5 h-3.5 text-blue-500" /></Button>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(p.id)} data-testid={`delete-purchase-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
                 </div></TableCell>
               </TableRow>
             ))}
@@ -306,7 +329,7 @@ function RawMaterialsTab({ api }) {
       {/* Add Dialog — prevent close during save */}
       <Dialog open={showAdd} onOpenChange={(v) => { if (!saving && !extracting) setShowAdd(v); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-heading text-lg">Add Raw Material Purchase</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-heading text-lg">{editingId ? 'Edit Purchase' : 'Add Raw Material Purchase'}</DialogTitle></DialogHeader>
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-4" data-testid="raw-material-upload-zone">
             {uploadFile ? <div className="space-y-3"><div className="flex items-center justify-between"><div className="flex items-center gap-2.5 min-w-0"><div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0">{uploadFile.type.startsWith('image/') ? <ImageIcon className="w-4 h-4 text-teal-600" /> : isExcelFile(uploadFile) ? <Sheet className="w-4 h-4 text-teal-600" /> : <FileText className="w-4 h-4 text-teal-600" />}</div><div className="min-w-0"><p className="text-xs font-semibold text-navy-900 truncate">{uploadFile.name}</p><p className="text-[10px] text-slate-400">{(uploadFile.size / 1024).toFixed(0)} KB</p></div></div><div className="flex gap-2 flex-shrink-0"><Button size="sm" variant="outline" className="h-8 text-xs" onClick={clearFile}><X className="w-3 h-3 mr-1" /> Remove</Button><Button size="sm" className="h-8 text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={handleExtract} disabled={extracting} data-testid="raw-material-extract-btn">{extracting ? <><Loader2 className="w-3 h-3 animate-spin mr-1" /> Extracting...</> : <><Sparkles className="w-3 h-3 mr-1" /> Extract Data</>}</Button></div></div>{uploadPreview && <div className="rounded-lg overflow-hidden border border-slate-200 max-h-40"><img src={uploadPreview} alt="Preview" className="w-full h-full object-contain max-h-40 bg-white" /></div>}</div>
             : <div className="space-y-3"><div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0"><Upload className="w-4 h-4 text-teal-600" /></div><div><p className="text-xs font-semibold text-navy-900">Upload a purchase invoice</p><p className="text-[10px] text-slate-400">AI will extract vendor, items, and totals</p></div></div>
@@ -360,7 +383,7 @@ function RawMaterialsTab({ api }) {
               <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total {form._total_warning && <AlertTriangle className="w-3 h-3 inline text-amber-500" />}</Label><Input className={`mt-1 h-9 text-sm font-bold ${form._total_warning ? 'border-amber-300 bg-amber-50/50' : 'bg-slate-50'}`} type="number" step="0.01" value={form.total || ''} readOnly tabIndex={-1} data-testid="form-total" /></div>
             </div>
           </div>
-          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-raw-material-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Confirm &amp; Save</Button></div>
+          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-raw-material-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} {editingId ? 'Update' : 'Confirm & Save'}</Button></div>
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
@@ -373,6 +396,7 @@ function SalariesTab({ api }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' });
   const [saving, setSaving] = useState(false);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
@@ -387,15 +411,25 @@ function SalariesTab({ api }) {
   const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/salaries/${id}`); toast.success('Deleted'); load(false); dataEvents.emit(); } catch { toast.error('Failed'); } };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const openAdd = () => { setForm({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
+  const openAdd = () => { setEditingId(null); setForm({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
+  const openEdit = (record) => {
+    setEditingId(record.id);
+    setForm({ employee_name: record.employee_name || '', position: record.position || '', amount: record.amount || 0, payment_date: record.payment_date || '', notes: record.notes || '' });
+    setShowAdd(true);
+  };
   const handleSave = async () => {
     if (!form.employee_name.trim()) { toast.error('Employee name is required'); return; }
     if (!form.amount) { toast.error('Salary amount is required'); return; }
     const doSave = async () => {
       setSaving(true);
       try {
-        await api.post('/salaries', form);
-        toast.success('Salary saved');
+        if (editingId) {
+          await api.put(`/salaries/${editingId}`, form);
+          toast.success('Updated');
+        } else {
+          await api.post('/salaries', form);
+          toast.success('Salary saved');
+        }
         setShowAdd(false);
         load(true);
         dataEvents.emit();
@@ -403,7 +437,7 @@ function SalariesTab({ api }) {
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
     };
-    await checkDuplicates('salary', form, api, doSave);
+    if (editingId) { await doSave(); } else { await checkDuplicates('salary', form, api, doSave); }
   };
 
   return (
@@ -440,7 +474,7 @@ function SalariesTab({ api }) {
                 <TableCell className="text-xs tabular-nums text-slate-600">{s.payment_date}</TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(s.amount)}</TableCell>
                 <TableCell className="text-xs text-slate-400 max-w-[150px] truncate">{s.notes}</TableCell>
-                <TableCell><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(s.id)}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button></TableCell>
+                <TableCell><div className="flex gap-0.5"><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(s)} data-testid={`edit-salary-${i}`}><FileText className="w-3.5 h-3.5 text-blue-500" /></Button><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(s.id)} data-testid={`delete-salary-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button></div></TableCell>
               </TableRow>
             ))}
           </TableBody></Table>
@@ -450,7 +484,7 @@ function SalariesTab({ api }) {
 
       <Dialog open={showAdd} onOpenChange={(v) => { if (!saving) setShowAdd(v); }}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="font-heading text-lg">Add Salary Payment</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-heading text-lg">{editingId ? 'Edit Salary' : 'Add Salary Payment'}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Employee Name *</Label><Input className="mt-1 h-9 text-sm" value={form.employee_name} onChange={(e) => updateField('employee_name', e.target.value)} placeholder="Full name" data-testid="form-employee-name" /></div>
             <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Position</Label><Input className="mt-1 h-9 text-sm" value={form.position} onChange={(e) => updateField('position', e.target.value)} placeholder="e.g., Head Chef, Waiter" data-testid="form-position" /></div>
@@ -460,7 +494,7 @@ function SalariesTab({ api }) {
             </div>
             <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Notes</Label><Textarea className="mt-1 text-sm min-h-[60px]" value={form.notes} onChange={(e) => updateField('notes', e.target.value)} placeholder="Optional notes" data-testid="form-salary-notes" /></div>
           </div>
-          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-salary-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Salary</Button></div>
+          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-salary-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} {editingId ? 'Update' : 'Save Salary'}</Button></div>
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
@@ -473,6 +507,7 @@ function OtherExpensesTab({ api }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' });
   const [saving, setSaving] = useState(false);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
@@ -487,15 +522,25 @@ function OtherExpensesTab({ api }) {
   const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/other-expenses/${id}`); toast.success('Deleted'); load(false); dataEvents.emit(); } catch { toast.error('Failed'); } };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const openAdd = () => { setForm({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
+  const openAdd = () => { setEditingId(null); setForm({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
+  const openEdit = (record) => {
+    setEditingId(record.id);
+    setForm({ title: record.title || '', category: record.category || 'Rent', amount: record.amount || 0, expense_date: record.expense_date || '', notes: record.notes || '' });
+    setShowAdd(true);
+  };
   const handleSave = async () => {
     if (!form.title.trim()) { toast.error('Expense title is required'); return; }
     if (!form.amount) { toast.error('Amount is required'); return; }
     const doSave = async () => {
       setSaving(true);
       try {
-        await api.post('/other-expenses', form);
-        toast.success('Expense saved');
+        if (editingId) {
+          await api.put(`/other-expenses/${editingId}`, form);
+          toast.success('Updated');
+        } else {
+          await api.post('/other-expenses', form);
+          toast.success('Expense saved');
+        }
         setShowAdd(false);
         load(true);
         dataEvents.emit();
@@ -503,7 +548,7 @@ function OtherExpensesTab({ api }) {
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
     };
-    await checkDuplicates('other_expense', form, api, doSave);
+    if (editingId) { await doSave(); } else { await checkDuplicates('other_expense', form, api, doSave); }
   };
 
   const catColor = (c) => {
@@ -545,7 +590,7 @@ function OtherExpensesTab({ api }) {
                 <TableCell><Badge className={`text-[10px] border-0 ${catColor(e.category)}`}>{e.category}</Badge></TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(e.amount)}</TableCell>
                 <TableCell className="text-xs text-slate-400 max-w-[150px] truncate">{e.notes}</TableCell>
-                <TableCell><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(e.id)}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button></TableCell>
+                <TableCell><div className="flex gap-0.5"><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(e)} data-testid={`edit-other-expense-${i}`}><FileText className="w-3.5 h-3.5 text-blue-500" /></Button><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(e.id)} data-testid={`delete-other-expense-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button></div></TableCell>
               </TableRow>
             ))}
           </TableBody></Table>
@@ -555,7 +600,7 @@ function OtherExpensesTab({ api }) {
 
       <Dialog open={showAdd} onOpenChange={(v) => { if (!saving) setShowAdd(v); }}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="font-heading text-lg">Add Expense</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-heading text-lg">{editingId ? 'Edit Expense' : 'Add Expense'}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Expense Title *</Label><Input className="mt-1 h-9 text-sm" value={form.title} onChange={(e) => updateField('title', e.target.value)} placeholder="e.g., March Rent" data-testid="form-expense-title" /></div>
             <div>
@@ -571,7 +616,7 @@ function OtherExpensesTab({ api }) {
             </div>
             <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Notes</Label><Textarea className="mt-1 text-sm min-h-[60px]" value={form.notes} onChange={(e) => updateField('notes', e.target.value)} placeholder="Optional notes" data-testid="form-expense-notes" /></div>
           </div>
-          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-other-expense-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} Save Expense</Button></div>
+          <div className="flex gap-3 pt-2"><Button variant="outline" className="h-9 text-xs" onClick={() => setShowAdd(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs flex-1" data-testid="save-other-expense-btn">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />} {editingId ? 'Update' : 'Save Expense'}</Button></div>
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />

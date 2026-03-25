@@ -102,12 +102,26 @@ class SalaryCreate(BaseModel):
     payment_date: str
     notes: Optional[str] = ""
 
+class SalaryUpdate(BaseModel):
+    employee_name: Optional[str] = None
+    position: Optional[str] = None
+    amount: Optional[float] = None
+    payment_date: Optional[str] = None
+    notes: Optional[str] = None
+
 class OtherExpenseCreate(BaseModel):
     title: str
     category: str
     amount: float
     expense_date: str
     notes: Optional[str] = ""
+
+class OtherExpenseUpdate(BaseModel):
+    title: Optional[str] = None
+    category: Optional[str] = None
+    amount: Optional[float] = None
+    expense_date: Optional[str] = None
+    notes: Optional[str] = None
 
 class SettingsUpdate(BaseModel):
     name: Optional[str] = None
@@ -1790,6 +1804,19 @@ async def delete_salary(sid: str, user=Depends(get_user)):
     await audit_log(user, "DELETE", "Expense", sid, f'{user["name"]} deleted salary ${old.get("amount", 0)} ({old.get("employee_name", "")})', old_value={"employee": old.get("employee_name"), "amount": old.get("amount")})
     return {"status": "deleted"}
 
+@api_router.put("/salaries/{sid}")
+async def update_salary(sid: str, data: SalaryUpdate, user=Depends(get_user)):
+    update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(400, "No data")
+    old = await db.salaries.find_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not old:
+        raise HTTPException(404, "Not found")
+    old_vals = {k: old.get(k) for k in update_data}
+    await db.salaries.update_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    await audit_log(user, "UPDATE", "Expense", sid, f'{user["name"]} updated salary ({old.get("employee_name", "")})', old_value=old_vals, new_value=update_data)
+    return await db.salaries.find_one({"id": sid}, {"_id": 0})
+
 # ==================== OTHER EXPENSES CRUD ====================
 
 @api_router.get("/other-expenses")
@@ -1825,7 +1852,19 @@ async def delete_other_expense(eid: str, user=Depends(get_user)):
     await db.other_expenses.delete_one({"id": eid, "restaurant_id": user["restaurant_id"]})
     await audit_log(user, "DELETE", "Expense", eid, f'{user["name"]} deleted expense ${old.get("amount", 0)} ({old.get("title", "")})', old_value={"title": old.get("title"), "amount": old.get("amount"), "category": old.get("category")})
     return {"status": "deleted"}
-    return {"status": "deleted"}
+
+@api_router.put("/other-expenses/{eid}")
+async def update_other_expense(eid: str, data: OtherExpenseUpdate, user=Depends(get_user)):
+    update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(400, "No data")
+    old = await db.other_expenses.find_one({"id": eid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    if not old:
+        raise HTTPException(404, "Not found")
+    old_vals = {k: old.get(k) for k in update_data}
+    await db.other_expenses.update_one({"id": eid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    await audit_log(user, "UPDATE", "Expense", eid, f'{user["name"]} updated expense ({old.get("title", "")})', old_value=old_vals, new_value=update_data)
+    return await db.other_expenses.find_one({"id": eid}, {"_id": 0})
 
 # ==================== SALES CRUD ====================
 
