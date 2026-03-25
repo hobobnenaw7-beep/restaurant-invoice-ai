@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-03-25 — Dashboard Real-Time Synchronization
+
+### Problem
+Dashboard only updated after logout/login. No live data refresh after saves.
+
+### Solution
+Lightweight event bus (`/lib/dataEvents.js`) with subscribe/emit pattern:
+- Dashboard subscribes in useEffect → calls load() on event
+- All save/delete operations in ExpensesPage (3 tabs) and SalesPage call dataEvents.emit()
+- Dashboard immediately re-fetches /api/dashboard/summary
+- No global state library, no page reload, no localStorage cache
+
+### Files
+- `lib/dataEvents.js`: New 15-line event bus
+- `DashboardPage.js`: Subscribes to dataEvents
+- `ExpensesPage.js`: 6 emit points (3 saves + 3 deletes)
+- `SalesPage.js`: 2 emit points (1 save + 1 delete)
+
 ## 2026-03-25 — Receipt Extraction Accuracy + Manual Correction Screen
 
 ### Backend improvements
