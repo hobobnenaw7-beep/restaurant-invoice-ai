@@ -166,10 +166,8 @@ export default function SalesPage() {
           } catch { /* silent */ }
         }
         toast.success('Sale saved');
-        // Refresh list while dialog is still open (DOM is stable)
-        try { await load(false); } catch {}
-        // Then close dialog (list is already updated)
         setShowAdd(false);
+        load(true);
       } catch (err) {
         toast.error('Save failed: ' + (err.response?.data?.detail || ''));
       } finally { setSaving(false); }

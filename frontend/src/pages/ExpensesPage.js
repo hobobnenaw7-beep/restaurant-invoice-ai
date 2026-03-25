@@ -213,10 +213,13 @@ function RawMaterialsTab({ api }) {
           } catch { /* silent */ }
         }
         toast.success('Saved');
-        // Refresh list while dialog is still open (DOM is stable)
-        try { await load(false); } catch {}
-        // Then close dialog (list is already updated, no race condition)
+        // Close dialog FIRST — removes Portal from DOM in this render batch.
+        // Then fire load(true) which sets loading=true in the SAME batch.
+        // Result: one render that closes dialog + shows skeleton. 
+        // When API returns, items update in a SEPARATE render (skeleton→table).
+        // This prevents batching Portal removal with empty→table DOM swap.
         setShowAdd(false);
+        load(true);
       }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
@@ -357,8 +360,8 @@ function SalariesTab({ api }) {
       try {
         await api.post('/salaries', form);
         toast.success('Salary saved');
-        try { await load(false); } catch {}
         setShowAdd(false);
+        load(true);
       }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
@@ -446,8 +449,8 @@ function OtherExpensesTab({ api }) {
       try {
         await api.post('/other-expenses', form);
         toast.success('Expense saved');
-        try { await load(false); } catch {}
         setShowAdd(false);
+        load(true);
       }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
@@ -544,9 +547,16 @@ export default function ExpensesPage() {
         </TabsList>
       </Tabs>
 
-      {activeTab === 'raw_materials' && <RawMaterialsTab api={api} />}
-      {activeTab === 'salaries' && <SalariesTab api={api} />}
-      {activeTab === 'other' && <OtherExpensesTab api={api} />}
+      {/* Keep all tabs mounted — CSS show/hide prevents unmount/remount DOM conflicts */}
+      <div style={{ display: activeTab === 'raw_materials' ? 'block' : 'none' }}>
+        <RawMaterialsTab api={api} />
+      </div>
+      <div style={{ display: activeTab === 'salaries' ? 'block' : 'none' }}>
+        <SalariesTab api={api} />
+      </div>
+      <div style={{ display: activeTab === 'other' ? 'block' : 'none' }}>
+        <OtherExpensesTab api={api} />
+      </div>
     </div>
   );
 }
