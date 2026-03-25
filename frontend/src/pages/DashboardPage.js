@@ -3,11 +3,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { toast } from 'sonner';
+import { dataEvents } from '@/lib/dataEvents';
 import {
   TrendingUp, TrendingDown, ArrowRightLeft,
   Loader2, BarChart3, Search, Package, Store, Tag,
@@ -892,6 +893,11 @@ export default function DashboardPage() {
   }, [api, load]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Re-fetch dashboard when any page mutates data (create/update/delete)
+  useEffect(() => {
+    return dataEvents.subscribe(() => load());
+  }, [load]);
   const smartAlerts = useMemo(() => data?.smart_alerts || EMPTY_ALERTS, [data]);
   const bestOpps = useMemo(() => data?.best_opportunities || EMPTY_ALERTS, [data]);
 

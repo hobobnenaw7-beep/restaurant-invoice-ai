@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { dataEvents } from '@/lib/dataEvents';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -67,7 +68,7 @@ export default function SalesPage() {
 
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this sales report?')) return;
-    try { await api.delete(`/sales/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); }
+    try { await api.delete(`/sales/${id}`); toast.success('Deleted'); load(false); dataEvents.emit(); } catch { toast.error('Failed'); }
   };
 
   const updateField = (key, val) => setForm(f => ({ ...f, [key]: val }));
@@ -168,6 +169,7 @@ export default function SalesPage() {
         toast.success('Sale saved');
         setShowAdd(false);
         load(true);
+        dataEvents.emit();
       } catch (err) {
         toast.error('Save failed: ' + (err.response?.data?.detail || ''));
       } finally { setSaving(false); }

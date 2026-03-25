@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { dataEvents } from '@/lib/dataEvents';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -117,7 +118,7 @@ function RawMaterialsTab({ api }) {
   useEffect(() => { load(true); }, [load]);
 
   const toggleSort = (f) => { if (sortBy === f) setSortOrder(o => o === 'desc' ? 'asc' : 'desc'); else { setSortBy(f); setSortOrder('desc'); } };
-  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/purchases/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };
+  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/purchases/${id}`); toast.success('Deleted'); load(false); dataEvents.emit(); } catch { toast.error('Failed'); } };
   const SI = ({ field }) => sortBy === field ? (sortOrder === 'desc' ? <ChevronDown className="w-3 h-3 inline ml-0.5" /> : <ChevronUp className="w-3 h-3 inline ml-0.5" />) : null;
 
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -231,6 +232,7 @@ function RawMaterialsTab({ api }) {
         // This prevents batching Portal removal with empty→table DOM swap.
         setShowAdd(false);
         load(true);
+        dataEvents.emit();
       }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
@@ -382,7 +384,7 @@ function SalariesTab({ api }) {
   }, [api]);
   useEffect(() => { load(true); }, [load]);
 
-  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/salaries/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };
+  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/salaries/${id}`); toast.success('Deleted'); load(false); dataEvents.emit(); } catch { toast.error('Failed'); } };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const openAdd = () => { setForm({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
@@ -396,6 +398,7 @@ function SalariesTab({ api }) {
         toast.success('Salary saved');
         setShowAdd(false);
         load(true);
+        dataEvents.emit();
       }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
@@ -481,7 +484,7 @@ function OtherExpensesTab({ api }) {
   }, [api]);
   useEffect(() => { load(true); }, [load]);
 
-  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/other-expenses/${id}`); toast.success('Deleted'); load(false); } catch { toast.error('Failed'); } };
+  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/other-expenses/${id}`); toast.success('Deleted'); load(false); dataEvents.emit(); } catch { toast.error('Failed'); } };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const openAdd = () => { setForm({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
@@ -495,6 +498,7 @@ function OtherExpensesTab({ api }) {
         toast.success('Expense saved');
         setShowAdd(false);
         load(true);
+        dataEvents.emit();
       }
       catch (err) { toast.error('Save failed: ' + (err.response?.data?.detail || '')); }
       finally { setSaving(false); }
