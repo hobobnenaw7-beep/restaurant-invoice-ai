@@ -69,6 +69,7 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Data Freshness indicator
 - [x] Today's Best Opportunities cards (1 saving + 1 risk)
 - [x] Category insights showing month-over-month % changes
+- [x] Year/Month filter dropdowns above donut charts (2020+, All Months option, defaults to current)
 
 ### Audit Log System (March 23, 2026)
 - [x] Immutable audit log collection in MongoDB

@@ -1,4 +1,33 @@
 # Changelog
+
+## 2026-03-25 — Dashboard Year/Month Filter
+
+### What was added
+- Year and Month filter dropdowns above the donut charts on the Dashboard
+- Year: 2020 to current+1 (currently 2020-2027)
+- Month: January through December + "All Months" option
+- Default: current year + current month
+- "All Months" shows full year data, with previous year as comparison
+- Specific month shows that month's data, with previous month as comparison
+- Charts and totals refresh immediately when filters change
+- Period label shown on both donut charts (e.g. "March 2026 — click a category")
+- Comparison text dynamically updates (e.g. "vs February 2026" or "vs 2025")
+- Mobile-friendly: flex-wrap layout
+
+### Backend
+- `GET /api/dashboard/summary` now accepts `year` and `month` query params
+- `month=0` = all months (full year range)
+- Uses `calendar.monthrange` for correct last-day computation
+- Returns `filter_year` and `filter_month` in response
+
+### Frontend
+- `DashboardPage.js`: filterYear/filterMonth state, shadcn Select components
+- DonutChart and SalesDonut accept `periodLabel` and `prevLabel` props
+
+### Testing
+- 23/23 tests passed (7 backend + 16 frontend, iteration 44)
+
+
 ## 2026-03-25 — Three Priority UX Fixes (Dashboard Nav, Delete, Edit Totals)
 
 ### 1. Dashboard Click → Full Page Navigation (P0)
