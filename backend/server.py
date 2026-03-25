@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, base64, json, re, io
+import os, logging, uuid, base64, json, re, io, calendar
 from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -756,14 +756,34 @@ async def _generate_smart_alerts(rid):
 # ==================== DASHBOARD ====================
 
 @api_router.get("/dashboard/summary")
-async def dashboard_summary(user=Depends(get_user)):
+async def dashboard_summary(year: int = 0, month: int = 0, user=Depends(get_user)):
     rid = user["restaurant_id"]
     now = datetime.now(timezone.utc)
-    today = now.strftime("%Y-%m-%d")
-    month_start = now.strftime("%Y-%m-01")
-    prev_month = now.replace(day=1) - timedelta(days=1)
-    prev_month_start = prev_month.strftime("%Y-%m-01")
-    prev_month_end = prev_month.strftime("%Y-%m-%d")
+
+    # Determine the date range based on year/month filters
+    sel_year = year if year > 0 else now.year
+    sel_month = month  # 0 = all months
+
+    if sel_month > 0:
+        # Specific month
+        _, last_day = calendar.monthrange(sel_year, sel_month)
+        period_start = f"{sel_year}-{sel_month:02d}-01"
+        period_end = f"{sel_year}-{sel_month:02d}-{last_day:02d}"
+        # Previous period = previous month
+        if sel_month == 1:
+            prev_year, prev_mo = sel_year - 1, 12
+        else:
+            prev_year, prev_mo = sel_year, sel_month - 1
+        _, prev_last = calendar.monthrange(prev_year, prev_mo)
+        prev_start = f"{prev_year}-{prev_mo:02d}-01"
+        prev_end = f"{prev_year}-{prev_mo:02d}-{prev_last:02d}"
+    else:
+        # All months = full year
+        period_start = f"{sel_year}-01-01"
+        period_end = f"{sel_year}-12-31"
+        # Previous period = previous year
+        prev_start = f"{sel_year - 1}-01-01"
+        prev_end = f"{sel_year - 1}-12-31"
 
     _approved = {"$or": [{"approval_status": {"$exists": False}}, {"approval_status": "approved"}]}
     purchases = await db.purchases.find({"restaurant_id": rid, **_approved}, {"_id": 0}).to_list(10000)
@@ -847,18 +867,20 @@ async def dashboard_summary(user=Depends(get_user)):
     best_opportunities = best_opportunities[:2]
 
     return {
-        "month_raw_materials": round(sum_p(month_start, today), 2),
-        "month_salaries": round(sum_sal(month_start, today), 2),
-        "month_other_expenses": round(sum_oe(month_start, today), 2),
-        "prev_month_raw_materials": round(sum_p(prev_month_start, prev_month_end), 2),
-        "prev_month_salaries": round(sum_sal(prev_month_start, prev_month_end), 2),
-        "prev_month_other_expenses": round(sum_oe(prev_month_start, prev_month_end), 2),
-        "month_sales": round(sum_s(month_start, today), 2),
-        "prev_month_sales": round(sum_s(prev_month_start, prev_month_end), 2),
+        "month_raw_materials": round(sum_p(period_start, period_end), 2),
+        "month_salaries": round(sum_sal(period_start, period_end), 2),
+        "month_other_expenses": round(sum_oe(period_start, period_end), 2),
+        "prev_month_raw_materials": round(sum_p(prev_start, prev_end), 2),
+        "prev_month_salaries": round(sum_sal(prev_start, prev_end), 2),
+        "prev_month_other_expenses": round(sum_oe(prev_start, prev_end), 2),
+        "month_sales": round(sum_s(period_start, period_end), 2),
+        "prev_month_sales": round(sum_s(prev_start, prev_end), 2),
         "smart_alerts": smart_alerts,
         "last_data_update": last_update,
         "best_opportunities": best_opportunities,
         "purchase_count": len(purchases),
+        "filter_year": sel_year,
+        "filter_month": sel_month,
     }
 
 

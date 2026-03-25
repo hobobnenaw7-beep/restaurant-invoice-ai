@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { dataEvents } from '@/lib/dataEvents';
 import {
   TrendingUp, TrendingDown, ArrowRightLeft,
@@ -39,7 +40,7 @@ const CAT_KEYS = ['raw_materials', 'salaries', 'other'];
 const CAT_LABELS = ['Raw Materials', 'Salaries', 'Other'];
 
 /* ═══════════════════ DONUT CHART ═══════════════════ */
-const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, prevSalaries, prevOther, onCategoryClick }) {
+const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, prevSalaries, prevOther, onCategoryClick, periodLabel, prevLabel }) {
   const total = raw + salaries + other;
   const prevTotal = prevRaw + prevSalaries + prevOther;
 
@@ -79,8 +80,8 @@ const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, pre
             <PieChartIcon className="w-4 h-4 text-white" />
           </div>
           <div>
-            <CardTitle className="font-heading text-sm font-bold text-navy-900">Monthly Spending</CardTitle>
-            <p className="text-[10px] text-slate-400">Click a category to see details</p>
+            <CardTitle className="font-heading text-sm font-bold text-navy-900">Spending</CardTitle>
+            <p className="text-[10px] text-slate-400">{periodLabel || 'This month'} — click a category</p>
           </div>
         </div>
       </CardHeader>
@@ -149,7 +150,7 @@ const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, pre
                 {insights.map((ins, i) => (
                   <div key={i} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs ${ins.up ? 'bg-red-50/70 text-red-700' : 'bg-emerald-50/70 text-emerald-700'}`} data-testid={`category-insight-${i}`}>
                     {ins.up ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                    <span><span className="font-bold">{ins.name}</span> {ins.up ? 'increased' : 'decreased'} by <span className="font-bold">{Math.abs(ins.pct)}%</span> this month</span>
+                    <span><span className="font-bold">{ins.name}</span> {ins.up ? 'increased' : 'decreased'} by <span className="font-bold">{Math.abs(ins.pct)}%</span>{prevLabel ? ` vs ${prevLabel}` : ''}</span>
                   </div>
                 ))}
               </div>
@@ -174,7 +175,7 @@ function DonutTooltip({ active, payload, total }) {
 }
 
 /* ═══════════════════ SALES DONUT ═══════════════════ */
-const SalesDonut = memo(function SalesDonut({ sales, prevSales, onCategoryClick }) {
+const SalesDonut = memo(function SalesDonut({ sales, prevSales, onCategoryClick, periodLabel, prevLabel }) {
   const pctSales = pctChange(sales, prevSales);
   const segments = useMemo(() => sales > 0 ? [{ name: 'Sales', value: sales, color: '#0d9488' }] : [], [sales]);
   const noData = useMemo(() => [{ name: 'No data', value: 1 }], []);
@@ -188,8 +189,8 @@ const SalesDonut = memo(function SalesDonut({ sales, prevSales, onCategoryClick 
             <DollarSign className="w-4 h-4 text-white" />
           </div>
           <div>
-            <CardTitle className="font-heading text-sm font-bold text-navy-900">Monthly Sales</CardTitle>
-            <p className="text-[10px] text-slate-400">Click to see sales details</p>
+            <CardTitle className="font-heading text-sm font-bold text-navy-900">Sales</CardTitle>
+            <p className="text-[10px] text-slate-400">{periodLabel || 'This month'} — click for details</p>
           </div>
         </div>
       </CardHeader>
@@ -241,7 +242,7 @@ const SalesDonut = memo(function SalesDonut({ sales, prevSales, onCategoryClick 
             {pctSales !== null && (
               <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs ${parseFloat(pctSales) > 0 ? 'bg-emerald-50/70 text-emerald-700' : 'bg-red-50/70 text-red-700'}`}>
                 {parseFloat(pctSales) > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                <span>Sales {parseFloat(pctSales) > 0 ? 'up' : 'down'} <span className="font-bold">{Math.abs(parseFloat(pctSales))}%</span> vs last month</span>
+                <span>Sales {parseFloat(pctSales) > 0 ? 'up' : 'down'} <span className="font-bold">{Math.abs(parseFloat(pctSales))}%</span>{prevLabel ? ` vs ${prevLabel}` : ''}</span>
               </div>
             )}
           </div>
@@ -870,6 +871,8 @@ function OpportunityRow({ opp, index, navigate }) {
 
 /* ═══════════════════ MAIN PAGE ═══════════════════ */
 const EMPTY_ALERTS = [];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const YEAR_OPTIONS = (() => { const cur = new Date().getFullYear(); const years = []; for (let y = 2020; y <= cur + 1; y++) years.push(y); return years; })();
 
 export default function DashboardPage() {
   const { api } = useAuth();
@@ -879,27 +882,51 @@ export default function DashboardPage() {
   const [seeding, setSeeding] = useState(false);
   const [drillDown, setDrillDown] = useState(null);
 
-  const load = useCallback(async () => {
-    try { const res = await api.get('/dashboard/summary'); setData(res.data); }
+  const now = new Date();
+  const [filterYear, setFilterYear] = useState(now.getFullYear());
+  const [filterMonth, setFilterMonth] = useState(now.getMonth() + 1); // 1-12, 0 = all
+
+  const load = useCallback(async (yr, mo) => {
+    try {
+      const params = {};
+      if (yr) params.year = yr;
+      if (mo !== undefined) params.month = mo;
+      const res = await api.get('/dashboard/summary', { params });
+      setData(res.data);
+    }
     catch { toast.error('Failed to load dashboard'); }
     finally { setLoading(false); }
   }, [api]);
 
   const seedData = useCallback(async () => {
     setSeeding(true);
-    try { await api.post('/seed'); toast.success('Demo data loaded!'); await load(); }
+    try { await api.post('/seed'); toast.success('Demo data loaded!'); await load(filterYear, filterMonth); }
     catch { toast.error('Failed to seed data'); }
     finally { setSeeding(false); }
-  }, [api, load]);
+  }, [api, load, filterYear, filterMonth]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(filterYear, filterMonth); }, [load, filterYear, filterMonth]);
 
   // Re-fetch dashboard when any page mutates data (create/update/delete)
   useEffect(() => {
-    return dataEvents.subscribe(() => load());
-  }, [load]);
+    return dataEvents.subscribe(() => load(filterYear, filterMonth));
+  }, [load, filterYear, filterMonth]);
   const smartAlerts = useMemo(() => data?.smart_alerts || EMPTY_ALERTS, [data]);
   const bestOpps = useMemo(() => data?.best_opportunities || EMPTY_ALERTS, [data]);
+
+  const periodLabel = useMemo(() => {
+    if (filterMonth > 0) return `${MONTH_NAMES[filterMonth - 1]} ${filterYear}`;
+    return `Full Year ${filterYear}`;
+  }, [filterYear, filterMonth]);
+
+  const prevLabel = useMemo(() => {
+    if (filterMonth > 0) {
+      const pm = filterMonth === 1 ? 12 : filterMonth - 1;
+      const py = filterMonth === 1 ? filterYear - 1 : filterYear;
+      return `${MONTH_NAMES[pm - 1]} ${py}`;
+    }
+    return `${filterYear - 1}`;
+  }, [filterYear, filterMonth]);
 
   const openDrillDown = useCallback((category) => {
     // Spending categories → full-page navigate to Expenses with tab pre-selected
@@ -948,6 +975,36 @@ export default function DashboardPage() {
         </Card>
       )}
 
+      {/* Year / Month Filters */}
+      <div className="flex items-center gap-3 flex-wrap" data-testid="dashboard-period-filters">
+        <div className="flex items-center gap-1.5">
+          <Calendar className="w-4 h-4 text-slate-400" />
+          <span className="text-xs font-semibold text-slate-500">Period:</span>
+        </div>
+        <Select value={String(filterYear)} onValueChange={(v) => setFilterYear(Number(v))}>
+          <SelectTrigger className="w-[100px] h-8 text-xs" data-testid="filter-year">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {YEAR_OPTIONS.map(y => (
+              <SelectItem key={y} value={String(y)} className="text-xs">{y}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={String(filterMonth)} onValueChange={(v) => setFilterMonth(Number(v))}>
+          <SelectTrigger className="w-[140px] h-8 text-xs" data-testid="filter-month">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="0" className="text-xs font-semibold">All Months</SelectItem>
+            {MONTH_NAMES.map((m, i) => (
+              <SelectItem key={i + 1} value={String(i + 1)} className="text-xs">{m}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span className="text-[11px] text-slate-400 hidden sm:inline">{periodLabel}</span>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="dashboard-main-row">
         <DonutChart
           raw={data?.month_raw_materials || 0}
@@ -957,11 +1014,15 @@ export default function DashboardPage() {
           prevSalaries={data?.prev_month_salaries || 0}
           prevOther={data?.prev_month_other_expenses || 0}
           onCategoryClick={openDrillDown}
+          periodLabel={periodLabel}
+          prevLabel={prevLabel}
         />
         <SalesDonut
           sales={data?.month_sales || 0}
           prevSales={data?.prev_month_sales || 0}
           onCategoryClick={openDrillDown}
+          periodLabel={periodLabel}
+          prevLabel={prevLabel}
         />
         <MarketInsights alerts={smartAlerts} />
       </div>
