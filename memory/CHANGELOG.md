@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-03-25 — Edit Saved Records (All Expense Types)
+
+### What was added
+- Edit button (blue icon) on every row in Raw Materials, Salaries, Other Expenses tables
+- Clicking Edit opens the same form pre-filled with saved data
+- All fields editable: vendor, invoice #, date, items (name/qty/price/total), tax, notes
+- Add/remove item rows in edit mode
+- Auto-recalculation works when editing (qty×price→total→subtotal→total)
+- Edit uses PUT (update existing), Add uses POST (create new)
+- Duplicate check skipped in edit mode
+- Dashboard refreshes immediately after edit (dataEvents.emit())
+
+### Backend
+- `PUT /api/salaries/{sid}` — new endpoint
+- `PUT /api/other-expenses/{eid}` — new endpoint
+- `PUT /api/purchases/{pid}` — already existed
+- All 3 have audit logging
+
+### Frontend
+- `editingId` state differentiates edit vs create mode
+- Dialog title: "Edit Purchase/Salary/Expense" vs "Add..."
+- Button text: "Update" vs "Confirm & Save"/"Save Salary"/"Save Expense"
+
 ## 2026-03-25 — Dashboard Real-Time Synchronization
 
 ### Problem
