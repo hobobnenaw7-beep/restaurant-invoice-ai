@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { ArrowLeft, Search, Eye, Trash2, Package, FileText, Phone, User, DollarSign, Calendar, Hash, MapPin } from 'lucide-react';
+import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
 
 function fmt(n) { return `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 
@@ -24,6 +25,7 @@ export default function VendorDetailPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [selected, setSelected] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null });
 
   const loadVendor = useCallback(async () => {
     try {
@@ -54,14 +56,17 @@ export default function VendorDetailPage() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  const handleDelete = async (pid) => {
-    if (!window.confirm('Delete this purchase record?')) return;
+  const requestDelete = (pid) => setDeleteConfirm({ open: true, id: pid });
+  const handleDeleteConfirm = async () => {
+    const { id: pid } = deleteConfirm;
+    setDeleteConfirm({ open: false, id: null });
     try {
       await api.delete(`/purchases/${pid}`);
       toast.success('Record deleted');
       loadAll();
     } catch { toast.error('Delete failed'); }
   };
+  const cancelDelete = () => setDeleteConfirm({ open: false, id: null });
 
   if (loading && !vendor) {
     return (
@@ -186,7 +191,7 @@ export default function VendorDetailPage() {
                         <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(p)} data-testid={`view-purchase-${i}`}>
                           <Eye className="w-3.5 h-3.5 text-slate-500" />
                         </Button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(p.id)} data-testid={`delete-purchase-${i}`}>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => requestDelete(p.id)} data-testid={`delete-purchase-${i}`}>
                           <Trash2 className="w-3.5 h-3.5 text-red-400" />
                         </Button>
                       </div>
@@ -264,6 +269,7 @@ export default function VendorDetailPage() {
           )}
         </DialogContent>
       </Dialog>
+      <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message="Are you sure you want to delete this purchase record?" />
     </div>
   );
 }

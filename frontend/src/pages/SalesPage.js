@@ -16,6 +16,7 @@ import {
   Camera, Image as ImageIcon, FileUp, Sheet, CalendarDays
 } from 'lucide-react';
 import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/DuplicateCheck';
+import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _salesKeySeq = 0;
@@ -49,6 +50,7 @@ export default function SalesPage() {
   const fileCameraRef = useRef(null);
   const fileExcelRef = useRef(null);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null, message: '', type: null, idx: null });
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -66,19 +68,22 @@ export default function SalesPage() {
     else { setSortBy(field); setSortOrder('desc'); }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this sales report?')) return;
-    const prev = sales;
-    setSales(cur => cur.filter(s => s.id !== id));
-    dataEvents.emit();
-    try {
-      await api.delete(`/sales/${id}`);
-      toast.success('Deleted');
-    } catch {
-      toast.error('Failed to delete');
-      setSales(prev);
+  const requestDeleteRecord = (id) => setDeleteConfirm({ open: true, id, message: 'Are you sure you want to delete this sales record?', type: 'record', idx: null });
+  const requestDeleteItem = (idx) => setDeleteConfirm({ open: true, id: null, message: 'Are you sure you want to delete this item?', type: 'item', idx });
+  const handleDeleteConfirm = async () => {
+    const { type, id, idx } = deleteConfirm;
+    setDeleteConfirm({ open: false, id: null, message: '', type: null, idx: null });
+    if (type === 'record') {
+      const prev = sales;
+      setSales(cur => cur.filter(s => s.id !== id));
+      dataEvents.emit();
+      try { await api.delete(`/sales/${id}`); toast.success('Deleted'); }
+      catch { toast.error('Failed to delete'); setSales(prev); }
+    } else if (type === 'item') {
+      setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
     }
   };
+  const cancelDelete = () => setDeleteConfirm({ open: false, id: null, message: '', type: null, idx: null });
 
   const updateField = (key, val) => setForm(f => ({ ...f, [key]: val }));
   const updateItem = (idx, key, val) => {
@@ -88,7 +93,6 @@ export default function SalesPage() {
       return { ...f, items };
     });
   };
-  const removeItem = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, { _key: nextSalesKey(), menu_item: '', quantity: 1, revenue: 0 }] }));
 
   const openAddForm = () => {
@@ -251,7 +255,7 @@ export default function SalesPage() {
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-0.5">
                       <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(s)} data-testid={`view-sale-${i}`}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
-                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(s.id)} data-testid={`delete-sale-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => requestDeleteRecord(s.id)} data-testid={`delete-sale-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -453,7 +457,7 @@ export default function SalesPage() {
                     <Input className="col-span-3 text-xs h-8" type="number" placeholder="Qty" value={item.quantity || ''} onChange={(e) => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} />
                     <div className="col-span-4 flex items-center gap-1">
                       <Input className="text-xs h-8" type="number" step="0.01" placeholder="Revenue" value={item.revenue || ''} onChange={(e) => updateItem(i, 'revenue', parseFloat(e.target.value) || 0)} />
-                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 flex-shrink-0" onClick={() => removeItem(i)} data-testid={`remove-menu-item-${i}`}>
+                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 flex-shrink-0" onClick={() => requestDeleteItem(i)} data-testid={`remove-menu-item-${i}`}>
                         <Trash2 className="w-3 h-3 text-red-400" />
                       </Button>
                     </div>
@@ -474,6 +478,7 @@ export default function SalesPage() {
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
+      <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message={deleteConfirm.message} />
     </div>
   );
 }

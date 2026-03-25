@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { Search, Plus, Edit, Trash2, Loader2, Users, ChevronRight } from 'lucide-react';
+import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}` : '$0'; }
 
@@ -23,6 +24,7 @@ export default function VendorsPage() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: '', contact_person: '', phone: '', email: '', address: '' });
   const [saving, setSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null });
 
   const load = async () => {
     setLoading(true);
@@ -47,10 +49,13 @@ export default function VendorsPage() {
     finally { setSaving(false); }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete this vendor?')) return;
+  const requestDelete = (id) => setDeleteConfirm({ open: true, id });
+  const handleDeleteConfirm = async () => {
+    const { id } = deleteConfirm;
+    setDeleteConfirm({ open: false, id: null });
     try { await api.delete(`/suppliers/${id}`); toast.success('Deleted'); load(); } catch { toast.error('Failed'); }
   };
+  const cancelDelete = () => setDeleteConfirm({ open: false, id: null });
 
   return (
     <div className="space-y-6 max-w-[1400px]" data-testid="vendors-page">
@@ -107,7 +112,7 @@ export default function VendorsPage() {
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-0.5">
                         <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={(e) => { e.stopPropagation(); openEdit(s); }}><Edit className="w-3.5 h-3.5 text-slate-500" /></Button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={(e) => { e.stopPropagation(); handleDelete(s.id); }}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={(e) => { e.stopPropagation(); requestDelete(s.id); }}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
                         <ChevronRight className="w-4 h-4 text-slate-300 ml-1 self-center" />
                       </div>
                     </TableCell>
@@ -139,6 +144,7 @@ export default function VendorsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message="Are you sure you want to delete this vendor?" />
     </div>
   );
 }

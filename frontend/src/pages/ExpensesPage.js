@@ -22,6 +22,7 @@ import {
   Receipt, Beef, Users2, Wrench
 } from 'lucide-react';
 import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/DuplicateCheck';
+import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
@@ -111,6 +112,7 @@ function RawMaterialsTab({ api }) {
   const fileExcelRef = useRef(null);
   const [knownItems, setKnownItems] = useState([]);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null, message: '', type: null, idx: null });
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -120,20 +122,22 @@ function RawMaterialsTab({ api }) {
   useEffect(() => { load(true); }, [load]);
 
   const toggleSort = (f) => { if (sortBy === f) setSortOrder(o => o === 'desc' ? 'asc' : 'desc'); else { setSortBy(f); setSortOrder('desc'); } };
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete?')) return;
-    // Optimistic: remove from UI immediately
-    const prev = items;
-    setItems(cur => cur.filter(p => p.id !== id));
-    dataEvents.emit();
-    try {
-      await api.delete(`/purchases/${id}`);
-      toast.success('Deleted');
-    } catch {
-      toast.error('Failed to delete');
-      setItems(prev); // rollback
+  const requestDeleteRecord = (id) => setDeleteConfirm({ open: true, id, message: 'Are you sure you want to delete this purchase record?', type: 'record', idx: null });
+  const requestDeleteItem = (idx) => setDeleteConfirm({ open: true, id: null, message: 'Are you sure you want to delete this item?', type: 'item', idx });
+  const handleDeleteConfirm = async () => {
+    const { type, id, idx } = deleteConfirm;
+    setDeleteConfirm({ open: false, id: null, message: '', type: null, idx: null });
+    if (type === 'record') {
+      const prev = items;
+      setItems(cur => cur.filter(p => p.id !== id));
+      dataEvents.emit();
+      try { await api.delete(`/purchases/${id}`); toast.success('Deleted'); }
+      catch { toast.error('Failed to delete'); setItems(prev); }
+    } else if (type === 'item') {
+      setForm(f => { const newItems = f.items.filter((_, i) => i !== idx); const totals = recalcTotals(newItems, f.tax); return { ...f, items: newItems, ...totals }; });
     }
   };
+  const cancelDelete = () => setDeleteConfirm({ open: false, id: null, message: '', type: null, idx: null });
   const SI = ({ field }) => sortBy === field ? (sortOrder === 'desc' ? <ChevronDown className="w-3 h-3 inline ml-0.5" /> : <ChevronUp className="w-3 h-3 inline ml-0.5" />) : null;
 
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -143,7 +147,6 @@ function RawMaterialsTab({ api }) {
     return { subtotal, total: round2(subtotal + (parseFloat(tax) || 0)) };
   };
   const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') { it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); it[idx]._warning = false; it[idx]._warning_detail = ''; } const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
-  const removeItem = (idx) => setForm(f => { const newItems = f.items.filter((_, i) => i !== idx); const totals = recalcTotals(newItems, f.tax); return { ...f, items: newItems, ...totals }; });
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, mkItem()] }));
 
   const openAdd = () => {
@@ -316,7 +319,7 @@ function RawMaterialsTab({ api }) {
                 <TableCell className="text-right"><div className="flex justify-end gap-0.5">
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(p)} data-testid={`view-purchase-${i}`}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(p)} data-testid={`edit-purchase-${i}`}><FileText className="w-3.5 h-3.5 text-blue-500" /></Button>
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(p.id)} data-testid={`delete-purchase-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => requestDeleteRecord(p.id)} data-testid={`delete-purchase-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
                 </div></TableCell>
               </TableRow>
             ))}
@@ -385,7 +388,7 @@ function RawMaterialsTab({ api }) {
                   <Input className={`col-span-2 text-xs h-8 ${item._warning && (!item.unit_price) ? 'border-amber-300' : ''}`} type="number" step="0.01" placeholder="Price" value={item.unit_price || ''} onChange={(e) => updateItem(i, 'unit_price', parseFloat(e.target.value) || 0)} />
                   <div className="col-span-3 flex items-center gap-1">
                     <Input className={`text-xs h-8 font-semibold tabular-nums flex-1 text-right bg-slate-50 ${item._warning ? 'border-amber-300' : ''}`} type="number" step="0.01" value={item.total || ''} readOnly tabIndex={-1} data-testid={`line-item-total-${i}`} />
-                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 flex-shrink-0" onClick={() => removeItem(i)}><Trash2 className="w-3 h-3 text-red-400" /></Button>
+                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 flex-shrink-0" onClick={() => requestDeleteItem(i)}><Trash2 className="w-3 h-3 text-red-400" /></Button>
                   </div>
                   {item._warning_detail && <p className="col-span-12 text-[9px] text-amber-600 -mt-0.5 pl-1"><AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />{item._warning_detail}</p>}
                 </div>
@@ -401,6 +404,7 @@ function RawMaterialsTab({ api }) {
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
+      <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message={deleteConfirm.message} />
     </div>
   );
 }
@@ -414,6 +418,7 @@ function SalariesTab({ api }) {
   const [form, setForm] = useState({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' });
   const [saving, setSaving] = useState(false);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null, message: '' });
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -422,19 +427,17 @@ function SalariesTab({ api }) {
   }, [api]);
   useEffect(() => { load(true); }, [load]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete?')) return;
+  const requestDelete = (id) => setDeleteConfirm({ open: true, id, message: 'Are you sure you want to delete this salary record?' });
+  const handleDeleteConfirm = async () => {
+    const { id } = deleteConfirm;
+    setDeleteConfirm({ open: false, id: null, message: '' });
     const prev = items;
     setItems(cur => cur.filter(s => s.id !== id));
     dataEvents.emit();
-    try {
-      await api.delete(`/salaries/${id}`);
-      toast.success('Deleted');
-    } catch {
-      toast.error('Failed to delete');
-      setItems(prev);
-    }
+    try { await api.delete(`/salaries/${id}`); toast.success('Deleted'); }
+    catch { toast.error('Failed to delete'); setItems(prev); }
   };
+  const cancelDelete = () => setDeleteConfirm({ open: false, id: null, message: '' });
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const openAdd = () => { setEditingId(null); setForm({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
@@ -500,7 +503,7 @@ function SalariesTab({ api }) {
                 <TableCell className="text-xs tabular-nums text-slate-600">{s.payment_date}</TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(s.amount)}</TableCell>
                 <TableCell className="text-xs text-slate-400 max-w-[150px] truncate">{s.notes}</TableCell>
-                <TableCell><div className="flex gap-0.5"><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(s)} data-testid={`edit-salary-${i}`}><FileText className="w-3.5 h-3.5 text-blue-500" /></Button><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(s.id)} data-testid={`delete-salary-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button></div></TableCell>
+                <TableCell><div className="flex gap-0.5"><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(s)} data-testid={`edit-salary-${i}`}><FileText className="w-3.5 h-3.5 text-blue-500" /></Button><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => requestDelete(s.id)} data-testid={`delete-salary-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button></div></TableCell>
               </TableRow>
             ))}
           </TableBody></Table>
@@ -524,6 +527,7 @@ function SalariesTab({ api }) {
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
+      <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message={deleteConfirm.message} />
     </div>
   );
 }
@@ -537,6 +541,7 @@ function OtherExpensesTab({ api }) {
   const [form, setForm] = useState({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' });
   const [saving, setSaving] = useState(false);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null, message: '' });
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -545,19 +550,17 @@ function OtherExpensesTab({ api }) {
   }, [api]);
   useEffect(() => { load(true); }, [load]);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete?')) return;
+  const requestDelete = (id) => setDeleteConfirm({ open: true, id, message: 'Are you sure you want to delete this expense?' });
+  const handleDeleteConfirm = async () => {
+    const { id } = deleteConfirm;
+    setDeleteConfirm({ open: false, id: null, message: '' });
     const prev = items;
     setItems(cur => cur.filter(e => e.id !== id));
     dataEvents.emit();
-    try {
-      await api.delete(`/other-expenses/${id}`);
-      toast.success('Deleted');
-    } catch {
-      toast.error('Failed to delete');
-      setItems(prev);
-    }
+    try { await api.delete(`/other-expenses/${id}`); toast.success('Deleted'); }
+    catch { toast.error('Failed to delete'); setItems(prev); }
   };
+  const cancelDelete = () => setDeleteConfirm({ open: false, id: null, message: '' });
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const openAdd = () => { setEditingId(null); setForm({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
@@ -628,7 +631,7 @@ function OtherExpensesTab({ api }) {
                 <TableCell><Badge className={`text-[10px] border-0 ${catColor(e.category)}`}>{e.category}</Badge></TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(e.amount)}</TableCell>
                 <TableCell className="text-xs text-slate-400 max-w-[150px] truncate">{e.notes}</TableCell>
-                <TableCell><div className="flex gap-0.5"><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(e)} data-testid={`edit-other-expense-${i}`}><FileText className="w-3.5 h-3.5 text-blue-500" /></Button><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(e.id)} data-testid={`delete-other-expense-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button></div></TableCell>
+                <TableCell><div className="flex gap-0.5"><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(e)} data-testid={`edit-other-expense-${i}`}><FileText className="w-3.5 h-3.5 text-blue-500" /></Button><Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => requestDelete(e.id)} data-testid={`delete-other-expense-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button></div></TableCell>
               </TableRow>
             ))}
           </TableBody></Table>
@@ -658,6 +661,7 @@ function OtherExpensesTab({ api }) {
         </DialogContent>
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
+      <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message={deleteConfirm.message} />
     </div>
   );
 }

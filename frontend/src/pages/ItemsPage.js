@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus, Scale, Award } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
 
 function fmt(n) { return n != null ? `$${Number(n).toFixed(2)}` : '$0.00'; }
 
@@ -260,6 +261,7 @@ export default function ItemsPage() {
   const [aliasName, setAliasName] = useState('');
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null });
 
   const load = async () => {
     setLoading(true);
@@ -284,10 +286,13 @@ export default function ItemsPage() {
     finally { setSaving(false); }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Delete item and all aliases?')) return;
+  const requestDelete = (id) => setDeleteConfirm({ open: true, id });
+  const handleDeleteConfirm = async () => {
+    const { id } = deleteConfirm;
+    setDeleteConfirm({ open: false, id: null });
     try { await api.delete(`/items/${id}`); toast.success('Deleted'); load(); } catch { toast.error('Failed'); }
   };
+  const cancelDelete = () => setDeleteConfirm({ open: false, id: null });
 
   const addAlias = async () => {
     if (!aliasName.trim() || !aliasDialog) return;
@@ -371,7 +376,7 @@ export default function ItemsPage() {
                           <Tag className="w-3 h-3 mr-1" /> Aliases
                         </Button>
                         <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(item)} data-testid={`edit-item-${item.id}`}><Edit className="w-3.5 h-3.5 text-slate-500" /></Button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleDelete(item.id)} data-testid={`delete-item-${item.id}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => requestDelete(item.id)} data-testid={`delete-item-${item.id}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -426,6 +431,7 @@ export default function ItemsPage() {
 
       {/* Price History Dialog */}
       <PriceHistoryDialog item={priceItem} api={api} onClose={() => setPriceItem(null)} />
+      <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message="Are you sure you want to delete this item and all its aliases?" />
     </div>
   );
 }
