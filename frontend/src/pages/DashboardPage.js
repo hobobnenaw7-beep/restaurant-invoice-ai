@@ -901,7 +901,15 @@ export default function DashboardPage() {
   const smartAlerts = useMemo(() => data?.smart_alerts || EMPTY_ALERTS, [data]);
   const bestOpps = useMemo(() => data?.best_opportunities || EMPTY_ALERTS, [data]);
 
-  const openDrillDown = useCallback((category) => setDrillDown(category), []);
+  const openDrillDown = useCallback((category) => {
+    // Spending categories → full-page navigate to Expenses with tab pre-selected
+    if (category === 'raw_materials' || category === 'salaries' || category === 'other') {
+      navigate('/expenses', { state: { tab: category } });
+      return;
+    }
+    // Sales → drill-down sheet
+    setDrillDown(category);
+  }, [navigate]);
   const closeDrillDown = useCallback(() => setDrillDown(null), []);
 
   if (loading) return <LoadingSkeleton />;

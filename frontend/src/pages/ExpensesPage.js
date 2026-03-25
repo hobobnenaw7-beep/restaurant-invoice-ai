@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -119,7 +120,20 @@ function RawMaterialsTab({ api }) {
   useEffect(() => { load(true); }, [load]);
 
   const toggleSort = (f) => { if (sortBy === f) setSortOrder(o => o === 'desc' ? 'asc' : 'desc'); else { setSortBy(f); setSortOrder('desc'); } };
-  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/purchases/${id}`); toast.success('Deleted'); load(false); dataEvents.emit(); } catch { toast.error('Failed'); } };
+  const handleDelete = async (id) => {
+    if (!window.confirm('Delete?')) return;
+    // Optimistic: remove from UI immediately
+    const prev = items;
+    setItems(cur => cur.filter(p => p.id !== id));
+    dataEvents.emit();
+    try {
+      await api.delete(`/purchases/${id}`);
+      toast.success('Deleted');
+    } catch {
+      toast.error('Failed to delete');
+      setItems(prev); // rollback
+    }
+  };
   const SI = ({ field }) => sortBy === field ? (sortOrder === 'desc' ? <ChevronDown className="w-3 h-3 inline ml-0.5" /> : <ChevronUp className="w-3 h-3 inline ml-0.5" />) : null;
 
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -128,7 +142,7 @@ function RawMaterialsTab({ api }) {
     const subtotal = round2(lineItems.reduce((s, it) => s + (parseFloat(it.total) || 0), 0));
     return { subtotal, total: round2(subtotal + (parseFloat(tax) || 0)) };
   };
-  const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') { it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); it[idx]._warning = false; it[idx]._warning_detail = ''; } if (k === 'total') { it[idx]._warning = false; it[idx]._warning_detail = ''; } const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
+  const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') { it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); it[idx]._warning = false; it[idx]._warning_detail = ''; } const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
   const removeItem = (idx) => setForm(f => { const newItems = f.items.filter((_, i) => i !== idx); const totals = recalcTotals(newItems, f.tax); return { ...f, items: newItems, ...totals }; });
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, mkItem()] }));
 
@@ -370,7 +384,7 @@ function RawMaterialsTab({ api }) {
                   <Input className="col-span-1 text-xs h-8" placeholder="Unit" value={item.unit} onChange={(e) => updateItem(i, 'unit', e.target.value)} />
                   <Input className={`col-span-2 text-xs h-8 ${item._warning && (!item.unit_price) ? 'border-amber-300' : ''}`} type="number" step="0.01" placeholder="Price" value={item.unit_price || ''} onChange={(e) => updateItem(i, 'unit_price', parseFloat(e.target.value) || 0)} />
                   <div className="col-span-3 flex items-center gap-1">
-                    <Input className={`text-xs h-8 font-semibold tabular-nums flex-1 text-right ${item._warning ? 'border-amber-300' : ''}`} type="number" step="0.01" value={item.total || ''} onChange={(e) => updateItem(i, 'total', parseFloat(e.target.value) || 0)} data-testid={`line-item-total-${i}`} />
+                    <Input className={`text-xs h-8 font-semibold tabular-nums flex-1 text-right bg-slate-50 ${item._warning ? 'border-amber-300' : ''}`} type="number" step="0.01" value={item.total || ''} readOnly tabIndex={-1} data-testid={`line-item-total-${i}`} />
                     <Button size="sm" variant="ghost" className="h-6 w-6 p-0 flex-shrink-0" onClick={() => removeItem(i)}><Trash2 className="w-3 h-3 text-red-400" /></Button>
                   </div>
                   {item._warning_detail && <p className="col-span-12 text-[9px] text-amber-600 -mt-0.5 pl-1"><AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />{item._warning_detail}</p>}
@@ -408,7 +422,19 @@ function SalariesTab({ api }) {
   }, [api]);
   useEffect(() => { load(true); }, [load]);
 
-  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/salaries/${id}`); toast.success('Deleted'); load(false); dataEvents.emit(); } catch { toast.error('Failed'); } };
+  const handleDelete = async (id) => {
+    if (!window.confirm('Delete?')) return;
+    const prev = items;
+    setItems(cur => cur.filter(s => s.id !== id));
+    dataEvents.emit();
+    try {
+      await api.delete(`/salaries/${id}`);
+      toast.success('Deleted');
+    } catch {
+      toast.error('Failed to delete');
+      setItems(prev);
+    }
+  };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const openAdd = () => { setEditingId(null); setForm({ employee_name: '', position: '', amount: 0, payment_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
@@ -519,7 +545,19 @@ function OtherExpensesTab({ api }) {
   }, [api]);
   useEffect(() => { load(true); }, [load]);
 
-  const handleDelete = async (id) => { if (!window.confirm('Delete?')) return; try { await api.delete(`/other-expenses/${id}`); toast.success('Deleted'); load(false); dataEvents.emit(); } catch { toast.error('Failed'); } };
+  const handleDelete = async (id) => {
+    if (!window.confirm('Delete?')) return;
+    const prev = items;
+    setItems(cur => cur.filter(e => e.id !== id));
+    dataEvents.emit();
+    try {
+      await api.delete(`/other-expenses/${id}`);
+      toast.success('Deleted');
+    } catch {
+      toast.error('Failed to delete');
+      setItems(prev);
+    }
+  };
   const updateField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const openAdd = () => { setEditingId(null); setForm({ title: '', category: 'Rent', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' }); setShowAdd(true); };
@@ -627,7 +665,22 @@ function OtherExpensesTab({ api }) {
 // ======================== MAIN EXPENSES PAGE ========================
 export default function ExpensesPage() {
   const { api } = useAuth();
-  const [activeTab, setActiveTab] = useState('raw_materials');
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState(() => {
+    const tab = location.state?.tab;
+    if (tab === 'raw_materials' || tab === 'salaries' || tab === 'other') return tab;
+    return 'raw_materials';
+  });
+
+  // Update tab when navigating from dashboard with state
+  useEffect(() => {
+    const tab = location.state?.tab;
+    if (tab === 'raw_materials' || tab === 'salaries' || tab === 'other') {
+      setActiveTab(tab);
+      // Clear the state so browser back doesn't re-apply it
+      window.history.replaceState({}, '');
+    }
+  }, [location.state]);
 
   return (
     <div className="space-y-6 max-w-[1400px]" data-testid="expenses-page">

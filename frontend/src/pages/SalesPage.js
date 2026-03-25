@@ -68,7 +68,16 @@ export default function SalesPage() {
 
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this sales report?')) return;
-    try { await api.delete(`/sales/${id}`); toast.success('Deleted'); load(false); dataEvents.emit(); } catch { toast.error('Failed'); }
+    const prev = sales;
+    setSales(cur => cur.filter(s => s.id !== id));
+    dataEvents.emit();
+    try {
+      await api.delete(`/sales/${id}`);
+      toast.success('Deleted');
+    } catch {
+      toast.error('Failed to delete');
+      setSales(prev);
+    }
   };
 
   const updateField = (key, val) => setForm(f => ({ ...f, [key]: val }));
