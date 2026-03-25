@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-03-24 — WebView/In-App Browser insertBefore Crash Fix (FINAL)
+
+### Root cause
+WebView/in-app browsers (Instagram, Facebook, LINE, etc.) inject DOM nodes into `document.body`. When React 18 batches Dialog Portal removal with list DOM updates in the same render commit, it encounters unexpected sibling nodes from the browser injection. React's `insertBefore` tries to reference these stale/injected nodes → "The object can not be found here" crash.
+
+Additionally, conditional rendering that swapped between completely different DOM subtrees (empty-state div vs Table div) forced React to unmount/mount entire trees during reconciliation — a fragile operation that fails in non-standard DOM environments.
+
+### Fixes (3 structural changes)
+1. **Unified table structure**: All 4 list views (Raw Materials, Salaries, Other Expenses, Sales) ALWAYS render `Table > TableHeader > TableBody`. Empty state = single TableRow. Loading = skeleton TableRows. Data = item TableRows. React only adds/removes rows within a stable parent — never swaps subtrees.
+2. **Dialog-first close**: Save flows: `setShowAdd(false)` first (removes Portal), then `load(true)` fire-and-forget. Separates Portal removal from list update into different render commits.
+3. **Keep-alive tabs**: Expense category tabs always mounted with CSS `display:none`. No unmount/remount cycles.
+4. **Error Boundary**: `StableErrorBoundary` wraps all page content. Catches errors → shows Retry button instead of red crash screen.
+
+### Files changed
+- `ExpensesPage.js`: Unified table for all 3 tabs, keep-alive tab rendering, dialog-first save
+- `SalesPage.js`: Unified table, dialog-first save
+- `App.js`: StableErrorBoundary wrapper
+- `StableErrorBoundary.js`: New error boundary component
+
 ## 2026-03-24 — Shared first-insert crash fix (insertBefore / insertOrAppendPlacementNode)
 
 ### Root causes (2)
