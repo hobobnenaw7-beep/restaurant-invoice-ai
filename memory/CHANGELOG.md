@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-03-26 — Other Expenses: Subcategories + OCR Upload
+
+### What was added
+- Restructured Other Expenses as one section with 7 internal subcategories:
+  Utilities, Taxes, Maintenance & Repairs, Software & Subscriptions, Services, Rent / Facility, Miscellaneous
+- Added image/PDF/camera upload + OCR extraction to Other Expenses tab
+- AI suggests subcategory from document content; user can accept or override
+- Category filter dropdown in list view with totals per category
+- Backend prompt for `other_expense` document type updated to classify into 7 subcategories
+- Vendor pattern learning called after save (via `/receipts/learn`)
+
+### Testing
+- 24/24 tests passed (10 backend + 14 frontend, iteration 46)
+
+
+
 ## 2026-03-25 — Dashboard Year/Month Filter
 
 ### What was added

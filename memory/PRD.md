@@ -108,7 +108,8 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 ## Prioritized Backlog
 
 ### P0
-- Implement Real OCR/Document Extraction: Replace mock /api/upload/extract with real AI service
+- Implement Real OCR/Document Extraction: Replace mock /api/upload/extract with real AI service ✅ DONE
+- Other Expenses: Subcategories + Upload/OCR ✅ DONE
 
 ### P1
 - AI Chat Assistant Page Polish: improve UX of floating assistant
