@@ -1332,7 +1332,14 @@ Rules:
 
 Rules:
 - title: a short description of the expense (e.g., "March Electricity Bill", "Kitchen Equipment Repair")
-- category: classify as one of: Rent, Electricity, Water, Gas, Maintenance, Equipment, Insurance, Marketing, Other
+- category: classify as EXACTLY one of: Utilities, Taxes, Maintenance & Repairs, Software & Subscriptions, Services, Rent / Facility, Miscellaneous
+  - Utilities: electricity, water, gas, internet, phone bills
+  - Taxes: tax payments, filings, government fees
+  - Maintenance & Repairs: equipment repair, plumbing, HVAC, cleaning services
+  - Software & Subscriptions: POS systems, accounting software, delivery apps
+  - Services: legal, accounting, consulting, pest control, security
+  - Rent / Facility: rent, lease, property insurance, facility costs
+  - Miscellaneous: anything that doesn't fit above
 - amount: the total amount due/paid
 - expense_date: the bill date or due date in YYYY-MM-DD format
 - notes: any useful details (account number, meter readings, service description)
