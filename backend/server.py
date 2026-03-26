@@ -1309,6 +1309,39 @@ CRITICAL rules for line items:
 - Use 0 for any truly missing numeric values
 - Include the unit of measure (kg, lb, each, box, case, etc.) when visible
 - Return ONLY the JSON object, no other text.{vendor_hint}"""
+        elif document_type == "salary_document":
+            prompt = f"""You are reading a payroll document, salary slip, or payment record for restaurant staff. Extract data into this exact JSON format:
+{{"employee_name":"","position":"","amount":0,"payment_date":"YYYY-MM-DD","notes":"","pay_period":"","deductions":0,"gross_amount":0}}
+
+Rules:
+- employee_name: the person being paid
+- position: their role/title if mentioned (e.g., Chef, Server, Manager)
+- amount: the NET pay amount (after deductions). This is the most important field.
+- payment_date: date of payment in YYYY-MM-DD format
+- notes: any relevant details (payment method, reference number, etc.)
+- pay_period: the period covered (e.g., "March 2026", "March 1-15")
+- deductions: total deductions if shown, else 0
+- gross_amount: gross pay before deductions if shown, else 0
+- If this is a summary with multiple employees, extract the FIRST/PRIMARY employee
+- Dates must be in YYYY-MM-DD format
+- Use 0 for missing numeric values
+- Return ONLY the JSON object, no other text.{vendor_hint}"""
+        elif document_type == "other_expense":
+            prompt = f"""You are reading a utility bill, tax document, service invoice, maintenance bill, or general expense document for a restaurant. Extract data into this exact JSON format:
+{{"title":"","category":"","amount":0,"expense_date":"YYYY-MM-DD","notes":"","vendor_name":"","reference_number":""}}
+
+Rules:
+- title: a short description of the expense (e.g., "March Electricity Bill", "Kitchen Equipment Repair")
+- category: classify as one of: Rent, Electricity, Water, Gas, Maintenance, Equipment, Insurance, Marketing, Other
+- amount: the total amount due/paid
+- expense_date: the bill date or due date in YYYY-MM-DD format
+- notes: any useful details (account number, meter readings, service description)
+- vendor_name: the company/provider name
+- reference_number: invoice/bill/reference number if shown
+- This may be a simple summary document, not an itemized receipt
+- Dates must be in YYYY-MM-DD format
+- Use 0 for missing numeric values
+- Return ONLY the JSON object, no other text.{vendor_hint}"""
         else:
             prompt = f"""You are reading a restaurant sales report or receipt. Extract ALL data into this exact JSON format:
 {{"report_date":"YYYY-MM-DD","total_sales":0,"items":[{{"menu_item":"","quantity":0,"revenue":0}}]}}
