@@ -1226,26 +1226,49 @@ def _normalize_date(raw: str) -> str:
 
 
 @api_router.post("/upload/extract")
-async def extract_document(file: UploadFile = File(...), document_type: str = Form(...), user=Depends(get_user)):
+async def extract_document(files: List[UploadFile] = File(None), file: UploadFile = File(None), document_type: str = Form(...), user=Depends(get_user)):
     try:
-        content = await file.read()
-        mime = file.content_type or "image/jpeg"
-        fname = (file.filename or "").lower()
+        # Normalize: accept both 'file' (single) and 'files' (multi)
+        all_files = []
+        if files:
+            all_files.extend(files)
+        if file and file not in all_files:
+            all_files.append(file)
+        if not all_files:
+            raise HTTPException(400, "No files uploaded")
+
+        logger.info(f"Extract: received {len(all_files)} file(s), document_type={document_type}")
         rid = user["restaurant_id"]
 
-        # Handle PDF: render all pages (up to 5) at high resolution and combine
-        if "pdf" in mime.lower() or fname.endswith(".pdf"):
-            import fitz
-            pdf_doc = fitz.open(stream=content, filetype="pdf")
-            images_b64 = []
-            for page_num in range(min(len(pdf_doc), 5)):
-                page = pdf_doc[page_num]
-                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-                img_bytes = pix.tobytes("png")
-                images_b64.append(base64.b64encode(img_bytes).decode())
-            pdf_doc.close()
-        else:
-            images_b64 = [base64.b64encode(content).decode()]
+        # Convert ALL files to a single images_b64 list
+        images_b64 = []
+        first_content = None  # keep first file bytes for disk storage
+        first_fname = ""
+        first_mime = ""
+
+        for idx, f in enumerate(all_files):
+            content = await f.read()
+            mime = f.content_type or "image/jpeg"
+            fname = (f.filename or "").lower()
+
+            if idx == 0:
+                first_content = content
+                first_fname = fname
+                first_mime = mime
+
+            if "pdf" in mime.lower() or fname.endswith(".pdf"):
+                import fitz
+                pdf_doc = fitz.open(stream=content, filetype="pdf")
+                for page_num in range(min(len(pdf_doc), 5)):
+                    page = pdf_doc[page_num]
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                    img_bytes = pix.tobytes("png")
+                    images_b64.append(base64.b64encode(img_bytes).decode())
+                pdf_doc.close()
+            else:
+                images_b64.append(base64.b64encode(content).decode())
+
+        logger.info(f"Extract: {len(images_b64)} total image(s) to process")
 
         from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
@@ -1293,6 +1316,17 @@ async def extract_document(file: UploadFile = File(...), document_type: str = Fo
         # --- Step 3: Full extraction with vendor hints ---
         parsing_method = "vendor" if vendor_pattern else "general"
 
+        # Multi-image dedup hint
+        multi_hint = ""
+        if len(images_b64) > 1:
+            multi_hint = f"""
+
+MULTI-IMAGE DOCUMENT ({len(images_b64)} images):
+These images are parts of ONE document. They may be:
+- Separate pages of a multi-page invoice, OR
+- Overlapping photos of a long receipt
+CRITICAL: Produce ONE unified result. If the same line item appears in multiple images, include it ONLY ONCE. Use the LAST occurrence of subtotal/tax/total. Do NOT duplicate items."""
+
         if document_type == "purchase_invoice":
             prompt = f"""You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
 {{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"unit":"","unit_price":0,"total":0}}],"subtotal":0,"tax":0,"total":0}}
@@ -1308,7 +1342,7 @@ CRITICAL rules for line items:
 - Dates must be in YYYY-MM-DD format. Convert any date format you see.
 - Use 0 for any truly missing numeric values
 - Include the unit of measure (kg, lb, each, box, case, etc.) when visible
-- Return ONLY the JSON object, no other text.{vendor_hint}"""
+- Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
         elif document_type == "salary_document":
             prompt = f"""You are reading a payroll document, salary slip, or payment record for restaurant staff. Extract data into this exact JSON format:
 {{"employee_name":"","position":"","amount":0,"payment_date":"YYYY-MM-DD","notes":"","pay_period":"","deductions":0,"gross_amount":0}}
@@ -1325,7 +1359,7 @@ Rules:
 - If this is a summary with multiple employees, extract the FIRST/PRIMARY employee
 - Dates must be in YYYY-MM-DD format
 - Use 0 for missing numeric values
-- Return ONLY the JSON object, no other text.{vendor_hint}"""
+- Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
         elif document_type == "other_expense":
             prompt = f"""You are reading a utility bill, tax document, service invoice, maintenance bill, or general expense document for a restaurant. Extract data into this exact JSON format:
 {{"title":"","category":"","amount":0,"expense_date":"YYYY-MM-DD","notes":"","vendor_name":"","reference_number":""}}
@@ -1348,7 +1382,7 @@ Rules:
 - This may be a simple summary document, not an itemized receipt
 - Dates must be in YYYY-MM-DD format
 - Use 0 for missing numeric values
-- Return ONLY the JSON object, no other text.{vendor_hint}"""
+- Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
         else:
             prompt = f"""You are reading a restaurant sales report or receipt. Extract ALL data into this exact JSON format:
 {{"report_date":"YYYY-MM-DD","total_sales":0,"items":[{{"menu_item":"","quantity":0,"revenue":0}}]}}
@@ -1358,7 +1392,7 @@ Rules:
 - For each item, revenue is the total amount for that item
 - Dates must be in YYYY-MM-DD format
 - Use 0 for any truly missing numeric values
-- Return ONLY the JSON object, no other text.{vendor_hint}"""
+- Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
 
         chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
         file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
@@ -1376,20 +1410,21 @@ Rules:
         receipt_doc = {
             "id": receipt_id,
             "restaurant_id": rid,
-            "file_name": file.filename or "untitled",
-            "file_type": mime,
+            "file_name": first_fname or "untitled",
+            "file_type": first_mime,
+            "file_count": len(all_files),
             "raw_ocr_text": response[:5000],
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
             "vendor_id": vendor_pattern.get("vendor_id") if vendor_pattern else None,
             "parsing_method": parsing_method,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        # Save file to disk
-        ext = fname.rsplit(".", 1)[-1] if "." in fname else "jpg"
+        # Save first file to disk
+        ext = first_fname.rsplit(".", 1)[-1] if "." in first_fname else "jpg"
         stored_name = f"receipt_{receipt_id}.{ext}"
         file_path = UPLOADS_DIR / stored_name
         with open(file_path, "wb") as f:
-            f.write(content)
+            f.write(first_content)
         receipt_doc["file_url"] = f"/uploads/{stored_name}"
         await db.uploaded_receipts.insert_one(receipt_doc)
 
@@ -1506,6 +1541,8 @@ Rules:
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
             "message": f"Data extracted using {parsing_method} parsing" + (" (vendor pattern matched)" if parsing_method == "vendor" else ""),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Extraction error: {e}")
         raise HTTPException(500, f"Extraction failed: {str(e)}")
