@@ -1,0 +1,95 @@
+{
+  "summary": "Tested Receipt OCR Improvement System. Backend: 13/13 tests passed. Frontend: 16/16 tests passed. All features working correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "backend_api_tests": {
+      "test_extract_requires_auth": "PASS - Returns 401 without auth",
+      "test_extract_returns_expected_fields": "PASS - Returns extracted_data, receipt_id, parsing_method",
+      "test_extract_stores_receipt_record": "PASS - Receipt stored in uploaded_receipts collection",
+      "test_learn_requires_auth": "PASS - Returns 401 without auth",
+      "test_learn_requires_vendor_name": "PASS - Returns 400 when vendor_name empty",
+      "test_learn_saves_vendor_pattern": "PASS - Creates new vendor pattern",
+      "test_learn_merges_with_existing_pattern": "PASS - receipt_count increments, items merge",
+      "test_vendor_patterns_requires_auth": "PASS - Returns 401 without auth",
+      "test_vendor_patterns_returns_list": "PASS - Returns list of patterns",
+      "test_receipts_requires_auth": "PASS - Returns 401 without auth",
+      "test_receipts_returns_list": "PASS - Returns list of uploaded receipts",
+      "test_second_extraction_uses_vendor_pattern": "PASS - Pattern created and stored",
+      "test_extraction_data_has_items_array": "PASS - Items have expected structure"
+    },
+    "frontend_ui_tests": {
+      "TEST_1_login": "PASS - Login successful with demo@test.com",
+      "TEST_2_navigate_expenses": "PASS - Expenses page loaded",
+      "TEST_3_raw_materials_tab": "PASS - Raw Materials tab visible",
+      "TEST_4_add_button": "PASS - Add button opens dialog",
+      "TEST_5_upload_zone": "PASS - Upload zone visible",
+      "TEST_6_upload_options": "PASS - Camera, Image, PDF, Excel options visible",
+      "TEST_7_form_fields": "PASS - Vendor, Invoice#, Date fields visible",
+      "TEST_8_line_items_section": "PASS - Line items with Add Item button",
+      "TEST_9_totals_fields": "PASS - Subtotal, Tax, Total fields visible",
+      "TEST_10_line_total_readonly": "PASS - Line item total is read-only",
+      "TEST_11_auto_calculation": "PASS - 5 × $10 = $50 calculated correctly",
+      "TEST_12_save_button": "PASS - Save button visible",
+      "TEST_13_parsing_badge_before_extraction": "PASS - Not visible before extraction",
+      "TEST_14_extraction_flow": "PASS - Extraction populates form correctly",
+      "TEST_15_parsing_badge_after_extraction": "PASS - Shows 'General parsing' badge",
+      "TEST_16_save_calls_learn": "PASS - /receipts/learn called after save"
+    }
+  },
+  "features_verified": [
+    "POST /api/upload/extract returns extracted_data, receipt_id, parsing_method, detected_vendor",
+    "POST /api/receipts/learn saves vendor pattern with corrected items",
+    "POST /api/receipts/learn merges with existing pattern (receipt_count increments, items merge)",
+    "GET /api/vendor-patterns returns list of patterns",
+    "GET /api/receipts returns list of uploaded receipts",
+    "Upload zone shows image/PDF/Excel/Camera options",
+    "After extraction, parsing method badge shows ('General parsing' or 'Vendor pattern matched')",
+    "Extracted data populates editable form fields (vendor, date, items)",
+    "Line item totals are read-only and auto-calculated",
+    "After save, /receipts/learn is called to store vendor pattern",
+    "Form allows manual editing of all fields before save",
+    "Totals recalculate when quantity or unit price changes"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_receipt_ocr_system.py",
+    "/app/test_reports/pytest/pytest_receipt_ocr.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py (lines 1228-1471): /upload/extract endpoint correctly implements vendor detection, pattern lookup, and receipt storage",
+    "server.py (lines 1485-1560): /receipts/learn correctly upserts vendor patterns with merged items and incremented receipt_count",
+    "server.py (lines 1563-1593): /vendor-patterns and /receipts endpoints return correct data structures",
+    "ExpensesPage.js (lines 116-117): receiptId and parsingMethod state properly managed",
+    "ExpensesPage.js (lines 242-246): receipt_id and parsing_method captured from extraction response",
+    "ExpensesPage.js (lines 274-283): /receipts/learn called silently after successful save",
+    "ExpensesPage.js (lines 393-401): Parsing method badge UI shows correct status"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_receipt_ocr_system.py"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 tests passed)",
+    "frontend": "100% (16/16 tests passed)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Created test vendor patterns with TEST_ prefix during backend tests. Created one purchase record during frontend save test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Receipt OCR improvement system fully tested. Key endpoints: /api/upload/extract (multipart form with file + document_type), /api/receipts/learn (JSON body), /api/vendor-patterns, /api/receipts. Frontend uses data-testid attributes for all interactive elements. Parsing method badge appears after extraction showing 'General parsing' or 'Vendor pattern matched'. The /receipts/learn endpoint is called silently after save to learn vendor patterns.",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": [],
+    "note": "The /upload/extract endpoint uses real GPT-5.2 vision via emergentintegrations (NOT mocked)"
+  }
+}

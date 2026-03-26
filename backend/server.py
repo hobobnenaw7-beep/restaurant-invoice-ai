@@ -1231,6 +1231,7 @@ async def extract_document(file: UploadFile = File(...), document_type: str = Fo
         content = await file.read()
         mime = file.content_type or "image/jpeg"
         fname = (file.filename or "").lower()
+        rid = user["restaurant_id"]
 
         # Handle PDF: render all pages (up to 5) at high resolution and combine
         if "pdf" in mime.lower() or fname.endswith(".pdf"):
@@ -1248,14 +1249,58 @@ async def extract_document(file: UploadFile = File(...), document_type: str = Fo
 
         from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
+        # --- Step 1: Quick vendor detection ---
+        vendor_hint = ""
+        vendor_pattern = None
+        detect_chat = LlmChat(api_key=LLM_KEY, session_id=f"detect-{uuid.uuid4()}", system_message="You read receipts. Return ONLY the vendor/supplier company name, nothing else. If unclear, return UNKNOWN.").with_model("openai", "gpt-5.2")
+        detect_msg = UserMessage(text="What is the vendor/supplier name on this receipt?", file_contents=[ImageContent(image_base64=images_b64[0])])
+        detected_vendor = (await detect_chat.send_message(detect_msg)).strip().strip('"').strip("'")
+        logger.info(f"Detected vendor: {detected_vendor}")
+
+        # --- Step 2: Look up vendor patterns ---
+        if detected_vendor and detected_vendor.upper() != "UNKNOWN":
+            # Fuzzy match: search by normalized name
+            norm_vendor = detected_vendor.lower().strip()
+            vp = await db.vendor_patterns.find_one(
+                {"restaurant_id": rid, "vendor_name_lower": {"$regex": f".*{re.escape(norm_vendor[:20])}.*", "$options": "i"}},
+                {"_id": 0}
+            )
+            if not vp:
+                # Try matching via suppliers collection
+                sup = await db.suppliers.find_one(
+                    {"restaurant_id": rid, "name": {"$regex": f".*{re.escape(norm_vendor[:20])}.*", "$options": "i"}},
+                    {"_id": 0, "id": 1}
+                )
+                if sup:
+                    vp = await db.vendor_patterns.find_one({"restaurant_id": rid, "vendor_id": sup["id"]}, {"_id": 0})
+            if vp:
+                vendor_pattern = vp
+                hints = vp.get("hints", {})
+                hint_parts = []
+                if hints.get("date_position"):
+                    hint_parts.append(f"Date is usually found {hints['date_position']}")
+                if hints.get("line_format"):
+                    hint_parts.append(f"Line items are typically formatted as: {hints['line_format']}")
+                if hints.get("has_tax"):
+                    hint_parts.append("This vendor usually includes tax")
+                if hints.get("typical_items"):
+                    hint_parts.append(f"Common items from this vendor: {', '.join(hints['typical_items'][:10])}")
+                if hints.get("notes"):
+                    hint_parts.append(f"Additional notes: {hints['notes']}")
+                if hint_parts:
+                    vendor_hint = "\n\nVENDOR-SPECIFIC HINTS (from previous receipts):\n" + "\n".join(f"- {h}" for h in hint_parts)
+
+        # --- Step 3: Full extraction with vendor hints ---
+        parsing_method = "vendor" if vendor_pattern else "general"
+
         if document_type == "purchase_invoice":
-            prompt = """You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
-{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{"raw_name":"","quantity":0,"unit":"","unit_price":0,"total":0}],"subtotal":0,"tax":0,"total":0}
+            prompt = f"""You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
+{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"unit":"","unit_price":0,"total":0}}],"subtotal":0,"tax":0,"total":0}}
 
 CRITICAL rules for line items:
 - Look for patterns like: "2 x 5.00", "5.00 x 2", "2 @ 5.00", "Qty 2 Price 5.00"
 - In columnar layouts, match quantity + unit price + total from the same row
-- total = quantity × unit_price for each line item
+- total = quantity * unit_price for each line item
 - If unit_price is missing but total and quantity are known: unit_price = total / quantity
 - If quantity is missing but total and unit_price are known: quantity = total / unit_price
 - subtotal = sum of all item totals
@@ -1263,20 +1308,19 @@ CRITICAL rules for line items:
 - Dates must be in YYYY-MM-DD format. Convert any date format you see.
 - Use 0 for any truly missing numeric values
 - Include the unit of measure (kg, lb, each, box, case, etc.) when visible
-- Return ONLY the JSON object, no other text."""
+- Return ONLY the JSON object, no other text.{vendor_hint}"""
         else:
-            prompt = """You are reading a restaurant sales report or receipt. Extract ALL data into this exact JSON format:
-{"report_date":"YYYY-MM-DD","total_sales":0,"items":[{"menu_item":"","quantity":0,"revenue":0}]}
+            prompt = f"""You are reading a restaurant sales report or receipt. Extract ALL data into this exact JSON format:
+{{"report_date":"YYYY-MM-DD","total_sales":0,"items":[{{"menu_item":"","quantity":0,"revenue":0}}]}}
 
 Rules:
 - total_sales should be the grand total
 - For each item, revenue is the total amount for that item
 - Dates must be in YYYY-MM-DD format
 - Use 0 for any truly missing numeric values
-- Return ONLY the JSON object, no other text."""
+- Return ONLY the JSON object, no other text.{vendor_hint}"""
 
         chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
-        # Send all page images
         file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
         user_msg = UserMessage(text=prompt, file_contents=file_contents)
         response = await chat.send_message(user_msg)
@@ -1287,7 +1331,29 @@ Rules:
         else:
             extracted = {"error": "Could not parse extraction results"}
 
-        # Post-process: validate and fix calculations, add confidence flags
+        # --- Step 4: Store receipt record ---
+        receipt_id = str(uuid.uuid4())
+        receipt_doc = {
+            "id": receipt_id,
+            "restaurant_id": rid,
+            "file_name": file.filename or "untitled",
+            "file_type": mime,
+            "raw_ocr_text": response[:5000],
+            "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
+            "vendor_id": vendor_pattern.get("vendor_id") if vendor_pattern else None,
+            "parsing_method": parsing_method,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        # Save file to disk
+        ext = fname.rsplit(".", 1)[-1] if "." in fname else "jpg"
+        stored_name = f"receipt_{receipt_id}.{ext}"
+        file_path = UPLOADS_DIR / stored_name
+        with open(file_path, "wb") as f:
+            f.write(content)
+        receipt_doc["file_url"] = f"/uploads/{stored_name}"
+        await db.uploaded_receipts.insert_one(receipt_doc)
+
+        # --- Step 5: Post-process extraction (same as before) ---
         if "error" not in extracted:
             if document_type == "purchase_invoice":
                 warnings = []
@@ -1364,10 +1430,167 @@ Rules:
                 extracted["_warnings"] = warnings
                 extracted["_has_warnings"] = len(warnings) > 0
 
-        return {"extracted_data": extracted, "document_type": document_type}
+        # Store extraction record
+        extraction_id = str(uuid.uuid4())
+        ext_doc = {
+            "id": extraction_id,
+            "receipt_id": receipt_id,
+            "restaurant_id": rid,
+            "date": extracted.get("invoice_date", "") if document_type == "purchase_invoice" else extracted.get("report_date", ""),
+            "total": float(extracted.get("total", 0) or extracted.get("total_sales", 0) or 0),
+            "parsing_method": parsing_method,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.receipt_extractions.insert_one(ext_doc)
+
+        # Store extracted items
+        items_to_store = extracted.get("items", [])
+        if items_to_store:
+            item_docs = []
+            for it in items_to_store:
+                item_docs.append({
+                    "id": str(uuid.uuid4()),
+                    "extraction_id": extraction_id,
+                    "item_name": it.get("raw_name", "") or it.get("menu_item", ""),
+                    "quantity": float(it.get("quantity", 0) or 0),
+                    "unit_price": float(it.get("unit_price", 0) or 0),
+                    "total": float(it.get("total", 0) or it.get("revenue", 0) or 0),
+                })
+            await db.extracted_items.insert_many(item_docs)
+
+        return {
+            "extracted_data": extracted,
+            "document_type": document_type,
+            "receipt_id": receipt_id,
+            "parsing_method": parsing_method,
+            "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
+            "message": f"Data extracted using {parsing_method} parsing" + (" (vendor pattern matched)" if parsing_method == "vendor" else ""),
+        }
     except Exception as e:
         logger.error(f"Extraction error: {e}")
         raise HTTPException(500, f"Extraction failed: {str(e)}")
+
+
+# ==================== RECEIPT LEARNING ====================
+
+class ReceiptLearnRequest(BaseModel):
+    receipt_id: Optional[str] = None
+    vendor_name: str
+    vendor_id: Optional[str] = None
+    corrected_items: List[Dict[str, Any]] = []
+    corrected_date: Optional[str] = None
+    corrected_total: Optional[float] = None
+    hints: Optional[Dict[str, Any]] = None
+
+@api_router.post("/receipts/learn")
+async def learn_from_receipt(req: ReceiptLearnRequest, user=Depends(get_user)):
+    """Learn vendor patterns from user-corrected receipt data."""
+    rid = user["restaurant_id"]
+    vendor_name = req.vendor_name.strip()
+    if not vendor_name:
+        raise HTTPException(400, "vendor_name is required")
+
+    vendor_id = req.vendor_id or ""
+    # Try to find or create vendor_id from suppliers collection
+    if not vendor_id:
+        sup = await db.suppliers.find_one(
+            {"restaurant_id": rid, "name": {"$regex": f"^{re.escape(vendor_name)}$", "$options": "i"}},
+            {"_id": 0, "id": 1}
+        )
+        if sup:
+            vendor_id = sup["id"]
+
+    # Build hints from corrected data
+    item_names = [it.get("raw_name", "") or it.get("item_name", "") for it in req.corrected_items if it.get("raw_name") or it.get("item_name")]
+    has_tax = (req.corrected_total or 0) > sum(float(it.get("total", 0) or 0) for it in req.corrected_items) + 0.01
+
+    new_hints = req.hints or {}
+    if item_names:
+        new_hints["typical_items"] = item_names[:15]
+    if has_tax:
+        new_hints["has_tax"] = True
+    new_hints["item_count_typical"] = len(req.corrected_items) if req.corrected_items else None
+
+    # Upsert: merge with existing pattern
+    existing = await db.vendor_patterns.find_one(
+        {"restaurant_id": rid, "vendor_name_lower": vendor_name.lower()},
+        {"_id": 0}
+    )
+
+    if existing:
+        # Merge typical items (keep unique, max 30)
+        old_items = existing.get("hints", {}).get("typical_items", [])
+        merged_items = list(dict.fromkeys(item_names + old_items))[:30]
+        new_hints["typical_items"] = merged_items
+        new_hints["receipt_count"] = existing.get("hints", {}).get("receipt_count", 0) + 1
+        # Preserve existing hints not in new_hints
+        for k, v in existing.get("hints", {}).items():
+            if k not in new_hints:
+                new_hints[k] = v
+
+        await db.vendor_patterns.update_one(
+            {"restaurant_id": rid, "vendor_name_lower": vendor_name.lower()},
+            {"$set": {
+                "vendor_id": vendor_id or existing.get("vendor_id", ""),
+                "vendor_name": vendor_name,
+                "hints": new_hints,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }}
+        )
+    else:
+        new_hints["receipt_count"] = 1
+        await db.vendor_patterns.insert_one({
+            "id": str(uuid.uuid4()),
+            "restaurant_id": rid,
+            "vendor_id": vendor_id,
+            "vendor_name": vendor_name,
+            "vendor_name_lower": vendor_name.lower(),
+            "hints": new_hints,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    # Link receipt to learning if receipt_id provided
+    if req.receipt_id:
+        await db.uploaded_receipts.update_one(
+            {"id": req.receipt_id, "restaurant_id": rid},
+            {"$set": {"vendor_id": vendor_id, "learned": True}}
+        )
+
+    return {"status": "ok", "vendor_name": vendor_name, "parsing_method": "vendor" if existing else "new_pattern"}
+
+
+@api_router.get("/vendor-patterns")
+async def list_vendor_patterns(user=Depends(get_user)):
+    """List all vendor patterns for this restaurant."""
+    rid = user["restaurant_id"]
+    patterns = await db.vendor_patterns.find(
+        {"restaurant_id": rid}, {"_id": 0}
+    ).sort("vendor_name", 1).to_list(200)
+    return patterns
+
+
+@api_router.get("/vendor-patterns/{vendor_id}")
+async def get_vendor_pattern(vendor_id: str, user=Depends(get_user)):
+    """Get a specific vendor pattern."""
+    rid = user["restaurant_id"]
+    pattern = await db.vendor_patterns.find_one(
+        {"restaurant_id": rid, "$or": [{"vendor_id": vendor_id}, {"id": vendor_id}]},
+        {"_id": 0}
+    )
+    if not pattern:
+        raise HTTPException(404, "Pattern not found")
+    return pattern
+
+
+@api_router.get("/receipts")
+async def list_receipts(limit: int = 50, user=Depends(get_user)):
+    """List recent uploaded receipts."""
+    rid = user["restaurant_id"]
+    receipts = await db.uploaded_receipts.find(
+        {"restaurant_id": rid}, {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    return receipts
 
 
 # ==================== RECORDS LIBRARY ====================

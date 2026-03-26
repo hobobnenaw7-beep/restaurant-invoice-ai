@@ -113,6 +113,8 @@ function RawMaterialsTab({ api }) {
   const [knownItems, setKnownItems] = useState([]);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
   const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null, message: '', type: null, idx: null });
+  const [receiptId, setReceiptId] = useState(null);
+  const [parsingMethod, setParsingMethod] = useState(null);
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -154,6 +156,7 @@ function RawMaterialsTab({ api }) {
     setForm({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [mkItem()], subtotal: 0, tax: 0, total: 0 });
     if (uploadPreview) URL.revokeObjectURL(uploadPreview);
     setUploadFile(null); setUploadPreview(null); setShowAdd(true);
+    setReceiptId(null); setParsingMethod(null);
     api.get('/items').then(res => {
       const names = [];
       (res.data || []).forEach(item => {
@@ -237,6 +240,9 @@ function RawMaterialsTab({ api }) {
       } else {
         toast.success(res.data.message || 'Data extracted! Review and save.');
       }
+      // Store receipt tracking info
+      if (res.data?.receipt_id) setReceiptId(res.data.receipt_id);
+      if (res.data?.parsing_method) setParsingMethod(res.data.parsing_method);
     } catch (err) { toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.')); }
     finally { setExtracting(false); extractingRef.current = false; }
   };
@@ -269,7 +275,21 @@ function RawMaterialsTab({ api }) {
           }
           toast.success('Saved');
         }
+        // Learn vendor patterns from corrected data
+        if (receiptId || uploadFile) {
+          try {
+            await api.post('/receipts/learn', {
+              receipt_id: receiptId,
+              vendor_name: form.supplier_name,
+              vendor_id: form.supplier_id || '',
+              corrected_items: form.items.map(({ _key, _warning, _warning_detail, ...rest }) => rest),
+              corrected_date: form.invoice_date,
+              corrected_total: form.total,
+            });
+          } catch { /* silent — learning failure shouldn't block save */ }
+        }
         setShowAdd(false);
+        setReceiptId(null); setParsingMethod(null);
         load(true);
         dataEvents.emit();
       }
@@ -370,6 +390,15 @@ function RawMaterialsTab({ api }) {
                 <p className="text-xs font-semibold text-amber-800">Review needed</p>
                 <p className="text-[10px] text-amber-600 mt-0.5">Some extracted values may be inaccurate. Fields highlighted in yellow need your attention.</p>
               </div>
+            </div>
+          )}
+          {parsingMethod && (
+            <div className="flex items-center gap-2 text-[10px]" data-testid="parsing-method-badge">
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold ${parsingMethod === 'vendor' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                <Sparkles className="w-3 h-3" />
+                {parsingMethod === 'vendor' ? 'Vendor pattern matched' : 'General parsing'}
+              </span>
+              <span className="text-slate-400">Corrections help improve future extractions for this vendor</span>
             </div>
           )}
           <div className="space-y-4">
