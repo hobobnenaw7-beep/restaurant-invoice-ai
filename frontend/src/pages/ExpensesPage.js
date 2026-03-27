@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/DuplicateCheck';
 import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
+import { ConfirmSaveDialog } from '@/components/ConfirmSaveDialog';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
@@ -115,6 +116,7 @@ function RawMaterialsTab({ api }) {
   const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null, message: '', type: null, idx: null });
   const [receiptId, setReceiptId] = useState(null);
   const [parsingMethod, setParsingMethod] = useState(null);
+  const [showConfirmSave, setShowConfirmSave] = useState(false);
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -252,8 +254,12 @@ function RawMaterialsTab({ api }) {
     finally { setExtracting(false); extractingRef.current = false; }
   };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!form.supplier_name.trim()) { toast.error('Vendor name is required'); return; }
+    setShowConfirmSave(true);
+  };
+  const executeSave = async () => {
+    setShowConfirmSave(false);
     const doSave = async () => {
       setSaving(true);
       try {
@@ -463,6 +469,7 @@ function RawMaterialsTab({ api }) {
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
       <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message={deleteConfirm.message} />
+      <ConfirmSaveDialog open={showConfirmSave} onClose={() => setShowConfirmSave(false)} onConfirm={executeSave} vendor={form.supplier_name} date={form.invoice_date} total={form.total} saving={saving} />
     </div>
   );
 }
@@ -477,6 +484,7 @@ function SalariesTab({ api }) {
   const [saving, setSaving] = useState(false);
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
   const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null, message: '' });
+  const [showConfirmSave, setShowConfirmSave] = useState(false);
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -504,9 +512,13 @@ function SalariesTab({ api }) {
     setForm({ employee_name: record.employee_name || '', position: record.position || '', amount: record.amount || 0, payment_date: record.payment_date || '', notes: record.notes || '' });
     setShowAdd(true);
   };
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!form.employee_name.trim()) { toast.error('Employee name is required'); return; }
     if (!form.amount) { toast.error('Salary amount is required'); return; }
+    setShowConfirmSave(true);
+  };
+  const executeSave = async () => {
+    setShowConfirmSave(false);
     const doSave = async () => {
       setSaving(true);
       try {
@@ -586,6 +598,7 @@ function SalariesTab({ api }) {
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
       <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message={deleteConfirm.message} />
+      <ConfirmSaveDialog open={showConfirmSave} onClose={() => setShowConfirmSave(false)} onConfirm={executeSave} vendor={form.employee_name} date={form.payment_date} total={form.amount} saving={saving} />
     </div>
   );
 }
@@ -601,6 +614,7 @@ function OtherExpensesTab({ api }) {
   const [filterCat, setFilterCat] = useState('all');
   const { checking, duplicates, showWarning, confirmSave, cancelSave, checkDuplicates } = useDuplicateCheck();
   const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null, message: '' });
+  const [showConfirmSave, setShowConfirmSave] = useState(false);
 
   // Upload / OCR state
   const [uploadFiles, setUploadFiles] = useState([]);
@@ -685,9 +699,13 @@ function OtherExpensesTab({ api }) {
     finally { setExtracting(false); extractingRef.current = false; }
   };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!form.title.trim()) { toast.error('Expense title is required'); return; }
     if (!form.amount) { toast.error('Amount is required'); return; }
+    setShowConfirmSave(true);
+  };
+  const executeSave = async () => {
+    setShowConfirmSave(false);
     const doSave = async () => {
       setSaving(true);
       try {
@@ -880,6 +898,7 @@ function OtherExpensesTab({ api }) {
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
       <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message={deleteConfirm.message} />
+      <ConfirmSaveDialog open={showConfirmSave} onClose={() => setShowConfirmSave(false)} onConfirm={executeSave} vendor={form.title} date={form.expense_date} total={form.amount} saving={saving} />
     </div>
   );
 }

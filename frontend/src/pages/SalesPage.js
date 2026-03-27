@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/DuplicateCheck';
 import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
+import { ConfirmSaveDialog } from '@/components/ConfirmSaveDialog';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _salesKeySeq = 0;
@@ -42,6 +43,7 @@ export default function SalesPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptySale());
   const [saving, setSaving] = useState(false);
+  const [showConfirmSave, setShowConfirmSave] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [uploadFiles, setUploadFiles] = useState([]);
   const [uploadPreviews, setUploadPreviews] = useState([]);
@@ -157,11 +159,15 @@ export default function SalesPage() {
     } finally { setExtracting(false); extractingRef.current = false; }
   };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!form.total_sales && form.total_sales !== 0) { toast.error('Total sales is required'); return; }
     if (!form.date_from) { toast.error('From Date is required'); return; }
     if (!form.date_to) { toast.error('To Date is required'); return; }
     if (form.date_to < form.date_from) { toast.error('To Date cannot be earlier than From Date'); return; }
+    setShowConfirmSave(true);
+  };
+  const executeSave = async () => {
+    setShowConfirmSave(false);
     const payload = { ...form, report_date: form.date_from, items: form.items.map(({ _key, ...rest }) => rest) };
     const doSave = async () => {
       setSaving(true);
@@ -442,6 +448,7 @@ export default function SalesPage() {
       </Dialog>
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
       <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message={deleteConfirm.message} />
+      <ConfirmSaveDialog open={showConfirmSave} onClose={() => setShowConfirmSave(false)} onConfirm={executeSave} vendor="Sales Report" date={form.date_from} total={form.total_sales} saving={saving} />
     </div>
   );
 }
