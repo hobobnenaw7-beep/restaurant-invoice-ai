@@ -1,0 +1,109 @@
+{
+  "summary": "Tested multi-image upload flow across Raw Materials, Sales, and Other Expenses. Backend: 12/12 tests passed. Frontend: 25/25 tests passed. All features working correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "backend_api_tests": {
+      "test_extract_requires_auth": "PASS - Returns 401 without auth",
+      "test_extract_single_file_with_files_key": "PASS - Single file with 'files' key returns 200",
+      "test_extract_single_file_with_file_key": "PASS - Single file with 'file' key returns 200 (backward compat)",
+      "test_extract_multiple_files": "PASS - Multiple files with 'files' key returns 200",
+      "test_extract_three_files": "PASS - Three files extraction returns 200",
+      "test_extract_sales_report_multi_file": "PASS - Multi-file sales_report extraction returns 200",
+      "test_extract_other_expense_multi_file": "PASS - Multi-file other_expense extraction returns 200",
+      "test_extract_returns_expected_structure": "PASS - Returns expected fields (supplier_name, invoice_date, items, subtotal, tax, total)",
+      "test_no_files_returns_error": "PASS - No files returns 400/422 error",
+      "test_create_purchase_without_upload": "PASS - Manual purchase entry works without upload",
+      "test_create_sale_without_upload": "PASS - Manual sale entry works without upload",
+      "test_create_other_expense_without_upload": "PASS - Manual other expense entry works without upload"
+    },
+    "frontend_ui_tests": {
+      "TEST_1_login": "PASS - Login successful with demo@test.com",
+      "TEST_2_raw_materials_upload_zone": "PASS - Upload zone visible with 4 options (Take Photo, Upload Image, Upload PDF, Upload Excel)",
+      "TEST_3_rm_first_upload": "PASS - Page 1 thumbnail visible after first upload",
+      "TEST_4_rm_add_page_button": "PASS - 'Add Page' button visible after first upload",
+      "TEST_5_rm_extract_button": "PASS - Extract Data button visible when files selected",
+      "TEST_6_rm_second_upload": "PASS - Page 2 thumbnail visible after second upload",
+      "TEST_7_rm_page_count": "PASS - Shows '2 pages selected'",
+      "TEST_8_rm_remove_page": "PASS - Remove page button works (removes only that page)",
+      "TEST_9_rm_clear_all": "PASS - Clear All removes all pages, returns to initial state",
+      "TEST_10_sales_upload_zone": "PASS - Sales upload zone visible with 4 options",
+      "TEST_11_sales_first_upload": "PASS - Sales Page 1 thumbnail visible",
+      "TEST_12_sales_add_page": "PASS - Sales 'Add Page' button visible",
+      "TEST_13_sales_extract": "PASS - Sales Extract Data button visible",
+      "TEST_14_sales_second_upload": "PASS - Sales Page 2 thumbnail visible",
+      "TEST_15_sales_clear_all": "PASS - Sales Clear All works",
+      "TEST_16_other_expenses_upload_zone": "PASS - Other Expenses upload zone visible with 4 options",
+      "TEST_17_oe_first_upload": "PASS - Other Expenses Page 1 thumbnail visible",
+      "TEST_18_oe_add_page": "PASS - Other Expenses 'Add Page' button visible",
+      "TEST_19_oe_extract": "PASS - Other Expenses Extract button visible",
+      "TEST_20_manual_entry_rm": "PASS - Manual entry works for Raw Materials (auto-calculation: 5 × $10 = $50)",
+      "TEST_21_manual_entry_rm_no_extract": "PASS - Extract button not visible when no files selected",
+      "TEST_22_manual_entry_rm_save": "PASS - Save button visible for manual entry",
+      "TEST_23_manual_entry_sales": "PASS - Manual entry works for Sales",
+      "TEST_24_manual_entry_oe": "PASS - Manual entry works for Other Expenses",
+      "TEST_25_form_fields": "PASS - All form fields visible and functional"
+    }
+  },
+  "features_verified": [
+    "Raw Materials: Upload zone shows 4 upload options (Take Photo, Upload Image, Upload PDF, Upload Excel)",
+    "Raw Materials: After selecting one image, shows Page 1 thumbnail + 'Add Page' button",
+    "Raw Materials: 'Add Page' appends second image, shows Page 1 and Page 2 thumbnails",
+    "Raw Materials: Individual page remove button works (removes only that page)",
+    "Raw Materials: 'Clear All' removes all pages",
+    "Raw Materials: Extract Data button visible when files are selected",
+    "Sales: Upload zone shows 4 upload options",
+    "Sales: After selecting image, shows Page thumbnails + Add Page + Extract",
+    "Sales: Clear All works",
+    "Other Expenses: Upload zone shows 4 upload options in Add Expense dialog",
+    "Other Expenses: Multi-image flow works (add page, show thumbnails)",
+    "Other Expenses: Clear All works",
+    "Backend: POST /api/upload/extract with multiple 'files' returns 200 with combined result",
+    "Backend: POST /api/upload/extract with single 'file' still returns 200 (backward compat)",
+    "All modules: Manual entry without upload still works (just fill form and save)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_multi_image_upload.py",
+    "/app/test_reports/pytest/pytest_multi_image_upload.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ExpensesPage.js (lines 107-108): uploadFiles[] and uploadPreviews[] state arrays correctly manage multi-file state",
+    "ExpensesPage.js (lines 189-205): handleFileSelect, removeFile, clearAllFiles functions correctly implement multi-file management",
+    "ExpensesPage.js (lines 216-222): handleExtract correctly sends all files under 'files' FormData key for multi-image, or 'file' for single+excel",
+    "ExpensesPage.js (lines 376-412): Upload zone UI correctly shows page thumbnails with 'Page N' labels and 'Add Page' button",
+    "SalesPage.js (lines 46-47): uploadFiles[] and uploadPreviews[] state arrays for multi-file",
+    "SalesPage.js (lines 105-119): handleFileSelect, removeFile, clearAllFiles functions",
+    "SalesPage.js (lines 132-137): handleExtract sends files under 'files' key",
+    "SalesPage.js (lines 328-368): Sales upload zone with page thumbnails and Add Page button",
+    "server.py (line 1229): extract_document accepts files: List[UploadFile] = File(None), file: UploadFile = File(None)",
+    "server.py (lines 1231-1238): Normalizes both 'file' and 'files' inputs into all_files list"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_multi_image_upload.py"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 tests passed)",
+    "frontend": "100% (25/25 tests passed)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "No seed data created - tests use temporary files that are cleaned up",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Multi-image upload flow fully tested across all 3 modules. Key data-testids: Raw Materials: raw-material-upload-zone, rm-take-photo-btn, rm-upload-image-btn, rm-upload-pdf-btn, rm-upload-excel-btn, upload-page-{idx}, add-another-image-btn, remove-page-{idx}, raw-material-extract-btn. Sales: sale-upload-zone, sale-take-photo-btn, sale-upload-image-btn, sale-upload-pdf-btn, sale-upload-excel-btn, sale-upload-page-{idx}, sale-add-another-image-btn, sale-remove-page-{idx}, sale-extract-btn, sale-clear-file-btn. Other Expenses: other-expense-upload-zone, oe-upload-page-{idx}, oe-add-another-image-btn, oe-remove-page-{idx}, extract-other-expense-btn. Backend accepts both 'files' (List[UploadFile]) and 'file' (single UploadFile) for backward compatibility.",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": [],
+    "note": "The /upload/extract endpoint uses real GPT-5.2 vision via emergentintegrations (NOT mocked)"
+  }
+}

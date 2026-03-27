@@ -43,8 +43,8 @@ export default function SalesPage() {
   const [form, setForm] = useState(emptySale());
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
-  const [uploadFile, setUploadFile] = useState(null);
-  const [uploadPreview, setUploadPreview] = useState(null);
+  const [uploadFiles, setUploadFiles] = useState([]);
+  const [uploadPreviews, setUploadPreviews] = useState([]);
   const fileImageRef = useRef(null);
   const filePdfRef = useRef(null);
   const fileCameraRef = useRef(null);
@@ -97,27 +97,25 @@ export default function SalesPage() {
 
   const openAddForm = () => {
     setForm(emptySale());
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(null);
-    setUploadPreview(null);
+    uploadPreviews.forEach(u => { if (u) URL.revokeObjectURL(u); });
+    setUploadFiles([]); setUploadPreviews([]);
     setShowAdd(true);
   };
 
   const handleFileSelect = (file) => {
     if (!file) return;
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(file);
-    if (file.type.startsWith('image/')) {
-      setUploadPreview(URL.createObjectURL(file));
-    } else {
-      setUploadPreview(null);
-    }
+    setUploadFiles(prev => [...prev, file]);
+    setUploadPreviews(prev => [...prev, file.type.startsWith('image/') ? URL.createObjectURL(file) : null]);
   };
 
-  const clearFile = () => {
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(null);
-    setUploadPreview(null);
+  const removeFile = (idx) => {
+    setUploadFiles(prev => prev.filter((_, i) => i !== idx));
+    setUploadPreviews(prev => { if (prev[idx]) URL.revokeObjectURL(prev[idx]); return prev.filter((_, i) => i !== idx); });
+  };
+
+  const clearAllFiles = () => {
+    uploadPreviews.forEach(u => { if (u) URL.revokeObjectURL(u); });
+    setUploadFiles([]); setUploadPreviews([]);
   };
 
   const isExcelFile = (f) => {
@@ -127,15 +125,19 @@ export default function SalesPage() {
 
   const extractingRef = useRef(false);
   const handleExtract = async () => {
-    if (!uploadFile || extractingRef.current) return;
+    if (!uploadFiles.length || extractingRef.current) return;
     extractingRef.current = true;
     setExtracting(true);
     try {
       const formData = new FormData();
-      formData.append('file', uploadFile);
+      if (uploadFiles.length === 1 && isExcelFile(uploadFiles[0])) {
+        formData.append('file', uploadFiles[0]);
+      } else {
+        uploadFiles.forEach(f => formData.append('files', f));
+      }
       formData.append('document_type', 'sales_report');
-      const endpoint = isExcelFile(uploadFile) ? '/upload/parse-excel' : '/upload/extract';
-      const res = await api.post(endpoint, formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
+      const endpoint = (uploadFiles.length === 1 && isExcelFile(uploadFiles[0])) ? '/upload/parse-excel' : '/upload/extract';
+      const res = await api.post(endpoint, formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 90000 });
       const d = res.data?.extracted_data || {};
       const extractedDate = d.report_date || new Date().toISOString().split('T')[0];
       const items = Array.isArray(d.items) ? d.items : [];
@@ -165,10 +167,10 @@ export default function SalesPage() {
       setSaving(true);
       try {
         const res = await api.post('/sales', payload);
-        if (uploadFile && res.data?.id) {
+        if (uploadFiles.length > 0 && res.data?.id) {
           try {
             const fd = new FormData();
-            fd.append('file', uploadFile);
+            fd.append('file', uploadFiles[0]);
             fd.append('folder', 'sales');
             fd.append('transaction_type', 'sale');
             fd.append('transaction_id', res.data.id);
@@ -322,86 +324,47 @@ export default function SalesPage() {
             <DialogTitle className="font-heading text-lg">Add Sale</DialogTitle>
           </DialogHeader>
 
-          {/* Upload section — multi-option */}
+          {/* Upload section — multi-image */}
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-4" data-testid="sale-upload-zone">
-            {uploadFile ? (
+            {uploadFiles.length > 0 ? (
               <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {uploadFiles.map((uf, idx) => (
+                    <div key={idx} className="relative group rounded-lg border border-slate-200 bg-white p-1.5 w-[80px]" data-testid={`sale-upload-page-${idx}`}>
+                      {uploadPreviews[idx] ? <img src={uploadPreviews[idx]} alt={`Page ${idx+1}`} className="w-full h-14 object-cover rounded" /> : <div className="w-full h-14 rounded bg-slate-100 flex items-center justify-center">{isExcelFile(uf) ? <Sheet className="w-5 h-5 text-slate-400" /> : <FileText className="w-5 h-5 text-slate-400" />}</div>}
+                      <p className="text-[9px] font-semibold text-center text-slate-500 mt-1 truncate">Page {idx+1}</p>
+                      <button onClick={() => removeFile(idx)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" data-testid={`sale-remove-page-${idx}`}><X className="w-3 h-3" /></button>
+                    </div>
+                  ))}
+                  <label className="w-[80px] h-[82px] rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center cursor-pointer hover:border-teal-300 hover:bg-teal-50/30 transition-colors" data-testid="sale-add-another-image-btn">
+                    <Plus className="w-5 h-5 text-slate-400" />
+                    <span className="text-[9px] font-semibold text-slate-400 mt-0.5">Add Page</span>
+                    <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
+                  </label>
+                </div>
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0">
-                      {uploadFile.type.startsWith('image/') ? <ImageIcon className="w-4 h-4 text-teal-600" /> : isExcelFile(uploadFile) ? <Sheet className="w-4 h-4 text-teal-600" /> : <FileText className="w-4 h-4 text-teal-600" />}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-navy-900 truncate">{uploadFile.name}</p>
-                      <p className="text-[10px] text-slate-400">{(uploadFile.size / 1024).toFixed(0)} KB &middot; {isExcelFile(uploadFile) ? uploadFile.name.split('.').pop().toUpperCase() : uploadFile.type.split('/')[1]?.toUpperCase()}</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 flex-shrink-0">
-                    <Button size="sm" variant="outline" className="h-8 text-xs" onClick={clearFile} data-testid="sale-clear-file-btn">
-                      <X className="w-3 h-3 mr-1" /> Remove
-                    </Button>
-                    <Button size="sm" className="h-8 text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={handleExtract} disabled={extracting} data-testid="sale-extract-btn">
-                      {extracting ? <><Loader2 className="w-3 h-3 animate-spin mr-1" /> Extracting...</> : <><Sparkles className="w-3 h-3 mr-1" /> Extract Data</>}
-                    </Button>
+                  <p className="text-[10px] text-slate-400">{uploadFiles.length} page{uploadFiles.length !== 1 ? 's' : ''} selected</p>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" className="h-8 text-xs" onClick={clearAllFiles} data-testid="sale-clear-file-btn"><X className="w-3 h-3 mr-1" /> Clear All</Button>
+                    <Button size="sm" className="h-8 text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={handleExtract} disabled={extracting} data-testid="sale-extract-btn">{extracting ? <><Loader2 className="w-3 h-3 animate-spin mr-1" /> Extracting...</> : <><Sparkles className="w-3 h-3 mr-1" /> Extract Data</>}</Button>
                   </div>
                 </div>
-                {uploadPreview && (
-                  <div className="rounded-lg overflow-hidden border border-slate-200 max-h-40">
-                    <img src={uploadPreview} alt="Preview" className="w-full h-full object-contain max-h-40 bg-white" />
-                  </div>
-                )}
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0">
-                    <Upload className="w-4 h-4 text-teal-600" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-navy-900">Upload a sales invoice</p>
-                    <p className="text-[10px] text-slate-400">AI will extract date, items, and totals automatically</p>
-                  </div>
-                </div>
+                <div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0"><Upload className="w-4 h-4 text-teal-600" /></div><div><p className="text-xs font-semibold text-navy-900">Upload a sales invoice</p><p className="text-[10px] text-slate-400">AI will extract date, items, and totals — supports multi-page</p></div></div>
                 <div className="grid grid-cols-4 gap-2" data-testid="sale-upload-options">
-                  <button
-                    onClick={() => fileCameraRef.current?.click()}
-                    className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group"
-                    data-testid="sale-take-photo-btn"
-                  >
-                    <Camera className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" />
-                    <span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Take Photo</span>
-                  </button>
-                  <button
-                    onClick={() => fileImageRef.current?.click()}
-                    className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group"
-                    data-testid="sale-upload-image-btn"
-                  >
-                    <ImageIcon className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" />
-                    <span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload Image</span>
-                  </button>
-                  <button
-                    onClick={() => filePdfRef.current?.click()}
-                    className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group"
-                    data-testid="sale-upload-pdf-btn"
-                  >
-                    <FileUp className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" />
-                    <span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload PDF</span>
-                  </button>
-                  <button
-                    onClick={() => fileExcelRef.current?.click()}
-                    className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group"
-                    data-testid="sale-upload-excel-btn"
-                  >
-                    <Sheet className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" />
-                    <span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload Excel</span>
-                  </button>
+                  <button onClick={() => fileCameraRef.current?.click()} className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group" data-testid="sale-take-photo-btn"><Camera className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" /><span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Take Photo</span></button>
+                  <button onClick={() => fileImageRef.current?.click()} className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group" data-testid="sale-upload-image-btn"><ImageIcon className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" /><span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload Image</span></button>
+                  <button onClick={() => filePdfRef.current?.click()} className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group" data-testid="sale-upload-pdf-btn"><FileUp className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" /><span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload PDF</span></button>
+                  <button onClick={() => fileExcelRef.current?.click()} className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group" data-testid="sale-upload-excel-btn"><Sheet className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" /><span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload Excel</span></button>
                 </div>
               </div>
             )}
             <input ref={fileCameraRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
             <input ref={fileImageRef} type="file" className="hidden" accept="image/png,image/jpeg,image/jpg,image/webp" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
             <input ref={filePdfRef} type="file" className="hidden" accept=".pdf,application/pdf" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
-            <input ref={fileExcelRef} type="file" className="hidden" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" onChange={(e) => handleFileSelect(e.target.files?.[0])} data-testid="sale-excel-input" />
+            <input ref={fileExcelRef} type="file" className="hidden" accept=".xlsx,.xls,.csv" onChange={(e) => handleFileSelect(e.target.files?.[0])} data-testid="sale-excel-input" />
           </div>
 
           <Separator />

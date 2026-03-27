@@ -104,8 +104,8 @@ function RawMaterialsTab({ api }) {
   const [form, setForm] = useState({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [mkItem()], subtotal: 0, tax: 0, total: 0 });
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
-  const [uploadFile, setUploadFile] = useState(null);
-  const [uploadPreview, setUploadPreview] = useState(null);
+  const [uploadFiles, setUploadFiles] = useState([]);
+  const [uploadPreviews, setUploadPreviews] = useState([]);
   const fileImageRef = useRef(null);
   const filePdfRef = useRef(null);
   const fileCameraRef = useRef(null);
@@ -154,8 +154,8 @@ function RawMaterialsTab({ api }) {
   const openAdd = () => {
     setEditingId(null);
     setForm({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [mkItem()], subtotal: 0, tax: 0, total: 0 });
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(null); setUploadPreview(null); setShowAdd(true);
+    uploadPreviews.forEach(u => URL.revokeObjectURL(u));
+    setUploadFiles([]); setUploadPreviews([]); setShowAdd(true);
     setReceiptId(null); setParsingMethod(null);
     api.get('/items').then(res => {
       const names = [];
@@ -177,8 +177,8 @@ function RawMaterialsTab({ api }) {
       tax: record.tax || 0,
       total: record.total || 0,
     });
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(null); setUploadPreview(null); setShowAdd(true);
+    if (uploadPreviews.length) uploadPreviews.forEach(u => URL.revokeObjectURL(u));
+    setUploadFiles([]); setUploadPreviews([]); setShowAdd(true);
     api.get('/items').then(res => {
       const names = [];
       (res.data || []).forEach(item => { names.push(item.name); (item.aliases || []).forEach(a => names.push(a.alias_name)); });
@@ -186,36 +186,41 @@ function RawMaterialsTab({ api }) {
     }).catch(() => {});
   };
 
-  // Use object URLs instead of base64 data URLs for image preview.
-  // iPhone photos can be 5-15MB; base64 inflates that by 33%.
-  // React diffs this string on every re-render — on Safari's smaller stack, this overflows.
   const handleFileSelect = (f) => {
     if (!f) return;
-    // Revoke previous object URL to prevent memory leaks
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(f);
+    setUploadFiles(prev => [...prev, f]);
     if (f.type.startsWith('image/')) {
-      setUploadPreview(URL.createObjectURL(f));
+      setUploadPreviews(prev => [...prev, URL.createObjectURL(f)]);
     } else {
-      setUploadPreview(null);
+      setUploadPreviews(prev => [...prev, null]);
     }
   };
-  const clearFile = () => {
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(null);
-    setUploadPreview(null);
+  const removeFile = (idx) => {
+    setUploadFiles(prev => prev.filter((_, i) => i !== idx));
+    setUploadPreviews(prev => { if (prev[idx]) URL.revokeObjectURL(prev[idx]); return prev.filter((_, i) => i !== idx); });
+  };
+  const clearAllFiles = () => {
+    uploadPreviews.forEach(u => { if (u) URL.revokeObjectURL(u); });
+    setUploadFiles([]); setUploadPreviews([]);
   };
   const isExcelFile = (f) => { const n = (f?.name || '').toLowerCase(); return n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv'); };
 
   const extractingRef = useRef(false);
   const handleExtract = async () => {
-    if (!uploadFile || extractingRef.current) return;
+    if (!uploadFiles.length || extractingRef.current) return;
     extractingRef.current = true;
     setExtracting(true);
     try {
-      const fd = new FormData(); fd.append('file', uploadFile); fd.append('document_type', 'purchase_invoice');
-      const ep = isExcelFile(uploadFile) ? '/upload/parse-excel' : '/upload/extract';
-      const res = await api.post(ep, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
+      const fd = new FormData();
+      // Send all files under 'files' key for multi-image, or 'file' for single+excel
+      if (uploadFiles.length === 1 && isExcelFile(uploadFiles[0])) {
+        fd.append('file', uploadFiles[0]);
+      } else {
+        uploadFiles.forEach(f => fd.append('files', f));
+      }
+      fd.append('document_type', 'purchase_invoice');
+      const ep = (uploadFiles.length === 1 && isExcelFile(uploadFiles[0])) ? '/upload/parse-excel' : '/upload/extract';
+      const res = await api.post(ep, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 90000 });
       const d = res.data?.extracted_data || {};
       const items = Array.isArray(d.items) ? d.items : [];
       const hasWarnings = d._has_warnings || false;
@@ -259,10 +264,10 @@ function RawMaterialsTab({ api }) {
           toast.success('Updated');
         } else {
           const res = await api.post('/purchases', payload);
-          if (uploadFile && res.data?.id) {
+          if (uploadFiles.length > 0 && res.data?.id) {
             try {
               const fd = new FormData();
-              fd.append('file', uploadFile);
+              fd.append('file', uploadFiles[0]);
               fd.append('folder', 'expenses');
               fd.append('transaction_type', 'raw_material');
               fd.append('transaction_id', res.data.id);
@@ -276,7 +281,7 @@ function RawMaterialsTab({ api }) {
           toast.success('Saved');
         }
         // Learn vendor patterns from corrected data
-        if (receiptId || uploadFile) {
+        if (receiptId || uploadFiles.length > 0) {
           try {
             await api.post('/receipts/learn', {
               receipt_id: receiptId,
@@ -368,8 +373,32 @@ function RawMaterialsTab({ api }) {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-heading text-lg">{editingId ? 'Edit Purchase' : 'Add Raw Material Purchase'}</DialogTitle></DialogHeader>
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-4" data-testid="raw-material-upload-zone">
-            {uploadFile ? <div className="space-y-3"><div className="flex items-center justify-between"><div className="flex items-center gap-2.5 min-w-0"><div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0">{uploadFile.type.startsWith('image/') ? <ImageIcon className="w-4 h-4 text-teal-600" /> : isExcelFile(uploadFile) ? <Sheet className="w-4 h-4 text-teal-600" /> : <FileText className="w-4 h-4 text-teal-600" />}</div><div className="min-w-0"><p className="text-xs font-semibold text-navy-900 truncate">{uploadFile.name}</p><p className="text-[10px] text-slate-400">{(uploadFile.size / 1024).toFixed(0)} KB</p></div></div><div className="flex gap-2 flex-shrink-0"><Button size="sm" variant="outline" className="h-8 text-xs" onClick={clearFile}><X className="w-3 h-3 mr-1" /> Remove</Button><Button size="sm" className="h-8 text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={handleExtract} disabled={extracting} data-testid="raw-material-extract-btn">{extracting ? <><Loader2 className="w-3 h-3 animate-spin mr-1" /> Extracting...</> : <><Sparkles className="w-3 h-3 mr-1" /> Extract Data</>}</Button></div></div>{uploadPreview && <div className="rounded-lg overflow-hidden border border-slate-200 max-h-40"><img src={uploadPreview} alt="Preview" className="w-full h-full object-contain max-h-40 bg-white" /></div>}</div>
-            : <div className="space-y-3"><div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0"><Upload className="w-4 h-4 text-teal-600" /></div><div><p className="text-xs font-semibold text-navy-900">Upload a purchase invoice</p><p className="text-[10px] text-slate-400">AI will extract vendor, items, and totals</p></div></div>
+            {uploadFiles.length > 0 ? <div className="space-y-3">
+              {/* Page thumbnails */}
+              <div className="flex flex-wrap gap-2">
+                {uploadFiles.map((uf, idx) => (
+                  <div key={idx} className="relative group rounded-lg border border-slate-200 bg-white p-1.5 w-[80px]" data-testid={`upload-page-${idx}`}>
+                    {uploadPreviews[idx] ? <img src={uploadPreviews[idx]} alt={`Page ${idx+1}`} className="w-full h-14 object-cover rounded" /> : <div className="w-full h-14 rounded bg-slate-100 flex items-center justify-center">{isExcelFile(uf) ? <Sheet className="w-5 h-5 text-slate-400" /> : <FileText className="w-5 h-5 text-slate-400" />}</div>}
+                    <p className="text-[9px] font-semibold text-center text-slate-500 mt-1 truncate">Page {idx+1}</p>
+                    <button onClick={() => removeFile(idx)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" data-testid={`remove-page-${idx}`}><X className="w-3 h-3" /></button>
+                  </div>
+                ))}
+                {/* Add another image button */}
+                <label className="w-[80px] h-[82px] rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center cursor-pointer hover:border-teal-300 hover:bg-teal-50/30 transition-colors" data-testid="add-another-image-btn">
+                  <Plus className="w-5 h-5 text-slate-400" />
+                  <span className="text-[9px] font-semibold text-slate-400 mt-0.5">Add Page</span>
+                  <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
+                </label>
+              </div>
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] text-slate-400">{uploadFiles.length} page{uploadFiles.length !== 1 ? 's' : ''} selected</p>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" className="h-8 text-xs" onClick={clearAllFiles}><X className="w-3 h-3 mr-1" /> Clear All</Button>
+                  <Button size="sm" className="h-8 text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={handleExtract} disabled={extracting} data-testid="raw-material-extract-btn">{extracting ? <><Loader2 className="w-3 h-3 animate-spin mr-1" /> Extracting...</> : <><Sparkles className="w-3 h-3 mr-1" /> Extract Data</>}</Button>
+                </div>
+              </div>
+            </div>
+            : <div className="space-y-3"><div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center flex-shrink-0"><Upload className="w-4 h-4 text-teal-600" /></div><div><p className="text-xs font-semibold text-navy-900">Upload a purchase invoice</p><p className="text-[10px] text-slate-400">AI will extract vendor, items, and totals — supports multi-page documents</p></div></div>
               <div className="grid grid-cols-4 gap-2" data-testid="raw-material-upload-options">
                 <button onClick={() => fileCameraRef.current?.click()} className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group" data-testid="rm-take-photo-btn"><Camera className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" /><span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Take Photo</span></button>
                 <button onClick={() => fileImageRef.current?.click()} className="flex flex-col items-center gap-1.5 p-3 rounded-lg border border-slate-200 bg-white hover:border-teal-300 hover:bg-teal-50/50 transition-all group" data-testid="rm-upload-image-btn"><ImageIcon className="w-5 h-5 text-slate-400 group-hover:text-teal-600 transition-colors" /><span className="text-[10px] font-semibold text-slate-500 group-hover:text-teal-700">Upload Image</span></button>
@@ -574,8 +603,8 @@ function OtherExpensesTab({ api }) {
   const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null, message: '' });
 
   // Upload / OCR state
-  const [uploadFile, setUploadFile] = useState(null);
-  const [uploadPreview, setUploadPreview] = useState(null);
+  const [uploadFiles, setUploadFiles] = useState([]);
+  const [uploadPreviews, setUploadPreviews] = useState([]);
   const [extracting, setExtracting] = useState(false);
   const extractingRef = useRef(false);
   const [receiptId, setReceiptId] = useState(null);
@@ -604,46 +633,42 @@ function OtherExpensesTab({ api }) {
   const openAdd = () => {
     setEditingId(null);
     setForm({ title: '', category: 'Miscellaneous', amount: 0, expense_date: new Date().toISOString().split('T')[0], notes: '' });
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(null); setUploadPreview(null);
+    uploadPreviews.forEach(u => { if (u) URL.revokeObjectURL(u); });
+    setUploadFiles([]); setUploadPreviews([]);
     setReceiptId(null); setParsingMethod(null);
     setShowAdd(true);
   };
   const openEdit = (record) => {
     setEditingId(record.id);
     setForm({ title: record.title || '', category: record.category || 'Miscellaneous', amount: record.amount || 0, expense_date: record.expense_date || '', notes: record.notes || '' });
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(null); setUploadPreview(null);
+    uploadPreviews.forEach(u => { if (u) URL.revokeObjectURL(u); });
+    setUploadFiles([]); setUploadPreviews([]);
     setReceiptId(null); setParsingMethod(null);
     setShowAdd(true);
   };
 
-  // File handling
   const handleFile = (file) => {
     if (!file) return;
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(file);
-    if (file.type.startsWith('image/')) {
-      setUploadPreview(URL.createObjectURL(file));
-    } else {
-      setUploadPreview(null);
-    }
+    setUploadFiles(prev => [...prev, file]);
+    setUploadPreviews(prev => [...prev, file.type.startsWith('image/') ? URL.createObjectURL(file) : null]);
   };
-  const clearFile = () => {
-    if (uploadPreview) URL.revokeObjectURL(uploadPreview);
-    setUploadFile(null); setUploadPreview(null);
-    setReceiptId(null); setParsingMethod(null);
+  const removeFile = (idx) => {
+    setUploadFiles(prev => prev.filter((_, i) => i !== idx));
+    setUploadPreviews(prev => { if (prev[idx]) URL.revokeObjectURL(prev[idx]); return prev.filter((_, i) => i !== idx); });
+  };
+  const clearAllFiles = () => {
+    uploadPreviews.forEach(u => { if (u) URL.revokeObjectURL(u); });
+    setUploadFiles([]); setUploadPreviews([]);
   };
 
-  // OCR Extract
   const handleExtract = async () => {
-    if (!uploadFile || extractingRef.current) return;
+    if (!uploadFiles.length || extractingRef.current) return;
     setExtracting(true); extractingRef.current = true;
     try {
       const fd = new FormData();
-      fd.append('file', uploadFile);
+      uploadFiles.forEach(f => fd.append('files', f));
       fd.append('document_type', 'other_expense');
-      const res = await api.post('/upload/extract', fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
+      const res = await api.post('/upload/extract', fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 90000 });
       const d = res.data?.extracted_data || {};
       setForm(f => ({
         ...f,
@@ -671,10 +696,10 @@ function OtherExpensesTab({ api }) {
           toast.success('Updated');
         } else {
           const res = await api.post('/other-expenses', form);
-          if (uploadFile && res.data?.id) {
+          if (uploadFiles.length > 0 && res.data?.id) {
             try {
               const fd = new FormData();
-              fd.append('file', uploadFile);
+              fd.append('file', uploadFiles[0]);
               fd.append('folder', 'expenses');
               fd.append('transaction_type', 'other_expense');
               fd.append('transaction_id', res.data.id);
@@ -688,7 +713,7 @@ function OtherExpensesTab({ api }) {
           toast.success('Expense saved');
         }
         // Learn vendor pattern
-        if (receiptId || uploadFile) {
+        if (receiptId || uploadFiles.length > 0) {
           try {
             await api.post('/receipts/learn', {
               receipt_id: receiptId,
@@ -780,12 +805,38 @@ function OtherExpensesTab({ api }) {
                 <div className="flex items-center gap-2 mb-2">
                   <Upload className="w-4 h-4 text-teal-600" />
                   <span className="text-xs font-bold text-navy-900">Upload a document</span>
-                  <span className="text-[10px] text-slate-400">AI will extract details</span>
+                  <span className="text-[10px] text-slate-400">AI will extract details — supports multi-page</span>
                 </div>
-                {!uploadFile ? (
+                {uploadFiles.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-2">
+                      {uploadFiles.map((uf, idx) => (
+                        <div key={idx} className="relative group rounded-lg border border-slate-200 bg-white p-1.5 w-[80px]" data-testid={`oe-upload-page-${idx}`}>
+                          {uploadPreviews[idx] ? <img src={uploadPreviews[idx]} alt={`Page ${idx+1}`} className="w-full h-14 object-cover rounded" /> : <div className="w-full h-14 rounded bg-slate-100 flex items-center justify-center"><FileText className="w-5 h-5 text-slate-400" /></div>}
+                          <p className="text-[9px] font-semibold text-center text-slate-500 mt-1">Page {idx+1}</p>
+                          <button onClick={() => removeFile(idx)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" data-testid={`oe-remove-page-${idx}`}><X className="w-3 h-3" /></button>
+                        </div>
+                      ))}
+                      <label className="w-[80px] h-[82px] rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center cursor-pointer hover:border-teal-300 hover:bg-teal-50/30 transition-colors" data-testid="oe-add-another-image-btn">
+                        <Plus className="w-5 h-5 text-slate-400" />
+                        <span className="text-[9px] font-semibold text-slate-400 mt-0.5">Add Page</span>
+                        <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e) => handleFile(e.target.files?.[0])} />
+                      </label>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-slate-400">{uploadFiles.length} page{uploadFiles.length !== 1 ? 's' : ''}</p>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={clearAllFiles}><X className="w-3 h-3 mr-1" /> Clear</Button>
+                        <Button size="sm" className="h-7 text-xs bg-teal-600 hover:bg-teal-700 text-white" onClick={handleExtract} disabled={extracting} data-testid="extract-other-expense-btn">
+                          {extracting ? <><Loader2 className="w-3 h-3 animate-spin mr-1" /> Extracting...</> : <><Sparkles className="w-3 h-3 mr-1" /> Extract</>}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
                   <div className="grid grid-cols-4 gap-2">
                     {[
-                      { icon: Camera, label: 'Take Photo', accept: 'image/*', capture: 'environment' },
+                      { icon: Camera, label: 'Photo', accept: 'image/*', capture: 'environment' },
                       { icon: ImageIcon, label: 'Image', accept: 'image/*' },
                       { icon: FileText, label: 'PDF', accept: '.pdf' },
                       { icon: FileSpreadsheet, label: 'Excel', accept: '.xlsx,.xls,.csv' },
@@ -793,22 +844,9 @@ function OtherExpensesTab({ api }) {
                       <label key={label} className="flex flex-col items-center gap-1.5 p-3 rounded-md border border-slate-100 hover:border-teal-300 hover:bg-teal-50/30 cursor-pointer transition-colors">
                         <Icon className="w-5 h-5 text-slate-400" />
                         <span className="text-[10px] font-medium text-slate-500">{label}</span>
-                        <input type="file" accept={accept} capture={capture} className="hidden" onChange={(e) => handleFile(e.target.files[0])} />
+                        <input type="file" accept={accept} capture={capture} className="hidden" onChange={(e) => handleFile(e.target.files?.[0])} />
                       </label>
                     ))}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between bg-slate-50 rounded-md p-2">
-                      <span className="text-xs text-slate-600 truncate max-w-[200px]">{uploadFile.name}</span>
-                      <div className="flex gap-1.5">
-                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={clearFile}><X className="w-3 h-3" /></Button>
-                      </div>
-                    </div>
-                    {uploadPreview && <img src={uploadPreview} alt="preview" className="w-full max-h-32 object-contain rounded-md bg-slate-50" />}
-                    <Button onClick={handleExtract} disabled={extracting} className="w-full h-8 text-xs bg-teal-600 hover:bg-teal-700 text-white" data-testid="extract-other-expense-btn">
-                      {extracting ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> Extracting...</> : <><Sparkles className="w-3.5 h-3.5 mr-1.5" /> Extract Data</>}
-                    </Button>
                   </div>
                 )}
               </div>
