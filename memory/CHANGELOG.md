@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-03-27 — Multi-Image Upload Flow (All Modules)
+
+### Backend
+- `/api/upload/extract` now accepts both `files: List[UploadFile]` (multi) and `file: UploadFile` (single)
+- All images converted to base64 and sent as ONE request to GPT-5.2 vision
+- Multi-image dedup hint added to all prompts (purchase, salary, other_expense, sales)
+- No-files validation returns 400; HTTPException re-raised properly
+
+### Frontend (Raw Materials, Sales, Other Expenses)
+- Replaced single uploadFile/uploadPreview with uploadFiles[]/uploadPreviews[] arrays
+- After first file: shows Page 1 thumbnail + "Add Page" button
+- Add Page appends (never replaces), shows Page 1, Page 2, Page 3...
+- Individual page remove button (hover reveal, red circle)
+- "Clear All" resets to initial upload options
+- Extract sends all files under 'files' FormData key
+- Saves as ONE record only
+- Backward compatible: single file still works
+
+### Testing
+- 37/37 tests passed (12 backend + 25 frontend, iteration 47)
+
+
+
 ## 2026-03-26 — Other Expenses: Subcategories + OCR Upload
 
 ### What was added
