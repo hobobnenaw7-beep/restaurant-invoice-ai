@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-03-27 — Final Confirmation Step Before Save
+
+### What was added
+- Reusable `ConfirmSaveDialog` component showing ONLY Vendor, Date, Total
+- Applied to all 4 modules: Raw Materials, Salaries, Other Expenses, Sales
+- handleSave validates → shows confirmation dialog
+- Back button returns to edit form (no save)
+- Save button triggers actual API save
+- No line items, tax, subtotal, or other details shown in confirmation
+
+### Testing
+- 24/24 frontend tests passed (iteration 48)
+
+
+
 ## 2026-03-27 — Multi-Image Upload Flow (All Modules)
 
 ### Backend
