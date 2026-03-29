@@ -60,6 +60,19 @@ Full-stack restaurant accounting application with AI-powered OCR for invoice ext
 - [x] Confirmed Mappings list with delete capability
 - [x] Fully tested: 24 backend + 10 frontend tests (100% pass rate)
 
+### Decision-Making Layer (March 29, 2026)
+- [x] Quick Decisions summary card at page top — multi-vendor items sorted by savings opportunity
+- [x] Each decision: "Buy from X to save Y% vs Z" with exact $/LB and per-pound savings
+- [x] Decision banner inside each expanded multi-vendor group
+- [x] "Best Deal" badge (green) on cheapest vendor row
+- [x] "High Price" warning badge (red) on most expensive vendor row
+- [x] Spread color-coded: red >=15%, amber 8-15%, green <8%
+- [x] $/LB column: green for best, red for worst
+- [x] Signal column in table for visual badges
+- [x] No badges/banners for single-vendor groups (nothing to compare)
+- [x] Deterministic logic only — no trends, no charts
+- [x] Fully tested: 12/12 frontend tests (100% pass rate)
+
 ### UI/UX
 - [x] Event bus for instant cross-component sync
 - [x] ConfirmDeleteDialog and ConfirmSaveDialog
