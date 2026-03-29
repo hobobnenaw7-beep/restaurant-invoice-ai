@@ -73,6 +73,13 @@ Full-stack restaurant accounting application with AI-powered OCR for invoice ext
 - [x] Deterministic logic only — no trends, no charts
 - [x] Fully tested: 12/12 frontend tests (100% pass rate)
 
+### Vendor Rename/Merge Fix (March 29, 2026)
+- [x] `PUT /api/suppliers/{id}` on rename: updates all `purchases.supplier_name` records
+- [x] If target name already exists: merges vendor docs (deletes renamed, keeps target)
+- [x] `GET /api/suppliers` deduplicates by name (case-insensitive), auto-cleans duplicate docs
+- [x] List, detail, and purchases views all show consistent merged data
+- [x] Fully tested: 4 backend + 6 frontend tests (100%)
+
 ### UI/UX
 - [x] Event bus for instant cross-component sync
 - [x] ConfirmDeleteDialog and ConfirmSaveDialog
