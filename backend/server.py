@@ -1087,6 +1087,7 @@ async def parse_excel(file: UploadFile = File(...), document_type: str = Form("p
                 'item_name': ['item', 'item_name', 'product', 'product_name', 'description', 'raw_name', 'name', 'menu_item', 'ingredient'],
                 'quantity': ['quantity', 'qty', 'count'],
                 'unit': ['unit', 'uom', 'measure', 'unit_of_measure'],
+                'pack_weight': ['pack_weight', 'weight', 'pack_size', 'size', 'pack_wt', 'net_weight'],
                 'unit_price': ['price', 'unit_price', 'unit_cost', 'cost', 'rate'],
                 'total': ['total', 'line_total', 'subtotal', 'ext_price', 'extended_price', 'revenue', 'amount'],
             }.items():
@@ -1128,15 +1129,20 @@ async def parse_excel(file: UploadFile = File(...), document_type: str = Form("p
                 if up == 0 and tot > 0 and qty > 0:
                     up = tot / qty
 
+                pw = safe_float(row[col_map['pack_weight']]) if 'pack_weight' in col_map else 0
+                nup = round(up / pw, 4) if pw > 0 and up > 0 else 0
+
                 items_parsed.append({
                     "supplier": row[col_map['supplier']].strip() if 'supplier' in col_map else '',
                     "date": safe_date(row[col_map['date']]) if 'date' in col_map else datetime.now(timezone.utc).strftime('%Y-%m-%d'),
                     "invoice_number": row[col_map['invoice_number']].strip() if 'invoice_number' in col_map else '',
                     "raw_name": item_name,
                     "quantity": qty,
-                    "unit": row[col_map['unit']].strip() if 'unit' in col_map else '',
+                    "pack_weight": pw,
+                    "unit": row[col_map['unit']].strip().upper() if 'unit' in col_map else '',
                     "unit_price": round(up, 2),
                     "total": round(tot, 2),
+                    "normalized_unit_price": nup,
                 })
 
             # Group into purchases by supplier+date+invoice
@@ -1157,7 +1163,7 @@ async def parse_excel(file: UploadFile = File(...), document_type: str = Form("p
                     "supplier_name": first.get('supplier', ''),
                     "invoice_date": first.get('date', datetime.now(timezone.utc).strftime('%Y-%m-%d')),
                     "invoice_number": first.get('invoice_number', ''),
-                    "items": [{"raw_name": it['raw_name'], "quantity": it['quantity'], "unit": it['unit'], "unit_price": it['unit_price'], "total": it['total']} for it in all_items],
+                    "items": [{"raw_name": it['raw_name'], "quantity": it['quantity'], "pack_weight": it.get('pack_weight', 0), "unit": it['unit'], "unit_price": it['unit_price'], "total": it['total'], "normalized_unit_price": it.get('normalized_unit_price', 0)} for it in all_items],
                     "subtotal": subtotal, "tax": 0, "total": subtotal,
                 }, "document_type": document_type, "row_count": len(all_items)}
             else:
@@ -1169,7 +1175,7 @@ async def parse_excel(file: UploadFile = File(...), document_type: str = Form("p
                     "supplier_name": first_key[0],
                     "invoice_date": first_key[1],
                     "invoice_number": first_key[2],
-                    "items": [{"raw_name": it['raw_name'], "quantity": it['quantity'], "unit": it['unit'], "unit_price": it['unit_price'], "total": it['total']} for it in first_items],
+                    "items": [{"raw_name": it['raw_name'], "quantity": it['quantity'], "pack_weight": it.get('pack_weight', 0), "unit": it['unit'], "unit_price": it['unit_price'], "total": it['total'], "normalized_unit_price": it.get('normalized_unit_price', 0)} for it in first_items],
                     "subtotal": subtotal, "tax": 0, "total": subtotal,
                 }, "document_type": document_type, "row_count": len(items_parsed), "purchase_groups": len(groups),
                    "message": f"Found {len(groups)} purchases with {len(items_parsed)} total items. Showing the first purchase."}
@@ -1329,7 +1335,7 @@ CRITICAL: Produce ONE unified result. If the same line item appears in multiple 
 
         if document_type == "purchase_invoice":
             prompt = f"""You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
-{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"unit":"","unit_price":0,"total":0}}],"subtotal":0,"tax":0,"total":0}}
+{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_weight":0,"unit":"","unit_price":0,"total":0}}],"subtotal":0,"tax":0,"total":0}}
 
 CRITICAL rules for line items:
 - Look for patterns like: "2 x 5.00", "5.00 x 2", "2 @ 5.00", "Qty 2 Price 5.00"
@@ -1341,7 +1347,8 @@ CRITICAL rules for line items:
 - total = subtotal + tax
 - Dates must be in YYYY-MM-DD format. Convert any date format you see.
 - Use 0 for any truly missing numeric values
-- Include the unit of measure (kg, lb, each, box, case, etc.) when visible
+- pack_weight: The weight per pack/case/unit (e.g., "10 LB" means pack_weight=10, unit="LB"). Look for weight info like "10#", "10 LB", "5 KG", "2.5lb" next to or within item descriptions. If the item says "Chicken Breast 10LB" then raw_name="Chicken Breast", pack_weight=10, unit="LB". If no pack weight is visible, use 0.
+- unit: The unit of measure for the pack weight (LB, KG, OZ, EA, CS, BX, GAL, L, etc.). Use uppercase.
 - Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
         elif document_type == "salary_document":
             prompt = f"""You are reading a payroll document, salary slip, or payment record for restaurant staff. Extract data into this exact JSON format:
@@ -1466,6 +1473,13 @@ Rules:
                     if not item.get("raw_name", "").strip():
                         item_warnings.append("missing item name")
                         item["_warning"] = True
+
+                    # Compute normalized_unit_price (price per weight unit for vendor comparison)
+                    pw = float(item.get("pack_weight", 0) or 0)
+                    if pw > 0 and up > 0:
+                        item["normalized_unit_price"] = round(up / pw, 4)
+                    else:
+                        item["normalized_unit_price"] = 0
 
                     if item_warnings:
                         item["_warning_detail"] = "; ".join(item_warnings)

@@ -1,0 +1,83 @@
+{
+  "summary": "Tested pack_weight, unit, and normalized_unit_price features for Raw Materials / Purchases. All 12 test features verified successfully. Backend API tests (9/9 passed) and frontend UI tests all passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "backend_api_tests": {
+      "test_create_purchase_with_pack_weight_and_unit": "PASS - Created purchase with pack_weight=10, unit=LB, normalized_unit_price=2.50",
+      "test_create_purchase_with_zero_pack_weight": "PASS - normalized_unit_price=0 when pack_weight=0",
+      "test_get_purchase_with_pack_weight_data": "PASS - Data persists correctly after GET",
+      "test_update_purchase_with_pack_weight": "PASS - Updated pack_weight from 5 to 8, unit from LB to KG",
+      "test_all_unit_options": "PASS - All 10 unit options accepted: LB, KG, OZ, EA, CS, BX, GAL, L, BAG, PK",
+      "test_list_purchases_includes_pack_weight": "PASS - List endpoint returns pack_weight data",
+      "test_normalized_unit_price_calculation": "PASS - Stored correctly (unit_price / pack_weight)",
+      "test_sales_does_not_have_pack_weight": "PASS - Sales endpoint does not have pack_weight fields",
+      "test_other_expenses_does_not_have_pack_weight": "PASS - Other expenses endpoint does not have pack_weight fields"
+    },
+    "frontend_ui_tests": {
+      "add_dialog_columns": "PASS - All 7 columns present: Item Name, Qty, Pack Wt, Unit, Price, Total, $/Unit",
+      "add_item_button": "PASS - Creates new editable row with all fields",
+      "unit_dropdown": "PASS - Has all 10 options plus blank '—' option",
+      "total_auto_calculation": "PASS - total = qty * unit_price (5 * 25 = 125)",
+      "normalized_unit_price_calculation": "PASS - $/Unit = unit_price / pack_weight (25 / 10 = $2.50)",
+      "nup_shows_dash_when_zero": "PASS - $/Unit shows '—' when pack_weight is 0",
+      "view_detail_dialog": "PASS - Shows Pack Wt, Unit, $/Unit columns with correct values",
+      "edit_dialog_populated": "PASS - pack_weight=5, unit=LB populated correctly",
+      "delete_line_item": "PASS - Line item deleted successfully",
+      "sales_not_affected": "PASS - Sales page does NOT have pack_weight/unit fields",
+      "other_expenses_not_affected": "PASS - Other Expenses does NOT have pack_weight/unit fields"
+    }
+  },
+  "features_verified": [
+    "1. 'Add' button on Raw Materials tab opens dialog with correct new columns: Item Name, Qty, Pack Wt, Unit, Price, Total, $/Unit",
+    "2. 'Add Item' button inside dialog creates a new empty editable row with all fields",
+    "3. Unit field is a dropdown selector with options: LB, KG, OZ, EA, CS, BX, GAL, L, BAG, PK (and a blank '—' option)",
+    "4. Filling in quantity and unit_price auto-calculates total (total = qty * unit_price)",
+    "5. Filling in pack_weight recomputes normalized_unit_price (unit_price / pack_weight) and displays as $/Unit",
+    "6. $/Unit shows '—' when pack_weight is 0 or empty, and shows a teal-colored dollar amount when computed",
+    "7. View detail dialog for an existing purchase shows new columns: Pack Wt, Unit, $/Unit",
+    "8. Save a new purchase with pack_weight and unit data, then re-open/view it to verify data persists correctly",
+    "9. Edit an existing purchase — pack_weight and unit fields should be populated and editable",
+    "10. Delete a line item inside the dialog works correctly",
+    "11. Sales page and Other Expenses page are NOT affected — they do NOT have pack_weight/unit changes",
+    "12. Backend POST /api/purchases accepts and stores pack_weight and normalized_unit_price in item data"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_raw_materials_pack_weight.py",
+    "/app/test_reports/pytest/pytest_pack_weight.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ExpensesPage.js RawMaterialsTab: mkItem factory correctly initializes pack_weight, unit, normalized_unit_price",
+    "ExpensesPage.js updateItem: Correctly recalculates normalized_unit_price when pack_weight or unit_price changes",
+    "ExpensesPage.js: Grid layout uses CSS grid template columns for proper alignment",
+    "ExpensesPage.js: Unit dropdown uses Shadcn Select with UNIT_OPTIONS array",
+    "ExpensesPage.js: View detail dialog widened to max-w-3xl with new columns",
+    "server.py create_purchase: Accepts and stores pack_weight and normalized_unit_price in items",
+    "server.py OCR prompt: Includes pack_weight extraction instructions"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (9/9 tests passed)",
+    "frontend": "100% (all UI tests passed)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Created test purchase: Test Pack Weight Save Vendor, INV-PW-SAVE-001, Test Chicken (qty=3, pack_weight=5, unit=LB, price=20, total=60, $/Unit=$4.00)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Pack weight feature fully tested. Key data-testids: line-item-pack-weight-{i}, line-item-unit-{i}, line-item-nup-{i}. Unit dropdown has 10 options: LB, KG, OZ, EA, CS, BX, GAL, L, BAG, PK. $/Unit calculation: unit_price / pack_weight. Shows '—' when pack_weight is 0. View detail dialog shows Pack Wt, Unit, $/Unit columns. Sales and Other Expenses pages are NOT affected by these changes.",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}
