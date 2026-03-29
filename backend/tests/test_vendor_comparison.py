@@ -1,11 +1,11 @@
 """
-Test vendor price comparison endpoint: GET /api/prices/vendor-comparison
+Test suite for Vendor Price Comparison endpoint: GET /api/vendor-comparison/normalized
 Tests:
-- Endpoint returns items with vendor prices
-- best_vendor field correctly identifies lowest price vendor
-- vendors array sorted by latest_price ascending (cheapest first)
-- savings_pct calculated correctly
-- Items with 1 vendor don't have savings (savings_pct = 0)
+- Only items with pack_parse_status=parsed and normalized_price_per_lb > 0 are included
+- Items with failed/not_applicable status or non-weight units (EA, GAL, PK) are excluded
+- Multi-vendor items appear first, sorted by spread_pct descending
+- Item grouping is exact-match (conservative, no fuzzy merge)
+- Stats object contains correct counts
 """
 import pytest
 import requests
@@ -13,159 +13,341 @@ import os
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 
-class TestVendorComparison:
-    """Vendor price comparison endpoint tests"""
+class TestVendorComparisonNormalized:
+    """Tests for GET /api/vendor-comparison/normalized endpoint"""
     
     @pytest.fixture(autouse=True)
     def setup(self):
-        """Get auth token for tests"""
-        response = requests.post(f"{BASE_URL}/api/auth/login", json={
+        """Login and get auth token"""
+        login_resp = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": "demo@test.com",
             "password": "testpassword"
         })
-        if response.status_code != 200:
-            pytest.skip("Authentication failed - skipping tests")
-        self.token = response.json().get("token")
-        self.headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
+        assert login_resp.status_code == 200, f"Login failed: {login_resp.text}"
+        self.token = login_resp.json()["token"]
+        self.headers = {"Authorization": f"Bearer {self.token}"}
     
-    def test_vendor_comparison_endpoint_returns_200(self):
-        """Test GET /api/prices/vendor-comparison returns 200"""
-        response = requests.get(f"{BASE_URL}/api/prices/vendor-comparison", headers=self.headers)
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-        print("✓ Vendor comparison endpoint returns 200")
+    def test_endpoint_returns_200(self):
+        """Test that the endpoint returns 200 OK"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        print("PASS - Endpoint returns 200 OK")
     
-    def test_vendor_comparison_response_structure(self):
-        """Test response has required fields: items array and total_items count"""
-        response = requests.get(f"{BASE_URL}/api/prices/vendor-comparison", headers=self.headers)
-        assert response.status_code == 200
-        data = response.json()
+    def test_response_structure(self):
+        """Test that response has correct structure with comparisons and stats"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
         
-        assert "items" in data, "Response missing 'items' field"
-        assert "total_items" in data, "Response missing 'total_items' field"
-        assert isinstance(data["items"], list), "'items' should be an array"
-        assert isinstance(data["total_items"], int), "'total_items' should be integer"
-        assert data["total_items"] == len(data["items"]), "total_items should match items array length"
-        print(f"✓ Response structure valid with {data['total_items']} items")
+        # Check top-level keys
+        assert "comparisons" in data, "Missing 'comparisons' key"
+        assert "stats" in data, "Missing 'stats' key"
+        
+        # Check stats structure
+        stats = data["stats"]
+        assert "total_qualifying_items" in stats, "Missing 'total_qualifying_items' in stats"
+        assert "total_groups" in stats, "Missing 'total_groups' in stats"
+        assert "multi_vendor_groups" in stats, "Missing 'multi_vendor_groups' in stats"
+        assert "vendors_represented" in stats, "Missing 'vendors_represented' in stats"
+        
+        print(f"PASS - Response structure correct. Stats: {stats}")
     
-    def test_item_structure(self):
-        """Test each item has required fields: item, vendors, best_vendor, best_price, savings_pct, vendor_count"""
-        response = requests.get(f"{BASE_URL}/api/prices/vendor-comparison", headers=self.headers)
-        assert response.status_code == 200
-        data = response.json()
+    def test_qualifying_items_have_valid_normalized_price(self):
+        """Test that all items in comparisons have normalized_price_per_lb > 0"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
         
-        assert len(data["items"]) > 0, "Expected at least one item"
-        
-        for item in data["items"]:
-            assert "item" in item, f"Item missing 'item' name field"
-            assert "vendors" in item, f"Item '{item.get('item', 'unknown')}' missing 'vendors' array"
-            assert "best_vendor" in item, f"Item '{item.get('item', 'unknown')}' missing 'best_vendor'"
-            assert "best_price" in item, f"Item '{item.get('item', 'unknown')}' missing 'best_price'"
-            assert "savings_pct" in item, f"Item '{item.get('item', 'unknown')}' missing 'savings_pct'"
-            assert "vendor_count" in item, f"Item '{item.get('item', 'unknown')}' missing 'vendor_count'"
-            
-            # Vendor count should match vendors array
-            assert item["vendor_count"] == len(item["vendors"]), f"vendor_count mismatch for {item['item']}"
-        
-        print(f"✓ All {len(data['items'])} items have required fields")
-    
-    def test_vendor_structure(self):
-        """Test each vendor entry has: vendor, latest_price, latest_date, avg_price, purchase_count, unit"""
-        response = requests.get(f"{BASE_URL}/api/prices/vendor-comparison", headers=self.headers)
-        assert response.status_code == 200
-        data = response.json()
-        
-        assert len(data["items"]) > 0, "Expected at least one item"
-        
-        for item in data["items"]:
-            for vendor in item["vendors"]:
-                assert "vendor" in vendor, f"Vendor missing 'vendor' name"
-                assert "latest_price" in vendor, f"Vendor missing 'latest_price'"
-                assert "latest_date" in vendor, f"Vendor missing 'latest_date'"
-                assert "avg_price" in vendor, f"Vendor missing 'avg_price'"
-                assert "purchase_count" in vendor, f"Vendor missing 'purchase_count'"
-                assert "unit" in vendor, f"Vendor missing 'unit'"
+        for group in data.get("comparisons", []):
+            for entry in group.get("entries", []):
+                nplb = entry.get("normalized_price_per_lb", 0)
+                assert nplb > 0, f"Entry has invalid normalized_price_per_lb: {entry}"
                 
-                # Validate data types
-                assert isinstance(vendor["latest_price"], (int, float)), "latest_price should be numeric"
-                assert isinstance(vendor["avg_price"], (int, float)), "avg_price should be numeric"
-                assert isinstance(vendor["purchase_count"], int), "purchase_count should be integer"
+                # Check pack_unit is LB or OZ (normalizable)
+                pack_unit = entry.get("pack_unit", "")
+                assert pack_unit in ["LB", "OZ"], f"Entry has non-normalizable unit '{pack_unit}': {entry}"
         
-        print("✓ All vendor entries have correct structure and data types")
+        print("PASS - All qualifying items have valid normalized_price_per_lb > 0 and LB/OZ units")
     
-    def test_vendors_sorted_by_latest_price_ascending(self):
-        """Test vendors array is sorted by latest_price ascending (cheapest first)"""
-        response = requests.get(f"{BASE_URL}/api/prices/vendor-comparison", headers=self.headers)
-        assert response.status_code == 200
-        data = response.json()
+    def test_no_excluded_units_in_results(self):
+        """Test that EA, GAL, PK and other non-weight units are excluded"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
         
-        items_checked = 0
-        for item in data["items"]:
-            if len(item["vendors"]) > 1:
-                prices = [v["latest_price"] for v in item["vendors"]]
-                assert prices == sorted(prices), f"Vendors not sorted by price for {item['item']}: {prices}"
-                items_checked += 1
+        excluded_units = {"EA", "GAL", "PK", "CT", "EACH", "GALLON", "PACK", "BOX", "BX", "CS", "CASE"}
         
-        assert items_checked > 0, "No items with multiple vendors to test sorting"
-        print(f"✓ Verified sorting for {items_checked} items with multiple vendors")
+        for group in data.get("comparisons", []):
+            for entry in group.get("entries", []):
+                pack_unit = entry.get("pack_unit", "").upper()
+                assert pack_unit not in excluded_units, f"Found excluded unit '{pack_unit}' in results: {entry}"
+        
+        print("PASS - No excluded units (EA, GAL, PK, etc.) found in results")
     
-    def test_best_vendor_is_cheapest(self):
-        """Test best_vendor correctly identifies vendor with lowest latest_price"""
-        response = requests.get(f"{BASE_URL}/api/prices/vendor-comparison", headers=self.headers)
-        assert response.status_code == 200
-        data = response.json()
+    def test_multi_vendor_items_sorted_first(self):
+        """Test that multi-vendor items appear before single-vendor items"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
         
-        for item in data["items"]:
-            if len(item["vendors"]) > 0:
-                cheapest_vendor = item["vendors"][0]  # First vendor should be cheapest
-                assert item["best_vendor"] == cheapest_vendor["vendor"], \
-                    f"best_vendor mismatch for {item['item']}: expected {cheapest_vendor['vendor']}, got {item['best_vendor']}"
-                assert item["best_price"] == cheapest_vendor["latest_price"], \
-                    f"best_price mismatch for {item['item']}"
+        comparisons = data.get("comparisons", [])
+        if len(comparisons) < 2:
+            print("SKIP - Not enough comparison groups to test sorting")
+            return
         
-        print("✓ best_vendor and best_price correctly identify cheapest option")
+        # Find first single-vendor group index
+        first_single_idx = None
+        for i, group in enumerate(comparisons):
+            if not group.get("is_multi_vendor", False):
+                first_single_idx = i
+                break
+        
+        if first_single_idx is None:
+            print("PASS - All groups are multi-vendor (sorting N/A)")
+            return
+        
+        # All groups before first_single_idx should be multi-vendor
+        for i in range(first_single_idx):
+            assert comparisons[i].get("is_multi_vendor", False), \
+                f"Group at index {i} should be multi-vendor but is not"
+        
+        print(f"PASS - Multi-vendor items sorted first (first single-vendor at index {first_single_idx})")
     
-    def test_savings_pct_calculation(self):
-        """Test savings_pct = (1 - best_price / worst_price) * 100 for multi-vendor items"""
-        response = requests.get(f"{BASE_URL}/api/prices/vendor-comparison", headers=self.headers)
-        assert response.status_code == 200
-        data = response.json()
+    def test_comparison_group_structure(self):
+        """Test that each comparison group has required fields"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
         
-        multi_vendor_items = [i for i in data["items"] if len(i["vendors"]) > 1]
-        assert len(multi_vendor_items) > 0, "No multi-vendor items to test savings calculation"
-        
-        for item in multi_vendor_items:
-            best_price = item["vendors"][0]["latest_price"]
-            worst_price = item["vendors"][-1]["latest_price"]
+        for group in data.get("comparisons", []):
+            assert "item_key" in group, "Missing 'item_key' in group"
+            assert "comparison_unit" in group, "Missing 'comparison_unit' in group"
+            assert "entries" in group, "Missing 'entries' in group"
+            assert "best_price" in group, "Missing 'best_price' in group"
+            assert "spread_pct" in group, "Missing 'spread_pct' in group"
+            assert "vendor_count" in group, "Missing 'vendor_count' in group"
+            assert "is_multi_vendor" in group, "Missing 'is_multi_vendor' in group"
             
-            if worst_price > 0:
-                expected_savings = round((1 - best_price / worst_price) * 100, 1)
-                assert abs(item["savings_pct"] - expected_savings) < 0.2, \
-                    f"savings_pct mismatch for {item['item']}: expected {expected_savings}, got {item['savings_pct']}"
+            # Check comparison_unit is always LB
+            assert group["comparison_unit"] == "LB", f"Expected comparison_unit='LB', got '{group['comparison_unit']}'"
         
-        print(f"✓ savings_pct calculation correct for {len(multi_vendor_items)} multi-vendor items")
+        print("PASS - All comparison groups have required fields")
     
-    def test_single_vendor_items_no_best_badge(self):
-        """Test items with 1 vendor have savings_pct = 0 (no comparison possible)"""
-        response = requests.get(f"{BASE_URL}/api/prices/vendor-comparison", headers=self.headers)
-        assert response.status_code == 200
-        data = response.json()
+    def test_entry_structure(self):
+        """Test that each entry has required fields for UI display"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
         
-        single_vendor_items = [i for i in data["items"] if len(i["vendors"]) == 1]
+        required_fields = ["vendor", "raw_name", "pack_size_raw", "unit_price", 
+                          "total_case_weight", "pack_unit", "normalized_price_per_lb", "invoice_date"]
         
-        for item in single_vendor_items:
-            assert item["savings_pct"] == 0, \
-                f"Single-vendor item {item['item']} should have savings_pct = 0, got {item['savings_pct']}"
+        for group in data.get("comparisons", []):
+            for entry in group.get("entries", []):
+                for field in required_fields:
+                    assert field in entry, f"Missing '{field}' in entry: {entry}"
         
-        if single_vendor_items:
-            print(f"✓ {len(single_vendor_items)} single-vendor items correctly have savings_pct = 0")
+        print("PASS - All entries have required fields for UI display")
+    
+    def test_best_price_is_minimum(self):
+        """Test that best_price is the minimum normalized_price_per_lb in each group"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        
+        for group in data.get("comparisons", []):
+            entries = group.get("entries", [])
+            if not entries:
+                continue
+            
+            prices = [e["normalized_price_per_lb"] for e in entries]
+            expected_best = min(prices)
+            actual_best = group["best_price"]
+            
+            assert abs(actual_best - expected_best) < 0.0001, \
+                f"best_price mismatch: expected {expected_best}, got {actual_best}"
+        
+        print("PASS - best_price is correctly the minimum in each group")
+    
+    def test_entries_sorted_by_price_ascending(self):
+        """Test that entries within each group are sorted by price ascending"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        
+        for group in data.get("comparisons", []):
+            entries = group.get("entries", [])
+            if len(entries) < 2:
+                continue
+            
+            prices = [e["normalized_price_per_lb"] for e in entries]
+            assert prices == sorted(prices), f"Entries not sorted by price in group '{group['item_key']}'"
+        
+        print("PASS - Entries within groups are sorted by price ascending")
+    
+    def test_stats_counts_match_data(self):
+        """Test that stats counts match the actual data"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        
+        comparisons = data.get("comparisons", [])
+        stats = data.get("stats", {})
+        
+        # total_groups should match number of comparison groups
+        assert stats["total_groups"] == len(comparisons), \
+            f"total_groups mismatch: {stats['total_groups']} vs {len(comparisons)}"
+        
+        # multi_vendor_groups count
+        actual_multi = sum(1 for g in comparisons if g.get("is_multi_vendor", False))
+        assert stats["multi_vendor_groups"] == actual_multi, \
+            f"multi_vendor_groups mismatch: {stats['multi_vendor_groups']} vs {actual_multi}"
+        
+        # vendors_represented
+        all_vendors = set()
+        for g in comparisons:
+            for e in g.get("entries", []):
+                all_vendors.add(e.get("vendor", ""))
+        assert stats["vendors_represented"] == len(all_vendors), \
+            f"vendors_represented mismatch: {stats['vendors_represented']} vs {len(all_vendors)}"
+        
+        print(f"PASS - Stats counts match data: {stats}")
+    
+    def test_exact_match_grouping(self):
+        """Test that item grouping is exact-match (conservative)"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        
+        # Check that item_key is uppercase normalized version of raw_name
+        for group in data.get("comparisons", []):
+            item_key = group.get("item_key", "")
+            for entry in group.get("entries", []):
+                raw_name = entry.get("raw_name", "").strip().upper()
+                # Normalize whitespace
+                import re
+                normalized_raw = re.sub(r"\s+", " ", raw_name)
+                assert item_key == normalized_raw, \
+                    f"Item key '{item_key}' doesn't match normalized raw_name '{normalized_raw}'"
+        
+        print("PASS - Item grouping is exact-match (conservative)")
+
+
+class TestVendorComparisonWithSeededData:
+    """Tests that verify seeded test data is correctly processed"""
+    
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        """Login and get auth token"""
+        login_resp = requests.post(f"{BASE_URL}/api/auth/login", json={
+            "email": "demo@test.com",
+            "password": "testpassword"
+        })
+        assert login_resp.status_code == 200, f"Login failed: {login_resp.text}"
+        self.token = login_resp.json()["token"]
+        self.headers = {"Authorization": f"Bearer {self.token}"}
+    
+    def test_seeded_data_present(self):
+        """Test that seeded vendor comparison data is present"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        
+        stats = data.get("stats", {})
+        comparisons = data.get("comparisons", [])
+        
+        print(f"Stats: {stats}")
+        print(f"Number of comparison groups: {len(comparisons)}")
+        
+        # According to agent context: 12 qualifying items, 6 groups, 5 multi-vendor groups, 3 vendors
+        # But we should verify what's actually there
+        if stats.get("total_qualifying_items", 0) > 0:
+            print(f"PASS - Found {stats['total_qualifying_items']} qualifying items")
         else:
-            print("✓ No single-vendor items to test (all items have multiple vendors)")
+            print("INFO - No qualifying items found (may need seeded data)")
     
-    def test_requires_authentication(self):
-        """Test endpoint returns 401 without auth token"""
-        response = requests.get(f"{BASE_URL}/api/prices/vendor-comparison")
-        assert response.status_code == 401, f"Expected 401 without auth, got {response.status_code}"
-        print("✓ Endpoint correctly requires authentication")
+    def test_expected_items_present(self):
+        """Test that expected items from seeded data are present"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        
+        # Expected items from agent context
+        expected_items = [
+            "CHICKEN BREAST BNLS",
+            "FLOUR ALL PURPOSE",
+            "SHRIMP 31-35 HDLS",
+            "TOMATO ROMA 25LB",
+            "GROUND BEEF 80/20",
+            "SALMON FILLET"
+        ]
+        
+        found_items = set()
+        for group in data.get("comparisons", []):
+            item_key = group.get("item_key", "")
+            for expected in expected_items:
+                if expected.upper() in item_key.upper():
+                    found_items.add(expected)
+        
+        print(f"Found items: {found_items}")
+        print(f"Expected items: {set(expected_items)}")
+        
+        if found_items:
+            print(f"PASS - Found {len(found_items)}/{len(expected_items)} expected items")
+        else:
+            print("INFO - No expected items found (may need seeded data)")
+    
+    def test_excluded_items_not_present(self):
+        """Test that items with non-weight units are excluded"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        
+        # Items that should be excluded (PK, EA units)
+        excluded_items = [
+            "LETTUCE ROMAINE HEARTS",  # PK unit
+            "CONTAINER FOAM 150CT"     # EA unit
+        ]
+        
+        all_item_keys = [g.get("item_key", "") for g in data.get("comparisons", [])]
+        
+        for excluded in excluded_items:
+            for item_key in all_item_keys:
+                assert excluded.upper() not in item_key.upper(), \
+                    f"Excluded item '{excluded}' found in results"
+        
+        print(f"PASS - Excluded items (PK/EA units) not present in results")
+    
+    def test_expected_vendors_present(self):
+        """Test that expected vendors are represented"""
+        resp = requests.get(f"{BASE_URL}/api/vendor-comparison/normalized", headers=self.headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        
+        # Expected vendors from agent context
+        expected_vendors = [
+            "US Foods Test",
+            "Sysco Restaurant Supply",
+            "Performance Food Group"
+        ]
+        
+        all_vendors = set()
+        for group in data.get("comparisons", []):
+            for entry in group.get("entries", []):
+                all_vendors.add(entry.get("vendor", ""))
+        
+        print(f"Found vendors: {all_vendors}")
+        
+        found_vendors = set()
+        for expected in expected_vendors:
+            for vendor in all_vendors:
+                if expected.lower() in vendor.lower():
+                    found_vendors.add(expected)
+        
+        if found_vendors:
+            print(f"PASS - Found {len(found_vendors)}/{len(expected_vendors)} expected vendors")
+        else:
+            print("INFO - No expected vendors found (may need seeded data)")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ import ChatPage from "@/pages/ChatPage";
 import SettingsPage from "@/pages/SettingsPage";
 import PurchaseDecisionsPage from "@/pages/PurchaseDecisionsPage";
 import AuditLogPage from "@/pages/AuditLogPage";
+import VendorComparisonPage from "@/pages/VendorComparisonPage";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -54,6 +55,7 @@ function App() {
           <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
           <Route path="/purchase-decisions" element={<ProtectedRoute><PurchaseDecisionsPage /></ProtectedRoute>} />
           <Route path="/audit-log" element={<ProtectedRoute><AuditLogPage /></ProtectedRoute>} />
+          <Route path="/vendor-comparison" element={<ProtectedRoute><VendorComparisonPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         <Toaster position="top-right" richColors />

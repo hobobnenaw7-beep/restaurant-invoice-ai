@@ -3271,6 +3271,114 @@ async def vendor_price_comparison(user=Depends(get_user)):
     items_out.sort(key=lambda x: (-x["vendor_count"], -x["savings_pct"]))
     return {"items": items_out, "total_items": len(items_out)}
 
+# ==================== NORMALIZED VENDOR COMPARISON ====================
+
+def _conservative_item_key(raw_name: str) -> str:
+    """Conservative name normalization for item grouping. EXACT match after cleanup only."""
+    s = (raw_name or "").strip().upper()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+@api_router.get("/vendor-comparison/normalized")
+async def normalized_vendor_comparison(user=Depends(get_user)):
+    """
+    Vendor price comparison using ONLY strictly parsed, normalized $/LB values.
+    Excludes all failed/not_applicable/non-weight items.
+    Groups items by conservative exact-match name + comparison unit.
+    """
+    rid = user["restaurant_id"]
+    purchases = await db.purchases.find(
+        {"restaurant_id": rid},
+        {"_id": 0, "supplier_name": 1, "invoice_date": 1, "items": 1}
+    ).to_list(10000)
+
+    from preprocessing import NORMALIZABLE_UNITS, TO_LB
+
+    # Collect qualifying entries
+    # group_key = (conservative_name, "LB") since all normalizable units convert to LB
+    groups = {}
+    total_qualifying = 0
+
+    for p in purchases:
+        vendor = (p.get("supplier_name") or "Unknown").strip()
+        inv_date = p.get("invoice_date", "")
+
+        for item in p.get("items", []):
+            nplb = item.get("normalized_price_per_lb")
+            pack_unit = (item.get("pack_unit") or "").upper()
+            tcw = item.get("total_case_weight")
+
+            # STRICT filter: must have valid normalized price and weight unit
+            if not nplb or nplb <= 0:
+                continue
+            if pack_unit not in NORMALIZABLE_UNITS:
+                continue
+            if not tcw or tcw <= 0:
+                continue
+
+            total_qualifying += 1
+            raw_name = item.get("raw_name", "")
+            item_key = _conservative_item_key(raw_name)
+            if not item_key:
+                continue
+
+            group_key = (item_key, "LB")  # always LB as comparison unit
+            entry = {
+                "vendor": vendor,
+                "raw_name": raw_name,
+                "pack_size_raw": item.get("pack_size_raw") or item.get("pack_size", ""),
+                "unit_price": round(float(item.get("unit_price", 0) or 0), 2),
+                "total_case_weight": tcw,
+                "pack_unit": pack_unit,
+                "normalized_price_per_lb": round(nplb, 4),
+                "invoice_date": inv_date,
+            }
+            groups.setdefault(group_key, []).append(entry)
+
+    # Build response
+    comparisons = []
+    multi_vendor_count = 0
+    vendors_seen = set()
+
+    for (item_key, comp_unit), entries in sorted(groups.items()):
+        entry_vendors = set(e["vendor"] for e in entries)
+        vendors_seen.update(entry_vendors)
+        is_multi = len(entry_vendors) > 1
+        if is_multi:
+            multi_vendor_count += 1
+
+        # Sort entries by normalized price ascending (cheapest first)
+        entries_sorted = sorted(entries, key=lambda e: e["normalized_price_per_lb"])
+        best = entries_sorted[0]["normalized_price_per_lb"]
+        worst = entries_sorted[-1]["normalized_price_per_lb"]
+        spread_pct = round((worst - best) / best * 100, 1) if best > 0 and len(entries_sorted) > 1 else 0
+
+        comparisons.append({
+            "item_key": item_key,
+            "comparison_unit": comp_unit,
+            "entries": entries_sorted,
+            "best_price": best,
+            "worst_price": worst,
+            "spread_pct": spread_pct,
+            "entry_count": len(entries_sorted),
+            "vendor_count": len(entry_vendors),
+            "is_multi_vendor": is_multi,
+        })
+
+    # Sort: multi-vendor first, then by spread (biggest savings opportunity first)
+    comparisons.sort(key=lambda c: (-c["vendor_count"], -c["spread_pct"], c["item_key"]))
+
+    return {
+        "comparisons": comparisons,
+        "stats": {
+            "total_qualifying_items": total_qualifying,
+            "total_groups": len(comparisons),
+            "multi_vendor_groups": multi_vendor_count,
+            "single_vendor_groups": len(comparisons) - multi_vendor_count,
+            "vendors_represented": len(vendors_seen),
+        },
+    }
+
 # ==================== ALERTS ====================
 
 @api_router.get("/alerts/prices")
