@@ -49,6 +49,19 @@ Full-stack restaurant accounting application with AI-powered OCR for invoice ext
 - [x] All failed parses logged with PACK_PARSE_FAILED warnings
 - [x] Both raw and computed values stored; null when uncertain
 - [x] Real invoice validation: US Foods (5/14 $/LB), Sysco (9/12), PFG (0/6) — zero false positives
+- [x] Phase 2 parser coverage expansion: 22/22 unit tests pass, handles OCR artifacts (BAG50→BAG 50, BX24/12 OZ prefix strip, spaced slashes, etc.)
+
+### Vendor Price Comparison Dashboard (March 29, 2026)
+- [x] `GET /api/vendor-comparison/normalized` endpoint
+- [x] Strict filter: only items with `normalized_price_per_lb > 0` AND `pack_unit ∈ {LB, OZ}`
+- [x] Conservative exact-match item grouping (no fuzzy merging)
+- [x] Multi-vendor items sorted first, then by price spread
+- [x] Frontend page at `/vendor-comparison` with stat cards, info banner, expandable comparison groups
+- [x] Each entry shows: vendor, raw item name, pack_size_raw, case price, case weight, $/LB, invoice date
+- [x] BEST badge on cheapest entry, % spread indicator
+- [x] Search and filter (All/Multi-Vendor/Single Vendor)
+- [x] Sidebar nav link "Vendor $/LB"
+- [x] Fully tested: 15 backend + 12 frontend tests (100% pass rate)
 
 ### UI/UX
 - [x] Event bus for instant cross-component sync
@@ -58,19 +71,18 @@ Full-stack restaurant accounting application with AI-powered OCR for invoice ext
 ## Backlog
 
 ### P0
-- Backend refactoring: break down server.py (~3600+ lines) into modular route files
-- Improve parser coverage for OCR artifacts (BAG50→BAG 50, 1 25 LB→1/25 LB)
+- Backend refactoring: break down server.py (~3700+ lines) into modular route files
 
 ### P1
-- Vendor price comparison dashboard (uses normalized $/LB)
 - AI Chat Assistant Page Polish
 - Core Workflow Hardening
 - Add OCR/Image Upload support to Salaries tab
 
 ### P2
 - Client-side pack size preview during entry
-- Build Item Normalization UI
+- Build Item Normalization UI (map raw item names to canonical items for fuzzy matching across vendors)
 - Vendor-specific OCR preprocessing
+- Fix bcrypt `__about__` warning in backend startup logs
 
 ## Key DB Schema (purchases.items)
 ```
@@ -91,3 +103,10 @@ Full-stack restaurant accounting application with AI-powered OCR for invoice ext
   normalized_price_per_lb: 2.2363  // null unless LB/OZ and all checks pass
 }
 ```
+
+## Key API Endpoints
+- `POST /api/upload/extract` — OCR with preprocessing and page classification
+- `POST /api/purchases` — Create purchase with pack size enrichment
+- `GET /api/vendor-comparison/normalized` — Strict normalized $/LB comparison
+- `GET /api/purchase-decisions` — Smart purchase insights (raw price based)
+- `GET /api/prices/vendor-comparison` — Legacy raw price comparison
