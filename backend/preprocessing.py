@@ -365,6 +365,47 @@ def _canonicalize_unit(raw: str) -> str:
     return UNIT_CANONICAL.get(u, u)
 
 
+# Safe prefixes to strip (packaging descriptors that precede the actual size)
+_STRIP_PREFIXES = {"CS", "BX", "BG", "PK", "CT", "BAG", "BOX", "CASE", "PACK"}
+
+
+def _normalize_raw_text(text: str) -> str:
+    """
+    Clean OCR artifacts from pack size text BEFORE pattern matching.
+    Only applies safe, deterministic transformations.
+    """
+    s = text.strip().upper()
+    if not s:
+        return s
+
+    # 1. Collapse multiple spaces/tabs
+    s = re.sub(r"\s+", " ", s)
+
+    # 2. Remove duplicated separators: "//" → "/"
+    s = re.sub(r"/{2,}", "/", s)
+
+    # 3. Strip known prefix glued to digits FIRST (before space insertion)
+    #    e.g., "CS1000/7 GM" → "1000/7 GM", "BX24/12 OZ" → "24/12 OZ"
+    m = re.match(r"^([A-Z]{2,3})(\d+[/\d].*)", s)
+    if m and m.group(1) in _STRIP_PREFIXES:
+        s = m.group(2)
+
+    # 4. "WORD+NUMBER" with no space → insert space (AFTER prefix strip)
+    #    e.g., "BAG50 LB" → "BAG 50 LB"
+    s = re.sub(r"^([A-Z]+)(\d)", r"\1 \2", s)
+
+    # 5. "N/N# WORD" → extract just the "N/N#" part
+    #    e.g., "6/7# JAR" → "6/7#" (JAR is packaging descriptor, not unit)
+    m = re.match(r"^(\d+/\d+\.?\d*#)\s+[A-Z]+$", s)
+    if m:
+        s = m.group(1)
+
+    # 6. Normalize spaces around slash: "10 / 4 LB" → "10/4 LB"
+    s = re.sub(r"\s*/\s*", "/", s)
+
+    return s.strip()
+
+
 def parse_pack_size(raw: str) -> dict:
     """
     Parse a pack size string into structured components.
@@ -373,7 +414,6 @@ def parse_pack_size(raw: str) -> dict:
     Only returns structured data when parsing is confident.
     """
     text = (raw or "").strip()
-    upper = text.upper()
 
     # --- NOT APPLICABLE: empty input ---
     if not text:
@@ -385,6 +425,9 @@ def parse_pack_size(raw: str) -> dict:
             "unit": None,
             "total_case_weight": None,
         }
+
+    # Normalize OCR artifacts before matching
+    upper = _normalize_raw_text(text)
 
     # --- Try patterns ---
     ppc, wpp, unit = None, None, None
@@ -417,6 +460,28 @@ def parse_pack_size(raw: str) -> dict:
         m = re.match(r"^(\d+\.?\d*)#$", upper)
         if m:
             ppc, wpp, unit = 1, float(m.group(1)), "LB"
+
+    # Pattern 5: "N/N#" (e.g., "6/7#" = 6 packs of 7 LB)
+    if ppc is None:
+        m = re.match(r"^(\d+)\s*/\s*(\d+\.?\d*)#$", upper)
+        if m:
+            ppc, wpp, unit = int(m.group(1)), float(m.group(2)), "LB"
+
+    # Pattern 6: "N N UNIT" — spaced count+weight (e.g., "2 5 LB" = 2×5 LB)
+    #   STRICT: only when all three tokens are clearly [int] [number] [known_unit]
+    #   and the first number is small (≤50, typical case count)
+    if ppc is None:
+        m = re.match(r"^(\d+)\s+(\d+\.?\d*)\s+([A-Z]+)$", upper)
+        if m:
+            candidate_ppc = int(m.group(1))
+            candidate_wpp = float(m.group(2))
+            candidate_unit = _canonicalize_unit(m.group(3))
+            # Safety: ppc must be ≤ 50 (reasonable case count)
+            #         wpp must be > 0
+            #         unit must be a known unit
+            if (candidate_ppc <= 50 and candidate_wpp > 0
+                    and candidate_unit in KNOWN_UNITS):
+                ppc, wpp, unit = candidate_ppc, candidate_wpp, candidate_unit
 
     # --- Validate parsed result ---
     if ppc is not None and wpp is not None and unit is not None:
