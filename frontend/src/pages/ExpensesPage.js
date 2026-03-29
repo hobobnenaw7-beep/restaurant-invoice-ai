@@ -28,8 +28,8 @@ import { ConfirmSaveDialog } from '@/components/ConfirmSaveDialog';
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
 function nextKey() { return `k${++_keySeq}_${Date.now()}`; }
-function mkItem(raw_name = '', quantity = 1, pack_size = '', unit_price = 0, total = 0, pack_unit = '', total_case_weight = 0, normalized_price_per_lb = 0, warning = false, warning_detail = '') {
-  return { _key: nextKey(), raw_name, quantity, pack_size, unit_price, total, pack_unit, total_case_weight, normalized_price_per_lb, _warning: warning, _warning_detail: warning_detail };
+function mkItem(raw_name = '', quantity = 1, pack_size = '', unit_price = 0, total = 0, pack_unit = null, total_case_weight = null, normalized_price_per_lb = null, pack_parse_status = null, warning = false, warning_detail = '') {
+  return { _key: nextKey(), raw_name, quantity, pack_size, unit_price, total, pack_unit, total_case_weight, normalized_price_per_lb, pack_parse_status, _warning: warning, _warning_detail: warning_detail };
 }
 
 const OTHER_CATEGORIES = ['Utilities', 'Taxes', 'Maintenance & Repairs', 'Software & Subscriptions', 'Services', 'Rent / Facility', 'Miscellaneous'];
@@ -174,7 +174,7 @@ function RawMaterialsTab({ api }) {
       supplier_name: record.supplier_name || '',
       invoice_number: record.invoice_number || '',
       invoice_date: record.invoice_date || '',
-      items: (record.items || []).map(it => mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || '', it.total_case_weight || 0, it.normalized_price_per_lb || 0)),
+      items: (record.items || []).map(it => mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || null, it.total_case_weight || null, it.normalized_price_per_lb || null, it.pack_parse_status || null)),
       subtotal: record.subtotal || 0,
       tax: record.tax || 0,
       total: record.total || 0,
@@ -231,7 +231,7 @@ function RawMaterialsTab({ api }) {
         invoice_number: d.invoice_number || '',
         invoice_date: d.invoice_date || new Date().toISOString().split('T')[0],
         items: items.length > 0
-          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.pack_size_raw || it.pack_size || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, it.pack_unit || '', parseFloat(it.total_case_weight) || 0, parseFloat(it.normalized_price_per_lb) || 0, !!it._warning, it._warning_detail || ''))
+          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.pack_size_raw || it.pack_size || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, it.pack_unit || null, it.total_case_weight != null ? parseFloat(it.total_case_weight) : null, it.normalized_price_per_lb != null ? parseFloat(it.normalized_price_per_lb) : null, it.pack_parse_status || null, !!it._warning, it._warning_detail || ''))
           : [mkItem()],
         subtotal: parseFloat(d.subtotal) || 0,
         tax: parseFloat(d.tax) || 0,
@@ -381,8 +381,8 @@ function RawMaterialsTab({ api }) {
                 <TableCell className="text-sm text-slate-500">{it.pack_size_raw || it.pack_size || '—'}</TableCell>
                 <TableCell className="text-sm text-right tabular-nums">{fmt(it.unit_price)}</TableCell>
                 <TableCell className="text-sm text-right font-semibold tabular-nums">{fmt(it.total)}</TableCell>
-                <TableCell className="text-sm text-right tabular-nums">{it.total_case_weight > 0 ? `${it.total_case_weight} ${it.pack_unit || ''}`.trim() : '—'}</TableCell>
-                <TableCell className="text-sm text-right tabular-nums">{it.normalized_price_per_lb > 0 ? <span className="text-teal-700 font-semibold">{fmt(it.normalized_price_per_lb)}</span> : <span className="text-slate-300">—</span>}</TableCell>
+                <TableCell className="text-sm text-right tabular-nums">{it.pack_parse_status === 'parsed' && it.total_case_weight != null ? `${it.total_case_weight} ${it.pack_unit || ''}`.trim() : '—'}</TableCell>
+                <TableCell className="text-sm text-right tabular-nums">{it.normalized_price_per_lb != null && it.normalized_price_per_lb > 0 ? <span className="text-teal-700 font-semibold">{fmt(it.normalized_price_per_lb)}</span> : <span className="text-slate-300">—</span>}</TableCell>
               </TableRow>)}
             </TableBody></Table>
             <div className="flex justify-end"><div className="text-right space-y-1 min-w-[200px]"><div className="flex justify-between text-sm"><span className="text-slate-500">Subtotal</span><span className="tabular-nums">{fmt(selected.subtotal)}</span></div><div className="flex justify-between text-sm"><span className="text-slate-500">Tax</span><span className="tabular-nums">{fmt(selected.tax)}</span></div><Separator className="my-1" /><div className="flex justify-between text-base font-bold"><span>Total</span><span className="tabular-nums">{fmt(selected.total)}</span></div></div></div>
@@ -478,8 +478,8 @@ function RawMaterialsTab({ api }) {
                   <Input className="text-xs h-8 text-center tabular-nums" type="text" placeholder="10/4 LB" value={item.pack_size || ''} onChange={(e) => updateItem(i, 'pack_size', e.target.value)} data-testid={`line-item-pack-size-${i}`} />
                   <Input className={`text-xs h-8 text-right tabular-nums ${item._warning && (!item.unit_price) ? 'border-amber-300' : ''}`} type="number" step="0.01" placeholder="Price" value={item.unit_price || ''} onChange={(e) => updateItem(i, 'unit_price', parseFloat(e.target.value) || 0)} data-testid={`line-item-price-${i}`} />
                   <div className={`text-xs h-8 flex items-center justify-end font-semibold tabular-nums px-2 rounded-md bg-slate-100 border border-slate-200 text-slate-700 select-none ${item._warning ? 'border-amber-300 bg-amber-50' : ''}`} data-testid={`line-item-total-${i}`}>{item.total ? `$${Number(item.total).toFixed(2)}` : '$0.00'}</div>
-                  <div className="text-[10px] h-8 flex items-center justify-center tabular-nums rounded-md bg-slate-100 border border-slate-200 text-slate-500 select-none" data-testid={`line-item-casewt-${i}`}>{item.total_case_weight > 0 ? `${item.total_case_weight} ${item.pack_unit || ''}`.trim() : '—'}</div>
-                  <div className={`text-[10px] h-8 flex items-center justify-end tabular-nums rounded-md px-1 select-none ${item.normalized_price_per_lb > 0 ? 'font-semibold text-teal-700 bg-teal-50 border border-teal-200' : 'text-slate-300 bg-slate-100 border border-slate-200'}`} data-testid={`line-item-nup-${i}`}>{item.normalized_price_per_lb > 0 ? `$${item.normalized_price_per_lb.toFixed(2)}` : '—'}</div>
+                  <div className={`text-[10px] h-8 flex items-center justify-center tabular-nums rounded-md border select-none ${item.pack_parse_status === 'failed' ? 'bg-red-50 border-red-200 text-red-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`} data-testid={`line-item-casewt-${i}`}>{item.pack_parse_status === 'parsed' && item.total_case_weight != null ? `${item.total_case_weight} ${item.pack_unit || ''}`.trim() : '—'}</div>
+                  <div className={`text-[10px] h-8 flex items-center justify-end tabular-nums rounded-md px-1 select-none ${item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? 'font-semibold text-teal-700 bg-teal-50 border border-teal-200' : item.pack_parse_status === 'failed' ? 'text-red-400 bg-red-50 border border-red-200' : 'text-slate-300 bg-slate-100 border border-slate-200'}`} data-testid={`line-item-nup-${i}`}>{item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? `$${item.normalized_price_per_lb.toFixed(2)}` : '—'}</div>
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0 flex-shrink-0" onClick={() => requestDeleteItem(i)} data-testid={`delete-line-item-${i}`}><Trash2 className="w-3 h-3 text-red-400" /></Button>
                   {item._warning_detail && <p className="col-span-full text-[9px] text-amber-600 -mt-0.5 pl-1"><AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />{item._warning_detail}</p>}
                 </div>

@@ -320,15 +320,25 @@ def merge_extractions(page_results: list, page_types: list) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 5. Pack Size Parsing & Normalization
+# 5. Pack Size Parsing & Normalization (with strict validation)
 # ---------------------------------------------------------------------------
 
-# Weight-based units (can compute $/LB)
-WEIGHT_UNITS = {"LB", "LBS", "KG", "OZ", "G", "GM", "GR", "GRAM", "GRAMS"}
-# Volume-based (can compute $/GAL etc but not $/LB)
-VOLUME_UNITS = {"GAL", "GALLON", "QT", "QUART", "L", "LITER", "ML", "FL OZ", "PT", "PINT"}
-# Count-based (no weight normalization)
-COUNT_UNITS = {"EA", "EACH", "CT", "COUNT", "PK", "PACK", "BX", "BOX", "CS", "CASE", "BG", "BAG", "DZ", "DOZEN"}
+# ONLY these units are trusted for $/LB normalization
+NORMALIZABLE_UNITS = {"LB", "OZ"}
+
+# Conversion to LB — ONLY LB and OZ
+TO_LB = {
+    "LB": 1.0,
+    "OZ": 0.0625,
+}
+
+# All known units (for parsing, not normalization)
+KNOWN_UNITS = {
+    "LB", "LBS", "KG", "OZ", "G", "GM", "GR", "GRAM", "GRAMS",
+    "GAL", "GALLON", "QT", "QUART", "L", "LITER", "ML", "PT", "PINT",
+    "EA", "EACH", "CT", "COUNT", "PK", "PACK", "BX", "BOX",
+    "CS", "CASE", "BG", "BAG", "DZ", "DOZEN",
+}
 
 # Canonical unit mapping
 UNIT_CANONICAL = {
@@ -348,14 +358,6 @@ UNIT_CANONICAL = {
     "PINT": "PT", "PINTS": "PT",
 }
 
-# Conversion to LB for normalization
-TO_LB = {
-    "LB": 1.0,
-    "KG": 2.20462,
-    "OZ": 0.0625,
-    "G": 0.00220462,
-}
-
 
 def _canonicalize_unit(raw: str) -> str:
     """Normalize unit string to canonical form."""
@@ -366,137 +368,167 @@ def _canonicalize_unit(raw: str) -> str:
 def parse_pack_size(raw: str) -> dict:
     """
     Parse a pack size string into structured components.
+    Returns pack_parse_status: "parsed", "failed", or "not_applicable".
 
-    Supported formats:
-        "10/4 LB"       → 10 packs × 4 LB = 40 LB
-        "6/5 LB"        → 6 × 5 = 30 LB
-        "2/17.5 LB"     → 2 × 17.5 = 35 LB
-        "BAG 50 LB"     → 1 × 50 = 50 LB
-        "150 EA"         → 150 EA (count-based)
-        "1 GAL"          → 1 GAL
-        "4/10 LB"        → 4 × 10 = 40 LB
-        "12/1 QT"        → 12 × 1 QT
-        "1/25 LB"        → 1 × 25 = 25 LB
-        "50 LB"          → 1 × 50 = 50 LB
-        "10#"            → 1 × 10 = 10 LB
-        "2.5 GA"         → 1 × 2.5 GAL
-        "4/5LB"          → 4 × 5 = 20 LB (no space)
-        "20/10 LB"       → 20 × 10 = 200 LB
-
-    Returns dict with:
-        pack_size_raw, packs_per_case, weight_per_pack, unit,
-        total_case_weight, is_weight_based, normalized_to_lb
+    Only returns structured data when parsing is confident.
     """
-    result = {
-        "pack_size_raw": (raw or "").strip(),
-        "packs_per_case": 0,
-        "weight_per_pack": 0,
-        "unit": "",
-        "total_case_weight": 0,
-        "is_weight_based": False,
-        "normalized_to_lb": 0,
-    }
+    text = (raw or "").strip()
+    upper = text.upper()
 
-    text = (raw or "").strip().upper()
+    # --- NOT APPLICABLE: empty input ---
     if not text:
-        return result
+        return {
+            "pack_size_raw": "",
+            "pack_parse_status": "not_applicable",
+            "packs_per_case": None,
+            "weight_per_pack": None,
+            "unit": None,
+            "total_case_weight": None,
+        }
 
-    # --- Pattern 1: "N/N UNIT" or "N/NUNIT" (e.g., "10/4 LB", "4/5LB", "2/17.5 LB") ---
-    m = re.match(
-        r"^(\d+)\s*/\s*(\d+\.?\d*)\s*([A-Z#]+\.?)$",
-        text
-    )
+    # --- Try patterns ---
+    ppc, wpp, unit = None, None, None
+
+    # Pattern 1: "N/N UNIT" or "N/NUNIT" (e.g., "10/4 LB", "4/5LB", "2/17.5 LB")
+    m = re.match(r"^(\d+)\s*/\s*(\d+\.?\d*)\s*([A-Z#]+\.?)$", upper)
     if m:
-        result["packs_per_case"] = int(m.group(1))
-        result["weight_per_pack"] = float(m.group(2))
-        result["unit"] = _canonicalize_unit(m.group(3))
-        result["total_case_weight"] = round(
-            result["packs_per_case"] * result["weight_per_pack"], 4
-        )
-        result["is_weight_based"] = result["unit"] in WEIGHT_UNITS
-        return result
+        ppc, wpp, unit = int(m.group(1)), float(m.group(2)), _canonicalize_unit(m.group(3))
 
-    # --- Pattern 2: "WORD N UNIT" (e.g., "BAG 50 LB", "CS 10 LB") ---
-    m = re.match(
-        r"^([A-Z]+)\s+(\d+\.?\d*)\s*([A-Z#]+\.?)$",
-        text
-    )
-    if m:
-        result["packs_per_case"] = 1
-        result["weight_per_pack"] = float(m.group(2))
-        result["unit"] = _canonicalize_unit(m.group(3))
-        result["total_case_weight"] = result["weight_per_pack"]
-        result["is_weight_based"] = result["unit"] in WEIGHT_UNITS
-        return result
+    # Pattern 2: "WORD N UNIT" (e.g., "BAG 50 LB", "CS 10 LB")
+    if ppc is None:
+        m = re.match(r"^([A-Z]+)\s+(\d+\.?\d*)\s*([A-Z#]+\.?)$", upper)
+        if m:
+            ppc, wpp, unit = 1, float(m.group(2)), _canonicalize_unit(m.group(3))
 
-    # --- Pattern 3: "N UNIT" (e.g., "50 LB", "150 EA", "1 GAL", "2.5 GA") ---
-    m = re.match(
-        r"^(\d+\.?\d*)\s*([A-Z#]+\.?)$",
-        text
-    )
-    if m:
-        result["packs_per_case"] = 1
-        result["weight_per_pack"] = float(m.group(1))
-        result["unit"] = _canonicalize_unit(m.group(2))
-        result["total_case_weight"] = result["weight_per_pack"]
-        result["is_weight_based"] = result["unit"] in WEIGHT_UNITS
-        return result
+    # Pattern 3: "N UNIT" (e.g., "50 LB", "150 EA", "1 GAL")
+    if ppc is None:
+        m = re.match(r"^(\d+\.?\d*)\s+([A-Z#]+\.?)$", upper)
+        if m:
+            ppc, wpp, unit = 1, float(m.group(1)), _canonicalize_unit(m.group(2))
 
-    # --- Pattern 4: "N#" (e.g., "10#" = 10 LB) ---
-    m = re.match(r"^(\d+\.?\d*)#$", text)
-    if m:
-        result["packs_per_case"] = 1
-        result["weight_per_pack"] = float(m.group(1))
-        result["unit"] = "LB"
-        result["total_case_weight"] = result["weight_per_pack"]
-        result["is_weight_based"] = True
-        return result
+    # Pattern 3b: "NUNIT" no space (e.g., "50LB", "5LB")
+    if ppc is None:
+        m = re.match(r"^(\d+\.?\d*)([A-Z]{2,})$", upper)
+        if m:
+            ppc, wpp, unit = 1, float(m.group(1)), _canonicalize_unit(m.group(2))
 
-    # --- Pattern 5: "N/N" without unit (assume CS/EA) ---
-    m = re.match(r"^(\d+)\s*/\s*(\d+\.?\d*)$", text)
-    if m:
-        result["packs_per_case"] = int(m.group(1))
-        result["weight_per_pack"] = float(m.group(2))
-        result["unit"] = "EA"
-        result["total_case_weight"] = round(
-            result["packs_per_case"] * result["weight_per_pack"], 4
-        )
-        result["is_weight_based"] = False
-        return result
+    # Pattern 4: "N#" (e.g., "10#" = 10 LB)
+    if ppc is None:
+        m = re.match(r"^(\d+\.?\d*)#$", upper)
+        if m:
+            ppc, wpp, unit = 1, float(m.group(1)), "LB"
 
-    # Could not parse — return raw only
-    logger.debug(f"Could not parse pack size: '{raw}'")
-    return result
+    # --- Validate parsed result ---
+    if ppc is not None and wpp is not None and unit is not None:
+        # Reject if unit is not a known unit
+        if unit not in KNOWN_UNITS:
+            logger.warning(
+                f"PACK_PARSE_FAILED: '{text}' — unknown unit '{unit}'"
+            )
+            return {
+                "pack_size_raw": text,
+                "pack_parse_status": "failed",
+                "packs_per_case": None,
+                "weight_per_pack": None,
+                "unit": None,
+                "total_case_weight": None,
+            }
+
+        # Reject nonsensical values
+        if ppc <= 0 or wpp <= 0:
+            logger.warning(
+                f"PACK_PARSE_FAILED: '{text}' — invalid values ppc={ppc} wpp={wpp}"
+            )
+            return {
+                "pack_size_raw": text,
+                "pack_parse_status": "failed",
+                "packs_per_case": None,
+                "weight_per_pack": None,
+                "unit": None,
+                "total_case_weight": None,
+            }
+
+        tcw = round(ppc * wpp, 4)
+        return {
+            "pack_size_raw": text,
+            "pack_parse_status": "parsed",
+            "packs_per_case": ppc,
+            "weight_per_pack": wpp,
+            "unit": unit,
+            "total_case_weight": tcw,
+        }
+
+    # --- FAILED: could not match any pattern ---
+    logger.warning(f"PACK_PARSE_FAILED: '{text}' — no pattern matched")
+    return {
+        "pack_size_raw": text,
+        "pack_parse_status": "failed",
+        "packs_per_case": None,
+        "weight_per_pack": None,
+        "unit": None,
+        "total_case_weight": None,
+    }
 
 
 def enrich_item_with_pack_size(item: dict) -> dict:
     """
-    Given a line item dict, parse its pack_size field and compute
-    normalized pricing. Mutates and returns the item.
+    Parse pack_size, validate, compute normalized $/LB ONLY when 100% reliable.
+    Mutates and returns the item.
     """
-    pack_size_raw = (item.get("pack_size") or item.get("pack_size_raw") or "").strip()
+    pack_size_raw = (
+        item.get("pack_size") or item.get("pack_size_raw") or ""
+    ).strip()
     parsed = parse_pack_size(pack_size_raw)
 
+    # Always store raw + status
     item["pack_size_raw"] = parsed["pack_size_raw"]
-    item["packs_per_case"] = parsed["packs_per_case"]
-    item["weight_per_pack"] = parsed["weight_per_pack"]
-    item["pack_unit"] = parsed["unit"]
-    item["total_case_weight"] = parsed["total_case_weight"]
-    item["is_weight_based"] = parsed["is_weight_based"]
+    item["pack_parse_status"] = parsed["pack_parse_status"]
 
-    # Compute normalized $/LB
+    if parsed["pack_parse_status"] == "parsed":
+        item["packs_per_case"] = parsed["packs_per_case"]
+        item["weight_per_pack"] = parsed["weight_per_pack"]
+        item["pack_unit"] = parsed["unit"]
+        item["total_case_weight"] = parsed["total_case_weight"]
+    else:
+        # Failed or not_applicable — null out all computed fields
+        item["packs_per_case"] = None
+        item["weight_per_pack"] = None
+        item["pack_unit"] = None
+        item["total_case_weight"] = None
+
+    # --- Normalized $/LB: STRICT RULES ---
+    # ONLY compute if ALL conditions are met:
+    #   1. pack_parse_status == "parsed"
+    #   2. packs_per_case > 0
+    #   3. weight_per_pack > 0
+    #   4. unit is LB or OZ (NORMALIZABLE_UNITS)
+    #   5. unit_price > 0
+    #   6. total_case_weight > 0
+
     unit_price = float(item.get("unit_price", 0) or 0)
-    case_weight = parsed["total_case_weight"]
+    ppc = parsed.get("packs_per_case") or 0
+    wpp = parsed.get("weight_per_pack") or 0
+    unit = parsed.get("unit") or ""
+    tcw = parsed.get("total_case_weight") or 0
 
-    if parsed["is_weight_based"] and case_weight > 0 and unit_price > 0:
-        # Convert to LB if needed
-        lb_factor = TO_LB.get(parsed["unit"], 0)
+    can_normalize = (
+        parsed["pack_parse_status"] == "parsed"
+        and ppc > 0
+        and wpp > 0
+        and unit in NORMALIZABLE_UNITS
+        and unit_price > 0
+        and tcw > 0
+    )
+
+    if can_normalize:
+        lb_factor = TO_LB.get(unit, 0)
         if lb_factor > 0:
-            total_lb = case_weight * lb_factor
+            total_lb = tcw * lb_factor
             item["normalized_price_per_lb"] = round(unit_price / total_lb, 4)
         else:
-            item["normalized_price_per_lb"] = 0
+            # Should not happen given NORMALIZABLE_UNITS check, but safety
+            item["normalized_price_per_lb"] = None
     else:
-        item["normalized_price_per_lb"] = 0
+        item["normalized_price_per_lb"] = None
 
     return item

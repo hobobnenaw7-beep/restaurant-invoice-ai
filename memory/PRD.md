@@ -21,9 +21,11 @@ Full-stack restaurant accounting application with AI-powered OCR for invoice ext
 ### Expenses (3 tabs)
 - [x] Raw Materials: full CRUD, upload/extract, duplicate detection
 - [x] Raw Materials: pack_size text field (type what you see: "10/4 LB", "BAG 50 LB", "150 EA")
-- [x] Raw Materials: Server-side pack size parsing → packs_per_case, weight_per_pack, pack_unit, total_case_weight
-- [x] Raw Materials: Normalized $/LB auto-computed (unit_price / total_case_weight) for weight-based items
-- [x] Raw Materials: ALL computed values (line total, case weight, $/LB, subtotal, invoice total) are strictly read-only
+- [x] Raw Materials: Server-side pack size parsing with strict validation
+- [x] Raw Materials: `pack_parse_status` field: "parsed", "failed", "not_applicable"
+- [x] Raw Materials: $/LB ONLY computed when status=parsed AND unit is LB or OZ (strict rule)
+- [x] Raw Materials: Failed parses → null computed fields, raw preserved, warning logged
+- [x] Raw Materials: ALL computed values (line total, case weight, $/LB, subtotal, invoice total) strictly read-only
 - [x] Salaries: CRUD
 - [x] Other Expenses: CRUD with OCR, fixed subcategories
 
@@ -36,56 +38,56 @@ Full-stack restaurant accounting application with AI-powered OCR for invoice ext
 - [x] Image preprocessing: auto-rotate, deskew, crop margins, contrast, noise reduction
 - [x] Multi-page classification: header/line_items/totals/terms per page
 - [x] Page-type-aware extraction prompts with priority rules
-- [x] Pack size extracted as text (verbatim from invoice) and parsed server-side
+- [x] Pack size extracted as verbatim text and parsed server-side with validation
 - [x] Excel/CSV parsing with intelligent column mapping
-- [x] Tested on real invoices: US Foods, PFG, Sysco PDFs
 
 ### Data Standardization (Phase 2 — March 29, 2026)
-- [x] Pack size parser: supports 18+ formats (N/N UNIT, WORD N UNIT, N UNIT, N#, etc.)
-- [x] Case weight computation: packs_per_case × weight_per_pack
-- [x] Normalized $/LB: unit_price / total_case_weight (weight-based only)
-- [x] Both raw and computed values stored in DB
-- [x] Canonical unit mapping (LBS→LB, KGS→KG, OUNCE→OZ, etc.)
-- [x] Weight-to-LB conversion factors for cross-unit normalization
-
-### Multi-Image Document Upload
-- [x] Frontend sends files[] as multipart/form-data array
-- [x] Backend LLM handles deduplication of overlapping receipts
-
-### Vendor Pattern Learning
-- [x] /api/receipts/learn endpoint for building vendor_patterns
+- [x] Pack size parser: 18+ formats with strict validation
+- [x] Case weight: packs_per_case × weight_per_pack (only when parsed)
+- [x] Normalized $/LB: ONLY for LB and OZ units (strict — no KG, GAL, EA, CT, PK)
+- [x] pack_parse_status tracking per item
+- [x] All failed parses logged with PACK_PARSE_FAILED warnings
+- [x] Both raw and computed values stored; null when uncertain
+- [x] Real invoice validation: US Foods (5/14 $/LB), Sysco (9/12), PFG (0/6) — zero false positives
 
 ### UI/UX
 - [x] Event bus for instant cross-component sync
-- [x] ConfirmDeleteDialog (styled) globally
-- [x] ConfirmSaveDialog showing vendor, date, total before save
-- [x] Read-only auto-calculated totals (line totals, subtotal, invoice total, case weight, $/LB)
+- [x] ConfirmDeleteDialog and ConfirmSaveDialog
+- [x] Read-only computed fields with visual distinction (gray bg for computed, teal for $/LB, red tint for failed parse)
 
 ## Backlog
 
 ### P0
 - Backend refactoring: break down server.py (~3600+ lines) into modular route files
+- Improve parser coverage for OCR artifacts (BAG50→BAG 50, 1 25 LB→1/25 LB)
 
 ### P1
-- Vendor price comparison dashboard (uses normalized $/LB data)
+- Vendor price comparison dashboard (uses normalized $/LB)
 - AI Chat Assistant Page Polish
 - Core Workflow Hardening
 - Add OCR/Image Upload support to Salaries tab
 
 ### P2
-- Client-side pack size preview (show Case Wt and $/LB during entry before save)
-- Build Item Normalization UI (mapping raw item names to canonical items)
+- Client-side pack size preview during entry
+- Build Item Normalization UI
 - Vendor-specific OCR preprocessing
-- Enhance Vendor/Item CRUD (edit purchases, more filters)
 
-## Key DB Collections
-- `purchases`: items now include pack_size_raw, packs_per_case, weight_per_pack, pack_unit, total_case_weight, is_weight_based, normalized_price_per_lb
-- `sales`, `salaries`, `other_expenses`
-- `vendor_patterns`: prompt hints, typical items per vendor
-- `uploaded_receipts`: file metadata, raw OCR text
-
-## Key API Endpoints
-- `POST /api/upload/extract` — Multi-file OCR with preprocessing + page classification + pack size enrichment
-- `POST /api/purchases` — Creates purchase with server-side pack size parsing
-- `PUT /api/purchases/{pid}` — Updates purchase with server-side pack size parsing
-- `GET /api/dashboard/summary` — With year/month filters
+## Key DB Schema (purchases.items)
+```
+{
+  raw_name: "CHICKEN BREAST BNLS",
+  quantity: 3,
+  pack_size: "4/10 LB",           // editable input
+  unit_price: 89.45,               // editable input
+  total: 268.35,                   // computed: qty × price (read-only)
+  
+  // Server-computed on save:
+  pack_size_raw: "4/10 LB",        // preserved verbatim
+  pack_parse_status: "parsed",     // "parsed" | "failed" | "not_applicable"
+  packs_per_case: 4,               // null if failed
+  weight_per_pack: 10.0,           // null if failed
+  pack_unit: "LB",                 // null if failed
+  total_case_weight: 40.0,         // null if failed
+  normalized_price_per_lb: 2.2363  // null unless LB/OZ and all checks pass
+}
+```
