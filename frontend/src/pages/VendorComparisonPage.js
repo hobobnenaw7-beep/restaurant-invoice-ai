@@ -3,18 +3,16 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import {
-  Scale, Search, TrendingDown, Package, Users, ChevronDown, ChevronRight, Info
+  Scale, Search, TrendingDown, Package, Users, ChevronDown, ChevronRight,
+  Info, Link2, Unlink, Trash2, Check, X, Lightbulb, UserCheck
 } from 'lucide-react';
 
-function fmtPrice(n) {
-  return `$${Number(n || 0).toFixed(4)}`;
-}
-function fmtCase(n) {
-  return `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+function fmtPrice(n) { return `$${Number(n || 0).toFixed(4)}`; }
+function fmtCase(n) { return `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 
 function StatCard({ icon: Icon, iconBg, label, value, sub, testId }) {
   return (
@@ -33,12 +31,14 @@ function StatCard({ icon: Icon, iconBg, label, value, sub, testId }) {
   );
 }
 
+// ======================== COMPARISON GROUP ========================
 function ComparisonGroup({ group, defaultOpen }) {
   const [open, setOpen] = useState(defaultOpen);
-  const { item_key, comparison_unit, entries, best_price, spread_pct, vendor_count, is_multi_vendor } = group;
+  const { item_key, comparison_unit, entries, best_price, spread_pct, vendor_count, is_multi_vendor, match_source, raw_names_in_group } = group;
+  const isConfirmed = match_source === 'user_confirmed';
 
   return (
-    <div className="border border-slate-100 rounded-xl overflow-hidden" data-testid={`comparison-group-${item_key}`}>
+    <div className={`border rounded-xl overflow-hidden ${isConfirmed ? 'border-indigo-200' : 'border-slate-100'}`} data-testid={`comparison-group-${item_key}`}>
       <button
         onClick={() => setOpen(o => !o)}
         className="w-full flex items-center gap-3 px-4 py-3 bg-white hover:bg-slate-50/70 transition-colors text-left"
@@ -47,7 +47,15 @@ function ComparisonGroup({ group, defaultOpen }) {
         {open ? <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0" />}
         <div className="flex-1 min-w-0">
           <span className="text-sm font-heading font-bold text-navy-900">{item_key}</span>
+          {isConfirmed && raw_names_in_group && raw_names_in_group.length > 1 && (
+            <span className="ml-2 text-[10px] text-indigo-500">({raw_names_in_group.length} linked names)</span>
+          )}
         </div>
+        {isConfirmed && (
+          <Badge className="text-[9px] bg-indigo-100 text-indigo-700 flex-shrink-0 gap-1" data-testid={`match-source-${item_key}`}>
+            <UserCheck className="w-3 h-3" /> Confirmed
+          </Badge>
+        )}
         <Badge variant="outline" className="text-[10px] font-mono border-teal-200 text-teal-700 bg-teal-50 flex-shrink-0">
           $/{comparison_unit}
         </Badge>
@@ -68,6 +76,12 @@ function ComparisonGroup({ group, defaultOpen }) {
 
       {open && (
         <div className="border-t border-slate-100">
+          {isConfirmed && raw_names_in_group && raw_names_in_group.length > 1 && (
+            <div className="px-4 py-2 bg-indigo-50/50 text-[11px] text-indigo-600 flex items-center gap-2">
+              <Link2 className="w-3.5 h-3.5" />
+              <span>Linked names: {raw_names_in_group.join(' + ')}</span>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -118,12 +132,205 @@ function ComparisonGroup({ group, defaultOpen }) {
   );
 }
 
+// ======================== SUGGESTION CARD ========================
+function SuggestionCard({ suggestion, onLink, linking }) {
+  const { name_a, name_b, vendors_a, vendors_b, similarity, shared_words } = suggestion;
+  const [canonName, setCanonName] = useState(name_a);
+
+  return (
+    <div className="border border-slate-100 rounded-xl p-4 hover:border-indigo-200 transition-colors" data-testid={`suggestion-${name_a}-${name_b}`}>
+      <div className="flex items-start gap-3">
+        <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <Lightbulb className="w-4 h-4 text-amber-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <Badge className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200">
+              {Math.round(similarity * 100)}% match
+            </Badge>
+            <span className="text-[10px] text-slate-400">
+              shared: {shared_words.join(', ')}
+            </span>
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-navy-900">{name_a}</p>
+              <p className="text-[10px] text-slate-400">{vendors_a.join(', ')}</p>
+            </div>
+            <Link2 className="w-4 h-4 text-slate-300 flex-shrink-0 rotate-90 sm:rotate-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-navy-900">{name_b}</p>
+              <p className="text-[10px] text-slate-400">{vendors_b.join(', ')}</p>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row items-start sm:items-end gap-2">
+            <div className="flex-1 min-w-0">
+              <label className="text-[10px] text-slate-500 font-medium block mb-1">Display name for comparison</label>
+              <Input
+                className="h-8 text-sm"
+                value={canonName}
+                onChange={(e) => setCanonName(e.target.value)}
+                data-testid={`canon-name-input-${name_a}`}
+              />
+            </div>
+            <Button
+              size="sm"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white h-8 px-4 text-xs gap-1.5"
+              onClick={() => onLink(canonName, [name_a, name_b])}
+              disabled={linking || !canonName.trim()}
+              data-testid={`link-btn-${name_a}-${name_b}`}
+            >
+              <Check className="w-3.5 h-3.5" /> Confirm Link
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ======================== MAPPING CARD ========================
+function MappingCard({ mapping, onDelete, deleting }) {
+  return (
+    <div className="border border-indigo-100 rounded-xl p-4 bg-indigo-50/30" data-testid={`mapping-${mapping.id}`}>
+      <div className="flex items-start gap-3">
+        <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <UserCheck className="w-4 h-4 text-indigo-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1.5">
+            <p className="text-sm font-bold text-navy-900">{mapping.canonical_name}</p>
+            <Badge className="text-[9px] bg-indigo-100 text-indigo-700">Confirmed</Badge>
+          </div>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {mapping.mapped_names.map((name, i) => (
+              <span key={i} className="text-[11px] font-mono bg-white border border-indigo-200 rounded-md px-2 py-0.5 text-indigo-700">
+                {name}
+              </span>
+            ))}
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-red-400 hover:text-red-600 hover:bg-red-50 h-8 w-8 p-0"
+          onClick={() => onDelete(mapping.id)}
+          disabled={deleting}
+          data-testid={`delete-mapping-${mapping.id}`}
+        >
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ======================== ITEM MATCHING PANEL ========================
+function ItemMatchingPanel({ api, onMappingChange }) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [mappings, setMappings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [linking, setLinking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [sugRes, mapRes] = await Promise.all([
+        api.get('/item-mappings/suggestions'),
+        api.get('/item-mappings'),
+      ]);
+      setSuggestions(sugRes.data.suggestions || []);
+      setMappings(mapRes.data.mappings || []);
+    } catch {
+      toast.error('Failed to load matching data');
+    } finally {
+      setLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleLink = async (canonName, names) => {
+    setLinking(true);
+    try {
+      await api.post('/item-mappings', { canonical_name: canonName, mapped_names: names });
+      toast.success('Items linked successfully');
+      await load();
+      onMappingChange();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Failed to create mapping');
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const handleDelete = async (mid) => {
+    setDeleting(true);
+    try {
+      await api.delete(`/item-mappings/${mid}`);
+      toast.success('Mapping removed');
+      await load();
+      onMappingChange();
+    } catch {
+      toast.error('Failed to delete mapping');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="space-y-3"><Skeleton className="h-24 rounded-xl" /><Skeleton className="h-24 rounded-xl" /></div>;
+  }
+
+  return (
+    <div className="space-y-6" data-testid="item-matching-panel">
+      {/* Current Mappings */}
+      {mappings.length > 0 && (
+        <div>
+          <h3 className="text-sm font-heading font-bold text-navy-900 mb-3 flex items-center gap-2">
+            <UserCheck className="w-4 h-4 text-indigo-600" />
+            Confirmed Mappings
+            <Badge variant="secondary" className="text-[10px]">{mappings.length}</Badge>
+          </h3>
+          <div className="space-y-2.5" data-testid="confirmed-mappings-list">
+            {mappings.map(m => (
+              <MappingCard key={m.id} mapping={m} onDelete={handleDelete} deleting={deleting} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Suggestions */}
+      <div>
+        <h3 className="text-sm font-heading font-bold text-navy-900 mb-3 flex items-center gap-2">
+          <Lightbulb className="w-4 h-4 text-amber-500" />
+          Suggested Matches
+          <Badge variant="secondary" className="text-[10px]">{suggestions.length}</Badge>
+        </h3>
+        {suggestions.length === 0 ? (
+          <div className="text-center py-8 text-sm text-slate-400 border border-dashed border-slate-200 rounded-xl" data-testid="no-suggestions">
+            No suggestions available. All similar items are either already linked or have identical names.
+          </div>
+        ) : (
+          <div className="space-y-2.5" data-testid="suggestions-list">
+            {suggestions.map((s) => (
+              <SuggestionCard key={`${s.name_a}|${s.name_b}`} suggestion={s} onLink={handleLink} linking={linking} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ======================== MAIN PAGE ========================
 export default function VendorComparisonPage() {
   const { api } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('all'); // 'all' | 'multi' | 'single'
+  const [filter, setFilter] = useState('all');
+  const [showMatching, setShowMatching] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -143,11 +350,12 @@ export default function VendorComparisonPage() {
     let groups = data.comparisons || [];
     if (filter === 'multi') groups = groups.filter(g => g.is_multi_vendor);
     if (filter === 'single') groups = groups.filter(g => !g.is_multi_vendor);
+    if (filter === 'confirmed') groups = groups.filter(g => g.match_source === 'user_confirmed');
     if (search.trim()) {
       const q = search.toLowerCase().trim();
       groups = groups.filter(g =>
         g.item_key.toLowerCase().includes(q) ||
-        g.entries.some(e => e.vendor.toLowerCase().includes(q))
+        g.entries.some(e => e.vendor.toLowerCase().includes(q) || e.raw_name.toLowerCase().includes(q))
       );
     }
     return groups;
@@ -167,61 +375,71 @@ export default function VendorComparisonPage() {
 
   const stats = data?.stats || {};
   const hasData = (data?.comparisons || []).length > 0;
+  const confirmedCount = stats.user_confirmed_groups || 0;
 
   return (
     <div className="max-w-[1400px] space-y-6" data-testid="vendor-comparison-page">
-      <div>
-        <h1 className="font-heading text-xl sm:text-2xl font-extrabold text-navy-900 tracking-tight">
-          Vendor Price Comparison
-        </h1>
-        <p className="text-xs text-slate-400 mt-0.5">
-          Normalized $/LB comparison using strictly parsed pack sizes only
-        </p>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-heading text-xl sm:text-2xl font-extrabold text-navy-900 tracking-tight">
+            Vendor Price Comparison
+          </h1>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Normalized $/LB comparison — exact match + user-confirmed links
+          </p>
+        </div>
+        <Button
+          variant={showMatching ? 'default' : 'outline'}
+          className={`gap-2 text-xs h-9 ${showMatching ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'}`}
+          onClick={() => setShowMatching(v => !v)}
+          data-testid="toggle-matching-btn"
+        >
+          <Link2 className="w-4 h-4" />
+          {showMatching ? 'Hide Item Matching' : 'Manage Item Matches'}
+          {confirmedCount > 0 && !showMatching && (
+            <Badge className="text-[9px] bg-indigo-100 text-indigo-700 ml-1">{confirmedCount}</Badge>
+          )}
+        </Button>
       </div>
+
+      {/* Item Matching Panel */}
+      {showMatching && (
+        <Card className="border border-indigo-200 shadow-sm" data-testid="matching-panel-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="font-heading text-base font-bold flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
+                <Link2 className="w-4 h-4 text-indigo-600" />
+              </div>
+              Item Matching
+            </CardTitle>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Review suggestions and manually confirm which items are the same product across vendors.
+              Only confirmed links are used in comparisons — never automatic.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <ItemMatchingPanel api={api} onMappingChange={load} />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          icon={Package}
-          iconBg="bg-teal-600"
-          label="Qualifying Items"
-          value={stats.total_qualifying_items || 0}
-          sub="parsed with valid $/LB"
-          testId="stat-qualifying"
-        />
-        <StatCard
-          icon={Scale}
-          iconBg="bg-indigo-600"
-          label="Item Groups"
-          value={stats.total_groups || 0}
-          sub="distinct items compared"
-          testId="stat-groups"
-        />
-        <StatCard
-          icon={Users}
-          iconBg="bg-amber-600"
-          label="Multi-Vendor Items"
-          value={stats.multi_vendor_groups || 0}
-          sub="items with 2+ vendors to compare"
-          testId="stat-multi-vendor"
-        />
-        <StatCard
-          icon={TrendingDown}
-          iconBg="bg-emerald-600"
-          label="Vendors Represented"
-          value={stats.vendors_represented || 0}
-          sub="in qualifying data"
-          testId="stat-vendors"
-        />
+        <StatCard icon={Package} iconBg="bg-teal-600" label="Qualifying Items" value={stats.total_qualifying_items || 0} sub="parsed with valid $/LB" testId="stat-qualifying" />
+        <StatCard icon={Scale} iconBg="bg-indigo-600" label="Item Groups" value={stats.total_groups || 0} sub="distinct items compared" testId="stat-groups" />
+        <StatCard icon={Users} iconBg="bg-amber-600" label="Multi-Vendor" value={stats.multi_vendor_groups || 0} sub="items with 2+ vendors" testId="stat-multi-vendor" />
+        <StatCard icon={TrendingDown} iconBg="bg-emerald-600" label="Vendors" value={stats.vendors_represented || 0} sub="in qualifying data" testId="stat-vendors" />
       </div>
 
       {/* Info banner */}
       <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100" data-testid="comparison-info-banner">
         <Info className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
         <div className="text-[11px] text-slate-500 leading-relaxed">
-          <span className="font-semibold text-slate-600">How this works:</span> Only items with successfully parsed pack sizes and LB/OZ units are included.
-          Case prices are normalized to <span className="font-mono font-semibold text-teal-700">$/LB</span> for
-          apples-to-apples comparison. Items are grouped by exact name match only — no fuzzy merging.
+          <span className="font-semibold text-slate-600">How this works:</span> Items are grouped by exact name match by default.
+          Use <button onClick={() => setShowMatching(true)} className="font-semibold text-indigo-600 hover:underline">Item Matching</button> to
+          manually link similar items across vendors.
+          Only <span className="font-mono font-semibold text-teal-700">$/LB</span> from parsed pack sizes is compared — never raw case prices.
         </div>
       </div>
 
@@ -232,7 +450,7 @@ export default function VendorComparisonPage() {
             <h3 className="text-base font-heading font-bold text-navy-900 mb-1">No comparison data yet</h3>
             <p className="text-sm text-slate-400 max-w-md">
               Add purchase records with pack sizes (e.g., "4/10 LB") from the Expenses page.
-              Only items with successfully parsed weights in LB or OZ will appear here.
+              Only items with parsed weights in LB or OZ appear here.
             </p>
           </CardContent>
         </Card>
@@ -242,27 +460,20 @@ export default function VendorComparisonPage() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <div className="relative flex-1 max-w-xs">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <Input
-                className="pl-9 h-9 text-sm"
-                placeholder="Search item or vendor..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                data-testid="comparison-search"
-              />
+              <Input className="pl-9 h-9 text-sm" placeholder="Search item or vendor..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="comparison-search" />
             </div>
             <div className="flex gap-1.5">
               {[
                 { key: 'all', label: 'All Items' },
                 { key: 'multi', label: 'Multi-Vendor' },
                 { key: 'single', label: 'Single Vendor' },
+                { key: 'confirmed', label: 'Confirmed Links' },
               ].map(f => (
                 <button
                   key={f.key}
                   onClick={() => setFilter(f.key)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                    filter === f.key
-                      ? 'bg-navy-900 text-white'
-                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                    filter === f.key ? 'bg-navy-900 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                   }`}
                   data-testid={`filter-${f.key}`}
                 >
@@ -278,16 +489,10 @@ export default function VendorComparisonPage() {
           {/* Comparison groups */}
           <div className="space-y-3" data-testid="comparison-groups-list">
             {filtered.length === 0 ? (
-              <div className="text-center py-12 text-sm text-slate-400">
-                No items match your search or filter
-              </div>
+              <div className="text-center py-12 text-sm text-slate-400">No items match your search or filter</div>
             ) : (
               filtered.map((group, i) => (
-                <ComparisonGroup
-                  key={group.item_key}
-                  group={group}
-                  defaultOpen={i < 3}
-                />
+                <ComparisonGroup key={`${group.item_key}-${group.match_source}`} group={group} defaultOpen={i < 3} />
               ))
             )}
           </div>

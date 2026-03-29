@@ -1,0 +1,132 @@
+{
+  "summary": "Tested Manual/Assisted Item Matching feature for Vendor Comparison Dashboard. All 24 backend tests passed (100%). All frontend UI tests passed. Feature is fully functional.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "backend_api_tests": {
+      "GET /api/item-mappings": {
+        "test_list_mappings_returns_200": "PASS",
+        "test_list_mappings_structure": "PASS - Response has 'mappings' array",
+        "test_mapping_object_structure": "PASS - All mappings have id, canonical_name, mapped_names, restaurant_id"
+      },
+      "POST /api/item-mappings": {
+        "test_create_mapping_success": "PASS - Creates mapping with canonical_name and mapped_names",
+        "test_create_mapping_rejects_single_name": "PASS - Returns 400 for single mapped_name",
+        "test_create_mapping_rejects_empty_names": "PASS - Returns 400 for empty mapped_names",
+        "test_create_mapping_rejects_duplicate": "PASS - Returns 409 conflict for duplicate mappings"
+      },
+      "PUT /api/item-mappings/{id}": {
+        "test_update_mapping_canonical_name": "PASS - Updates canonical_name",
+        "test_update_mapping_mapped_names": "PASS - Updates mapped_names",
+        "test_update_nonexistent_mapping": "PASS - Returns 404 for nonexistent mapping"
+      },
+      "DELETE /api/item-mappings/{id}": {
+        "test_delete_mapping_success": "PASS - Deletes mapping",
+        "test_delete_nonexistent_mapping": "PASS - Returns 404 for nonexistent mapping"
+      },
+      "GET /api/item-mappings/suggestions": {
+        "test_suggestions_returns_200": "PASS",
+        "test_suggestions_structure": "PASS - Has suggestions array with name_a, name_b, vendors_a, vendors_b, similarity, shared_words",
+        "test_suggestions_exclude_already_mapped": "PASS - Excludes items already in confirmed mappings"
+      },
+      "GET /api/vendor-comparison/normalized": {
+        "test_normalized_comparison_returns_200": "PASS",
+        "test_comparison_includes_match_source": "PASS - Every group has match_source (exact|user_confirmed)",
+        "test_stats_includes_user_confirmed_count": "PASS - Stats includes user_confirmed_groups",
+        "test_user_confirmed_count_matches_data": "PASS - Count is accurate",
+        "test_confirmed_groups_have_raw_names": "PASS - raw_names_in_group shows all linked names"
+      },
+      "integration_tests": {
+        "test_create_mapping_merges_groups": "PASS - Creating mapping merges groups correctly",
+        "test_delete_mapping_unmerges_groups": "PASS - Deleting mapping unmerges groups",
+        "test_existing_mappings_present": "PASS - Found 2 existing mappings (Chicken Breast Boneless, Flour All Purpose)",
+        "test_gfs_items_in_suggestions_or_mappings": "PASS - GFS items verified"
+      }
+    },
+    "frontend_ui_tests": {
+      "page_load": "PASS - Vendor Comparison page loads with stat cards (17 Qualifying Items, 9 Item Groups, 5 Multi-Vendor, 4 Vendors)",
+      "manage_item_matches_button": "PASS - Button visible and toggles matching panel",
+      "matching_panel": "PASS - Opens with Confirmed Mappings and Suggested Matches sections",
+      "confirmed_mappings_display": "PASS - Shows 2 confirmed mappings with delete buttons",
+      "suggestions_display": "PASS - Shows 3 suggestions with similarity scores and Confirm Link buttons",
+      "confirm_link_action": "PASS - Clicking Confirm Link creates mapping, shows success toast, refreshes data",
+      "delete_mapping_action": "PASS - Clicking delete removes mapping, shows success toast, refreshes data",
+      "confirmed_links_filter": "PASS - Shows only user_confirmed groups (2 groups)",
+      "confirmed_badge": "PASS - Groups show 'Confirmed' badge for user_confirmed match_source",
+      "linked_names_display": "PASS - Expanded confirmed groups show 'Linked names: X + Y'"
+    }
+  },
+  "features_verified": [
+    "1. GET /api/item-mappings returns list of confirmed mappings",
+    "2. POST /api/item-mappings creates mapping with canonical_name and mapped_names (2+ required)",
+    "3. POST /api/item-mappings rejects duplicate mappings (409 conflict)",
+    "4. POST /api/item-mappings rejects single mapped_name (400)",
+    "5. PUT /api/item-mappings/{id} updates canonical_name and/or mapped_names",
+    "6. DELETE /api/item-mappings/{id} deletes mapping",
+    "7. GET /api/item-mappings/suggestions returns similar item pairs with similarity scores",
+    "8. Suggestions exclude items already in confirmed mappings",
+    "9. GET /api/vendor-comparison/normalized includes match_source on every group",
+    "10. Confirmed mappings merge groups correctly — groups reduce, vendors increase",
+    "11. match_source='user_confirmed' only on merged groups, 'exact' on others",
+    "12. stats.user_confirmed_groups count is accurate",
+    "13. raw_names_in_group shows all linked names for confirmed groups",
+    "14. Frontend 'Manage Item Matches' button toggles matching panel",
+    "15. Suggestions panel shows unlinked similar items with 'Confirm Link' button",
+    "16. Confirmed Mappings section shows all confirmed links with delete button",
+    "17. Clicking 'Confirm Link' creates mapping, refreshes suggestions, refreshes comparison",
+    "18. Clicking delete on mapping removes it, refreshes data",
+    "19. 'Confirmed Links' filter button shows only user_confirmed groups",
+    "20. Comparison groups show 'Confirmed' badge for user_confirmed match_source"
+  ],
+  "test_data": {
+    "vendors": ["US Foods Test", "Sysco Restaurant Supply", "Performance Food Group", "Gordon Food Service"],
+    "existing_mappings": [
+      {"canonical_name": "Chicken Breast Boneless", "mapped_names": ["BNLS CHICKEN BREAST", "CHICKEN BREAST BNLS"]},
+      {"canonical_name": "Flour All Purpose", "mapped_names": ["ALL PURPOSE FLOUR", "FLOUR ALL PURPOSE"]}
+    ],
+    "suggestions_found": [
+      {"name_a": "ROMA TOMATO 25LB", "name_b": "TOMATO ROMA 25LB", "similarity": "100%"},
+      {"name_a": "SHRIMP 31-35 HDLS", "name_b": "SHRIMP HDLS 31-35", "similarity": "100%"},
+      {"name_a": "GROUND BEEF 80-20", "name_b": "GROUND BEEF 80/20", "similarity": "90%"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_item_mappings.py",
+    "/app/test_reports/pytest/pytest_item_mappings.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Backend correctly implements CRUD for item-mappings with proper validation",
+    "Duplicate detection works correctly (409 conflict)",
+    "Suggestions correctly exclude already-mapped items",
+    "vendor-comparison/normalized correctly merges groups using confirmed mappings",
+    "match_source field correctly distinguishes 'exact' vs 'user_confirmed'",
+    "Frontend UI is well-designed with clear visual indicators for confirmed mappings"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_item_mappings.py"
+  ],
+  "success_rate": {
+    "backend": "100% (24/24 tests passed)",
+    "frontend": "100% (10/10 UI tests passed)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Used existing seeded data with 4 vendors and 2 pre-existing mappings",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Manual/Assisted Item Matching feature fully tested. Key findings: (1) 2 existing mappings (Chicken Breast Boneless, Flour All Purpose), (2) 3 suggestions available (ROMA TOMATO, SHRIMP, GROUND BEEF), (3) All CRUD operations work correctly, (4) Frontend UI fully functional with proper toast notifications and data refresh, (5) Confirmed Links filter works correctly, (6) match_source field correctly distinguishes exact vs user_confirmed groups.",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}
