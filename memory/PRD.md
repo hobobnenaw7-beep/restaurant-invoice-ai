@@ -1,38 +1,32 @@
 # Restaurant Accountant AI — PRD
 
 ## Original Problem Statement
-Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-powered accounting and financial analysis tool for small/medium restaurants. Help owners upload purchase invoices and sales reports (images/PDFs), extract structured data via AI, review/edit/save it, and generate financial reports.
+Full-stack restaurant accounting application with AI-powered OCR for invoice extraction, expense tracking, sales reporting, and vendor management.
 
-## Tech Stack
-- **Backend**: FastAPI, Python, MongoDB, Pydantic, JWT Auth
-- **Frontend**: React, React Router, TailwindCSS, shadcn/ui, Recharts
-- **AI**: OpenAI GPT-5.2 via emergentintegrations (Emergent LLM Key)
-- **Architecture**: Full-stack monorepo, Supervisor-managed
-
-## Core Requirements
-1. JWT email/password authentication
-2. Dashboard with summary cards, top 5 lists, price alerts, weekly/monthly comparisons
-3. Upload Center for image/PDF invoices and sales reports
-4. Purchase Invoice extraction flow (vendor, date, items, totals)
-5. Sales Report extraction flow (date, total, items)
-6. Pages: Dashboard, Expenses, Sales, Vendors, Items, Reports, Chat, Settings
-7. Item normalization (raw names -> canonical items)
-8. Weekly/Monthly/Yearly reports with financial metrics
-9. Alerts for price/spending changes
-10. AI Chat Assistant using GPT-5.2
-11. Modern dark-sidebar/light-content SaaS design
-12. Charts for trends and comparisons
-13. Demo data seeding
+## Core Architecture
+- **Frontend:** React + TailwindCSS + Shadcn UI
+- **Backend:** FastAPI + MongoDB
+- **OCR:** OpenAI GPT-5.2 via Emergent LLM Key
+- **Event Bus:** `dataEvents.js` for cross-component sync
 
 ## What's Been Implemented
 
-### Authentication & Users
-- [x] JWT authentication (register/login/me)
-- [x] Multi-user support with roles (Manager, Accountant, Cashier, Staff)
-- [x] 13 granular permissions per user
-- [x] Approval workflow (pending/approved/rejected records)
-- [x] User Management page (Manager-only)
-- [x] Approvals page for reviewing pending records
+### Authentication
+- [x] JWT-based login/register with demo account (demo@test.com / testpassword)
+
+### Dashboard
+- [x] Summary cards, donut charts with year/month filters
+- [x] Drill-down navigation to full expense/sales pages
+
+### Expenses (3 tabs)
+- [x] Raw Materials: full CRUD, upload/extract, duplicate detection
+- [x] Raw Materials: pack_weight, unit dropdown (LB/KG/OZ/EA/CS/BX/GAL/L/BAG/PK), normalized_unit_price (March 29, 2026)
+- [x] Raw Materials: ALL computed values (line total, $/unit, subtotal, invoice total) are strictly read-only (March 29, 2026)
+- [x] Salaries: CRUD
+- [x] Other Expenses: CRUD with OCR, fixed subcategories
+
+### Sales
+- [x] Full CRUD with OCR upload
 
 ### OCR & Document Extraction (March 17, 2026)
 - [x] Real OCR via OpenAI GPT-5.2 Vision (NOT MOCKED)
@@ -46,74 +40,30 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Multi-page classification: header/line_items/totals/terms per page (March 29, 2026)
 - [x] Page-type-aware extraction prompts with priority rules (March 29, 2026)
 
-### Smart Purchase Decisions (March 23, 2026)
-- [x] Backend: GET /api/purchase-decisions computes per-item per-vendor price analysis
-- [x] Best vendor identification per item with saving_per_unit calculation
-- [x] Weekly price comparison (this week vs last week avg, % change)
-- [x] Actionable insights and Summary cards
-- [x] Item Price Comparison table with search filter
-- [x] Sidebar navigation added as "Smart Purchases"
+### Multi-Image Document Upload (March 23, 2026)
+- [x] Frontend sends files[] as multipart/form-data array
+- [x] Backend LLM handles deduplication of overlapping receipts
 
-### Settings Page (March 22, 2026)
-- [x] Restaurant Profile, Your Profile, Financial Settings, Notifications, Language & Display, Data Management
-- [x] Logo upload with 2MB limit, base64 storage
-- [x] All settings persist to MongoDB
+### Vendor Pattern Learning
+- [x] /api/receipts/learn endpoint for building vendor_patterns
 
-### Dashboard — Final Enhancement (March 23, 2026)
-- [x] Monthly Spending donut chart with 3 categories: Raw Materials, Salaries, Other
-- [x] Monthly Sales donut chart with revenue total and month-over-month % change
-- [x] 3-column layout: Spending donut | Sales donut | Market Insights
-- [x] Quick Actions: Add Expense, Sales, Compare Vendors, View Reports (Upload Invoice removed)
-- [x] Home button centered in top header (home icon + "Dashboard" label), visible on all pages
-- [x] Drill-down sheets for all 4 categories (Raw Materials, Salaries, Other, Sales)
-- [x] Date range filters (from/to) in all drill-down views with Apply button
-- [x] "Where Should I Buy?" item search bar with vendor price comparison
-- [x] Market Insights: max 5 actionable alerts sorted by severity
-- [x] Data Freshness indicator
-- [x] Today's Best Opportunities cards (1 saving + 1 risk)
-- [x] Category insights showing month-over-month % changes
-- [x] Year/Month filter dropdowns above donut charts (2020+, All Months option, defaults to current)
+### UI/UX
+- [x] Event bus for instant cross-component sync
+- [x] ConfirmDeleteDialog (styled) globally
+- [x] ConfirmSaveDialog showing vendor, date, total before save
+- [x] Read-only auto-calculated totals
 
-### Audit Log System (March 23, 2026)
-- [x] Immutable audit log collection in MongoDB
-- [x] Tracks 7 action types, 5 entity types
-- [x] Manager-only access with paginated, filterable UI
-- [x] All CRUD endpoints instrumented
+### Real Invoice Analysis (March 29, 2026)
+- [x] Analyzed real invoices from US Foods, Performance Foodservice, Sysco
+- [x] Identified key data fields: item_code, raw_name, qty, pack_size (composite), unit, unit_price, extended_price, category
+- [x] Documented pack size complexity: "10/4 LB" = 10 packs × 4 lb = 40 lb/case
+- [x] Identified standardization challenges across suppliers
 
-### Floating AI Assistant (March 23, 2026)
-- [x] Site-wide chat widget powered by GPT-5.2
-- [x] Contextual financial advice based on user data
-
-### Vendor Detail Page (March 19, 2026)
-- [x] Clickable vendor rows, purchase records, detail modals, filters
-
-### Expenses (3 tabs)
-- [x] Raw Materials, Salaries, Other Expenses: full CRUD, upload/extract, duplicate detection
-- [x] Raw Materials: pack_weight, unit dropdown (LB/KG/OZ/EA/CS/BX/GAL/L/BAG/PK), normalized_unit_price ($/unit for vendor comparison) (March 29, 2026)
-
-### Sales
-- [x] CRUD with date range support, upload/extract, duplicate detection
-
-### Records Library
-- [x] View-only archive with search, date, file type, category filters
-
-### Reports
-- [x] 6-tab layout with date range filtering, PDF/Excel export
-
-### Vendors & Items
-- [x] Full CRUD with spending totals, price history charts, vendor comparison
-
-### Stability & Performance
-- [x] Fixed infinite re-renders, memoized components, stress-tested navigation
-
-## Credentials
-- Test: demo@test.com / testpassword
-
-## Prioritized Backlog
+## Backlog
 
 ### P0
-- Implement Real OCR/Document Extraction: Replace mock /api/upload/extract with real AI service ✅ DONE
-- Other Expenses: Subcategories + Upload/OCR ✅ DONE
+- Phase 1 manual input improvements: pack size text field, vendor item autocomplete, keyboard tab flow
+- Backend refactoring: break down server.py (~3600+ lines) into modular route files
 
 ### P1
 - AI Chat Assistant Page Polish: improve UX of floating assistant
@@ -121,6 +71,19 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - Add OCR/Image Upload support to Salaries tab
 
 ### P2
-- Build Item Normalization UI
-- Backend Refactoring: extract monolithic server.py (3200+ lines) into modular route files
+- Phase 2: pack size parsing engine, normalized $/LB computation, vendor price comparison dashboard
+- Build Item Normalization UI (mapping raw item names to canonical items)
 - Enhance Vendor/Item CRUD (edit purchases, more filters)
+
+## Key DB Collections
+- `purchases`, `sales`, `salaries`, `other_expenses`
+- `vendor_patterns`: prompt hints, typical items per vendor
+- `uploaded_receipts`: file metadata, raw OCR text
+- `receipt_extractions`: parsing results with method tracking
+
+## Key API Endpoints
+- `POST /api/upload/extract` — Multi-file OCR with preprocessing + page classification
+- `POST /api/upload/parse-excel` — Excel/CSV parsing
+- `POST /api/receipts/learn` — Vendor pattern learning
+- `GET /api/dashboard/summary` — With year/month filters
+- CRUD: `/api/purchases`, `/api/sales`, `/api/salaries`, `/api/other-expenses`
