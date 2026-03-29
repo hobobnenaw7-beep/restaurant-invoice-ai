@@ -86,6 +86,7 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 
 ### Expenses (3 tabs)
 - [x] Raw Materials, Salaries, Other Expenses: full CRUD, upload/extract, duplicate detection
+- [x] Raw Materials: pack_weight, unit dropdown (LB/KG/OZ/EA/CS/BX/GAL/L/BAG/PK), normalized_unit_price ($/unit for vendor comparison) (March 29, 2026)
 
 ### Sales
 - [x] CRUD with date range support, upload/extract, duplicate detection
@@ -114,6 +115,7 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 ### P1
 - AI Chat Assistant Page Polish: improve UX of floating assistant
 - Core Workflow Polish: review and harden all main flows
+- Add OCR/Image Upload support to Salaries tab
 
 ### P2
 - Build Item Normalization UI
