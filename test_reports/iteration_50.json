@@ -1,0 +1,89 @@
+{
+  "summary": "Tested multi-page invoice extraction with preprocessing, page classification, and priority rules. All 21 tests passed (100% success rate). Backend-only testing completed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "preprocessing_module_unit_tests": {
+      "test_preprocess_image_basic": "PASS - Returns valid PNG bytes with preprocessing applied",
+      "test_preprocess_image_fallback_on_error": "PASS - Returns original bytes on invalid input",
+      "test_default_classifications_single_page": "PASS - Returns ['header'] for 1 page",
+      "test_default_classifications_two_pages": "PASS - Returns ['header', 'totals'] for 2 pages",
+      "test_default_classifications_three_pages": "PASS - Returns ['header', 'line_items', 'totals'] for 3 pages",
+      "test_default_classifications_five_pages": "PASS - Returns ['header', 'line_items', 'line_items', 'line_items', 'totals'] for 5 pages",
+      "test_build_page_aware_prompt": "PASS - Generates correct prompt with PAGE MAP and PRIORITY RULES",
+      "test_build_page_aware_prompt_with_vendor_hint": "PASS - Includes vendor hint in prompt",
+      "test_merge_extractions_vendor_priority": "PASS - Header page wins for supplier_name, invoice_date, invoice_number",
+      "test_merge_extractions_totals_priority": "PASS - Totals page wins for subtotal, tax, total",
+      "test_merge_extractions_item_dedup": "PASS - Deduplicates items by (name, qty, price)",
+      "test_merge_extractions_skips_terms_page": "PASS - Terms pages are skipped"
+    },
+    "api_single_page_tests": {
+      "test_single_image_purchase_invoice": "PASS - page_types=None for single-page purchase_invoice (regression OK)",
+      "test_single_image_sales_report": "PASS - page_types=None for sales_report (no classification)",
+      "test_single_image_other_expense": "PASS - page_types=None for other_expense (no classification)"
+    },
+    "api_multi_page_tests": {
+      "test_three_page_purchase_invoice": "PASS - page_types=['header', 'line_items', 'totals'] returned, items extracted correctly",
+      "test_two_page_purchase_invoice_with_overlap": "PASS - page_types=['header', 'totals'] returned, deduplication working",
+      "test_multipage_sales_report_no_classification": "PASS - page_types=None for multi-page sales_report (no classification)"
+    },
+    "preprocessing_integration_tests": {
+      "test_preprocessing_logged": "PASS - Backend logs show 'Preprocessed image: X→Y bytes'",
+      "test_page_types_are_valid": "PASS - All page types are valid (header/line_items/totals/terms)"
+    },
+    "backend_health_tests": {
+      "test_auth_login": "PASS - Authentication works with demo@test.com"
+    }
+  },
+  "features_verified": [
+    "1. POST /api/upload/extract with single image purchase_invoice — works (regression), page_types=None",
+    "2. POST /api/upload/extract with 3 images purchase_invoice — returns page_types=['header','line_items','totals']",
+    "3. POST /api/upload/extract with 2 images purchase_invoice — classifies and extracts with dedup",
+    "4. Preprocessing: images processed (logged as 'Preprocessed image: X→Y bytes')",
+    "5. Page classification: returns valid types (header/line_items/totals/terms)",
+    "6. Priority rules: vendor info from header page preferred, totals from totals page override",
+    "7. POST /api/upload/extract with document_type=sales_report — does NOT trigger page classification (page_types=None)",
+    "8. POST /api/upload/extract with document_type=other_expense — does NOT trigger page classification",
+    "9. Backend starts without errors after preprocessing.py added",
+    "10. preprocessing.py functions: preprocess_image, classify_pages, build_page_aware_prompt, merge_extractions all work correctly"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_multipage_extraction.py",
+    "/app/test_reports/pytest/pytest_multipage_extraction.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "preprocessing.py: Well-structured with 4 main functions (preprocess_image, classify_pages, build_page_aware_prompt, merge_extractions)",
+    "preprocessing.py: Good error handling with fallback to original bytes on preprocessing failure",
+    "preprocessing.py: _default_classifications provides sensible heuristic fallback for page classification",
+    "server.py: Correctly imports preprocessing lazily inside endpoint function",
+    "server.py: page_types only set for multi-page purchase_invoice (lines 1330-1335)",
+    "server.py: page_types included in response (line 1568) and receipt_doc (line 1435)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_multipage_extraction.py"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21 tests passed)",
+    "frontend": "N/A (backend-only testing)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Used existing test images at /tmp/page1_header.png, /tmp/page2_items.png, /tmp/page3_totals.png, /tmp/overlap_page1.png, /tmp/overlap_page2.png",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Multi-page invoice extraction fully tested. Key findings: (1) page_types is only set for multi-page purchase_invoice, (2) single-page and non-purchase types return page_types=None, (3) preprocessing logs 'Preprocessed image: X→Y bytes', (4) page classification returns valid types from {header, line_items, totals, terms}, (5) merge_extractions handles priority rules correctly. Test images available at /tmp/*.png.",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}

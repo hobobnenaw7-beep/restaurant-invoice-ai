@@ -1246,6 +1246,8 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
         logger.info(f"Extract: received {len(all_files)} file(s), document_type={document_type}")
         rid = user["restaurant_id"]
 
+        from preprocessing import preprocess_image
+
         # Convert ALL files to a single images_b64 list
         images_b64 = []
         first_content = None  # keep first file bytes for disk storage
@@ -1269,10 +1271,12 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
                     page = pdf_doc[page_num]
                     pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
                     img_bytes = pix.tobytes("png")
+                    img_bytes = preprocess_image(img_bytes)
                     images_b64.append(base64.b64encode(img_bytes).decode())
                 pdf_doc.close()
             else:
-                images_b64.append(base64.b64encode(content).decode())
+                processed = preprocess_image(content)
+                images_b64.append(base64.b64encode(processed).decode())
 
         logger.info(f"Extract: {len(images_b64)} total image(s) to process")
 
@@ -1322,10 +1326,18 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
         # --- Step 3: Full extraction with vendor hints ---
         parsing_method = "vendor" if vendor_pattern else "general"
 
-        # Multi-image dedup hint
-        multi_hint = ""
-        if len(images_b64) > 1:
-            multi_hint = f"""
+        # --- Step 3a: Multi-page classification + page-aware prompt ---
+        page_types = None
+        if len(images_b64) > 1 and document_type == "purchase_invoice":
+            from preprocessing import classify_pages, build_page_aware_prompt
+            page_types = await classify_pages(images_b64, LLM_KEY)
+            prompt = build_page_aware_prompt(page_types, vendor_hint)
+            logger.info(f"Multi-page purchase: {len(images_b64)} pages, types={page_types}")
+        else:
+            # Single-image or non-purchase: use existing prompts
+            multi_hint = ""
+            if len(images_b64) > 1:
+                multi_hint = f"""
 
 MULTI-IMAGE DOCUMENT ({len(images_b64)} images):
 These images are parts of ONE document. They may be:
@@ -1333,8 +1345,8 @@ These images are parts of ONE document. They may be:
 - Overlapping photos of a long receipt
 CRITICAL: Produce ONE unified result. If the same line item appears in multiple images, include it ONLY ONCE. Use the LAST occurrence of subtotal/tax/total. Do NOT duplicate items."""
 
-        if document_type == "purchase_invoice":
-            prompt = f"""You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
+            if document_type == "purchase_invoice":
+                prompt = f"""You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
 {{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_weight":0,"unit":"","unit_price":0,"total":0}}],"subtotal":0,"tax":0,"total":0}}
 
 CRITICAL rules for line items:
@@ -1350,8 +1362,8 @@ CRITICAL rules for line items:
 - pack_weight: The weight per pack/case/unit (e.g., "10 LB" means pack_weight=10, unit="LB"). Look for weight info like "10#", "10 LB", "5 KG", "2.5lb" next to or within item descriptions. If the item says "Chicken Breast 10LB" then raw_name="Chicken Breast", pack_weight=10, unit="LB". If no pack weight is visible, use 0.
 - unit: The unit of measure for the pack weight (LB, KG, OZ, EA, CS, BX, GAL, L, etc.). Use uppercase.
 - Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
-        elif document_type == "salary_document":
-            prompt = f"""You are reading a payroll document, salary slip, or payment record for restaurant staff. Extract data into this exact JSON format:
+            elif document_type == "salary_document":
+                prompt = f"""You are reading a payroll document, salary slip, or payment record for restaurant staff. Extract data into this exact JSON format:
 {{"employee_name":"","position":"","amount":0,"payment_date":"YYYY-MM-DD","notes":"","pay_period":"","deductions":0,"gross_amount":0}}
 
 Rules:
@@ -1367,8 +1379,8 @@ Rules:
 - Dates must be in YYYY-MM-DD format
 - Use 0 for missing numeric values
 - Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
-        elif document_type == "other_expense":
-            prompt = f"""You are reading a utility bill, tax document, service invoice, maintenance bill, or general expense document for a restaurant. Extract data into this exact JSON format:
+            elif document_type == "other_expense":
+                prompt = f"""You are reading a utility bill, tax document, service invoice, maintenance bill, or general expense document for a restaurant. Extract data into this exact JSON format:
 {{"title":"","category":"","amount":0,"expense_date":"YYYY-MM-DD","notes":"","vendor_name":"","reference_number":""}}
 
 Rules:
@@ -1390,8 +1402,8 @@ Rules:
 - Dates must be in YYYY-MM-DD format
 - Use 0 for missing numeric values
 - Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
-        else:
-            prompt = f"""You are reading a restaurant sales report or receipt. Extract ALL data into this exact JSON format:
+            else:
+                prompt = f"""You are reading a restaurant sales report or receipt. Extract ALL data into this exact JSON format:
 {{"report_date":"YYYY-MM-DD","total_sales":0,"items":[{{"menu_item":"","quantity":0,"revenue":0}}]}}
 
 Rules:
@@ -1420,6 +1432,7 @@ Rules:
             "file_name": first_fname or "untitled",
             "file_type": first_mime,
             "file_count": len(all_files),
+            "page_types": page_types,
             "raw_ocr_text": response[:5000],
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
             "vendor_id": vendor_pattern.get("vendor_id") if vendor_pattern else None,
@@ -1552,8 +1565,9 @@ Rules:
             "document_type": document_type,
             "receipt_id": receipt_id,
             "parsing_method": parsing_method,
+            "page_types": page_types,
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
-            "message": f"Data extracted using {parsing_method} parsing" + (" (vendor pattern matched)" if parsing_method == "vendor" else ""),
+            "message": f"Data extracted using {parsing_method} parsing" + (" (vendor pattern matched)" if parsing_method == "vendor" else "") + (f" — pages classified as {page_types}" if page_types else ""),
         }
     except HTTPException:
         raise
