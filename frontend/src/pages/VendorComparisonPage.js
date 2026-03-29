@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import {
   Scale, Search, TrendingDown, Package, Users, ChevronDown, ChevronRight,
-  Info, Link2, Unlink, Trash2, Check, X, Lightbulb, UserCheck
+  Info, Link2, Trash2, Check, Lightbulb, UserCheck, AlertTriangle, ShieldCheck, ArrowRight
 } from 'lucide-react';
 
 function fmtPrice(n) { return `$${Number(n || 0).toFixed(4)}`; }
@@ -31,14 +31,26 @@ function StatCard({ icon: Icon, iconBg, label, value, sub, testId }) {
   );
 }
 
+// ======================== SPREAD SEVERITY ========================
+function spreadColor(pct) {
+  if (pct >= 15) return { bg: 'bg-red-100', text: 'text-red-700', label: 'High spread' };
+  if (pct >= 8) return { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Moderate spread' };
+  if (pct > 0) return { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Low spread' };
+  return { bg: 'bg-slate-100', text: 'text-slate-500', label: '' };
+}
+
 // ======================== COMPARISON GROUP ========================
 function ComparisonGroup({ group, defaultOpen }) {
   const [open, setOpen] = useState(defaultOpen);
-  const { item_key, comparison_unit, entries, best_price, spread_pct, vendor_count, is_multi_vendor, match_source, raw_names_in_group } = group;
+  const { item_key, comparison_unit, entries, best_price, worst_price, spread_pct, vendor_count, is_multi_vendor, match_source, raw_names_in_group } = group;
   const isConfirmed = match_source === 'user_confirmed';
+  const bestEntry = entries[0];
+  const worstEntry = entries.length > 1 ? entries[entries.length - 1] : null;
+  const sc = spreadColor(spread_pct);
 
   return (
     <div className={`border rounded-xl overflow-hidden ${isConfirmed ? 'border-indigo-200' : 'border-slate-100'}`} data-testid={`comparison-group-${item_key}`}>
+      {/* Header row */}
       <button
         onClick={() => setOpen(o => !o)}
         className="w-full flex items-center gap-3 px-4 py-3 bg-white hover:bg-slate-50/70 transition-colors text-left"
@@ -65,7 +77,7 @@ function ComparisonGroup({ group, defaultOpen }) {
           </Badge>
         )}
         {spread_pct > 0 && (
-          <Badge className="text-[10px] bg-emerald-100 text-emerald-700 flex-shrink-0">
+          <Badge className={`text-[10px] ${sc.bg} ${sc.text} flex-shrink-0`} data-testid={`spread-badge-${item_key}`}>
             {spread_pct}% spread
           </Badge>
         )}
@@ -76,12 +88,38 @@ function ComparisonGroup({ group, defaultOpen }) {
 
       {open && (
         <div className="border-t border-slate-100">
+          {/* Decision banner — only for multi-vendor groups */}
+          {is_multi_vendor && worstEntry && (
+            <div className="px-4 py-3 bg-emerald-50 border-b border-emerald-100 flex items-center gap-3" data-testid={`decision-banner-${item_key}`}>
+              <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center flex-shrink-0">
+                <ShieldCheck className="w-4 h-4 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-emerald-900" data-testid={`decision-text-${item_key}`}>
+                  Buy from {bestEntry.vendor}
+                  {spread_pct > 0 && (
+                    <span className="font-normal text-emerald-700"> — save {spread_pct}% vs {worstEntry.vendor}</span>
+                  )}
+                </p>
+                <p className="text-[11px] text-emerald-600 mt-0.5">
+                  {fmtPrice(best_price)}/{comparison_unit} vs {fmtPrice(worst_price)}/{comparison_unit}
+                  <span className="text-emerald-500 ml-1">
+                    ({fmtPrice(worst_price - best_price)}/{comparison_unit} cheaper per pound)
+                  </span>
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Linked names banner */}
           {isConfirmed && raw_names_in_group && raw_names_in_group.length > 1 && (
-            <div className="px-4 py-2 bg-indigo-50/50 text-[11px] text-indigo-600 flex items-center gap-2">
+            <div className="px-4 py-2 bg-indigo-50/50 text-[11px] text-indigo-600 flex items-center gap-2 border-b border-indigo-100/50">
               <Link2 className="w-3.5 h-3.5" />
               <span>Linked names: {raw_names_in_group.join(' + ')}</span>
             </div>
           )}
+
+          {/* Table */}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -93,22 +131,18 @@ function ComparisonGroup({ group, defaultOpen }) {
                   <th className="text-right px-4 py-2.5">Case Weight</th>
                   <th className="text-right px-4 py-2.5">$/LB</th>
                   <th className="text-left px-4 py-2.5">Invoice Date</th>
+                  <th className="text-center px-4 py-2.5 w-24">Signal</th>
                 </tr>
               </thead>
               <tbody>
                 {entries.map((e, i) => {
-                  const isBest = e.normalized_price_per_lb === best_price;
+                  const isBest = is_multi_vendor && e.normalized_price_per_lb === best_price;
+                  const isWorst = is_multi_vendor && entries.length > 1 && e.normalized_price_per_lb === worst_price;
+                  const rowBg = isBest ? 'bg-emerald-50/60' : isWorst ? 'bg-red-50/40' : 'hover:bg-slate-50/50';
                   return (
-                    <tr
-                      key={i}
-                      className={`border-t border-slate-50 transition-colors ${isBest ? 'bg-emerald-50/50' : 'hover:bg-slate-50/50'}`}
-                      data-testid={`entry-row-${item_key}-${i}`}
-                    >
+                    <tr key={i} className={`border-t border-slate-50 transition-colors ${rowBg}`} data-testid={`entry-row-${item_key}-${i}`}>
                       <td className="px-4 py-2.5 font-medium text-navy-900 whitespace-nowrap">
                         {e.vendor}
-                        {isBest && entries.length > 1 && (
-                          <Badge className="ml-2 text-[9px] bg-emerald-600 text-white">BEST</Badge>
-                        )}
                       </td>
                       <td className="px-4 py-2.5 text-slate-600">{e.raw_name}</td>
                       <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{e.pack_size_raw}</td>
@@ -116,10 +150,22 @@ function ComparisonGroup({ group, defaultOpen }) {
                       <td className="px-4 py-2.5 text-right font-mono text-slate-500">
                         {e.total_case_weight} {e.pack_unit}
                       </td>
-                      <td className={`px-4 py-2.5 text-right font-mono font-bold ${isBest && entries.length > 1 ? 'text-emerald-700' : 'text-navy-900'}`}>
+                      <td className={`px-4 py-2.5 text-right font-mono font-bold ${isBest ? 'text-emerald-700' : isWorst ? 'text-red-600' : 'text-navy-900'}`}>
                         {fmtPrice(e.normalized_price_per_lb)}
                       </td>
                       <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{e.invoice_date}</td>
+                      <td className="px-4 py-2.5 text-center">
+                        {isBest && (
+                          <Badge className="text-[9px] bg-emerald-600 text-white gap-1" data-testid={`best-deal-badge-${item_key}`}>
+                            <ShieldCheck className="w-3 h-3" /> Best Deal
+                          </Badge>
+                        )}
+                        {isWorst && (
+                          <Badge className="text-[9px] bg-red-100 text-red-700 border border-red-200 gap-1" data-testid={`high-price-badge-${item_key}`}>
+                            <AlertTriangle className="w-3 h-3" /> High Price
+                          </Badge>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -323,6 +369,53 @@ function ItemMatchingPanel({ api, onMappingChange }) {
   );
 }
 
+// ======================== DECISIONS SUMMARY ========================
+function DecisionsSummary({ comparisons }) {
+  const decisions = useMemo(() => {
+    return comparisons
+      .filter(g => g.is_multi_vendor && g.spread_pct > 0)
+      .sort((a, b) => b.spread_pct - a.spread_pct)
+      .map(g => {
+        const best = g.entries[0];
+        const worst = g.entries[g.entries.length - 1];
+        return { item: g.item_key, bestVendor: best.vendor, worstVendor: worst.vendor, spread: g.spread_pct, bestPrice: g.best_price, unit: g.comparison_unit };
+      });
+  }, [comparisons]);
+
+  if (decisions.length === 0) return null;
+
+  return (
+    <Card className="border border-emerald-200 shadow-sm bg-emerald-50/30" data-testid="decisions-summary">
+      <CardContent className="py-4 px-5">
+        <div className="flex items-center gap-2 mb-3">
+          <ShieldCheck className="w-5 h-5 text-emerald-600" />
+          <h3 className="text-sm font-heading font-bold text-emerald-900">
+            {decisions.length} Quick Decision{decisions.length !== 1 ? 's' : ''}
+          </h3>
+          <span className="text-[10px] text-emerald-600">items with multi-vendor pricing</span>
+        </div>
+        <div className="space-y-1.5">
+          {decisions.map(d => (
+            <div key={d.item} className="flex items-center gap-2 text-sm" data-testid={`quick-decision-${d.item}`}>
+              <ArrowRight className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+              <span className="text-slate-700">
+                <span className="font-semibold text-navy-900">{d.item}</span>
+                <span className="text-slate-400 mx-1">—</span>
+                Buy from <span className="font-semibold text-emerald-700">{d.bestVendor}</span>
+                <span className="text-slate-400 mx-1">to save</span>
+                <span className={`font-bold ${d.spread >= 15 ? 'text-red-600' : d.spread >= 8 ? 'text-amber-600' : 'text-emerald-600'}`}>{d.spread}%</span>
+                <span className="text-slate-400 mx-1">vs</span>
+                <span className="text-slate-500">{d.worstVendor}</span>
+                <span className="text-[11px] font-mono text-slate-400 ml-1">({fmtPrice(d.bestPrice)}/{d.unit})</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ======================== MAIN PAGE ========================
 export default function VendorComparisonPage() {
   const { api } = useAuth();
@@ -431,6 +524,9 @@ export default function VendorComparisonPage() {
         <StatCard icon={Users} iconBg="bg-amber-600" label="Multi-Vendor" value={stats.multi_vendor_groups || 0} sub="items with 2+ vendors" testId="stat-multi-vendor" />
         <StatCard icon={TrendingDown} iconBg="bg-emerald-600" label="Vendors" value={stats.vendors_represented || 0} sub="in qualifying data" testId="stat-vendors" />
       </div>
+
+      {/* Quick Decisions Summary */}
+      <DecisionsSummary comparisons={data?.comparisons || []} />
 
       {/* Info banner */}
       <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100" data-testid="comparison-info-banner">
