@@ -42,6 +42,9 @@ Build a modern full-stack web app called "Restaurant Accountant AI" — an AI-po
 - [x] Post-processing validation: auto-fills missing qty, unit_price, total
 - [x] Better prompts for accurate extraction
 - [x] Support in both Expenses (Raw Materials) and Sales forms
+- [x] Image preprocessing: auto-rotate, deskew, crop margins, contrast, noise reduction (March 29, 2026)
+- [x] Multi-page classification: header/line_items/totals/terms per page (March 29, 2026)
+- [x] Page-type-aware extraction prompts with priority rules (March 29, 2026)
 
 ### Smart Purchase Decisions (March 23, 2026)
 - [x] Backend: GET /api/purchase-decisions computes per-item per-vendor price analysis
