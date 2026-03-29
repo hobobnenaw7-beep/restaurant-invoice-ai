@@ -1087,7 +1087,7 @@ async def parse_excel(file: UploadFile = File(...), document_type: str = Form("p
                 'item_name': ['item', 'item_name', 'product', 'product_name', 'description', 'raw_name', 'name', 'menu_item', 'ingredient'],
                 'quantity': ['quantity', 'qty', 'count'],
                 'unit': ['unit', 'uom', 'measure', 'unit_of_measure'],
-                'pack_weight': ['pack_weight', 'weight', 'pack_size', 'size', 'pack_wt', 'net_weight'],
+                'pack_size': ['pack_weight', 'weight', 'pack_size', 'size', 'pack_wt', 'net_weight', 'pack'],
                 'unit_price': ['price', 'unit_price', 'unit_cost', 'cost', 'rate'],
                 'total': ['total', 'line_total', 'subtotal', 'ext_price', 'extended_price', 'revenue', 'amount'],
             }.items():
@@ -1129,8 +1129,11 @@ async def parse_excel(file: UploadFile = File(...), document_type: str = Form("p
                 if up == 0 and tot > 0 and qty > 0:
                     up = tot / qty
 
-                pw = safe_float(row[col_map['pack_weight']]) if 'pack_weight' in col_map else 0
-                nup = round(up / pw, 4) if pw > 0 and up > 0 else 0
+                pack_size_raw = str(row[col_map['pack_size']]).strip() if 'pack_size' in col_map else ''
+                unit_raw = row[col_map['unit']].strip().upper() if 'unit' in col_map else ''
+                # If we have a unit but no pack_size, build a simple pack_size string
+                if unit_raw and not pack_size_raw:
+                    pack_size_raw = unit_raw
 
                 items_parsed.append({
                     "supplier": row[col_map['supplier']].strip() if 'supplier' in col_map else '',
@@ -1138,11 +1141,9 @@ async def parse_excel(file: UploadFile = File(...), document_type: str = Form("p
                     "invoice_number": row[col_map['invoice_number']].strip() if 'invoice_number' in col_map else '',
                     "raw_name": item_name,
                     "quantity": qty,
-                    "pack_weight": pw,
-                    "unit": row[col_map['unit']].strip().upper() if 'unit' in col_map else '',
+                    "pack_size": pack_size_raw,
                     "unit_price": round(up, 2),
                     "total": round(tot, 2),
-                    "normalized_unit_price": nup,
                 })
 
             # Group into purchases by supplier+date+invoice
@@ -1163,7 +1164,7 @@ async def parse_excel(file: UploadFile = File(...), document_type: str = Form("p
                     "supplier_name": first.get('supplier', ''),
                     "invoice_date": first.get('date', datetime.now(timezone.utc).strftime('%Y-%m-%d')),
                     "invoice_number": first.get('invoice_number', ''),
-                    "items": [{"raw_name": it['raw_name'], "quantity": it['quantity'], "pack_weight": it.get('pack_weight', 0), "unit": it['unit'], "unit_price": it['unit_price'], "total": it['total'], "normalized_unit_price": it.get('normalized_unit_price', 0)} for it in all_items],
+                    "items": [{"raw_name": it['raw_name'], "quantity": it['quantity'], "pack_size": it.get('pack_size', ''), "unit_price": it['unit_price'], "total": it['total']} for it in all_items],
                     "subtotal": subtotal, "tax": 0, "total": subtotal,
                 }, "document_type": document_type, "row_count": len(all_items)}
             else:
@@ -1175,7 +1176,7 @@ async def parse_excel(file: UploadFile = File(...), document_type: str = Form("p
                     "supplier_name": first_key[0],
                     "invoice_date": first_key[1],
                     "invoice_number": first_key[2],
-                    "items": [{"raw_name": it['raw_name'], "quantity": it['quantity'], "pack_weight": it.get('pack_weight', 0), "unit": it['unit'], "unit_price": it['unit_price'], "total": it['total'], "normalized_unit_price": it.get('normalized_unit_price', 0)} for it in first_items],
+                    "items": [{"raw_name": it['raw_name'], "quantity": it['quantity'], "pack_size": it.get('pack_size', ''), "unit_price": it['unit_price'], "total": it['total']} for it in first_items],
                     "subtotal": subtotal, "tax": 0, "total": subtotal,
                 }, "document_type": document_type, "row_count": len(items_parsed), "purchase_groups": len(groups),
                    "message": f"Found {len(groups)} purchases with {len(items_parsed)} total items. Showing the first purchase."}
@@ -1347,7 +1348,7 @@ CRITICAL: Produce ONE unified result. If the same line item appears in multiple 
 
             if document_type == "purchase_invoice":
                 prompt = f"""You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
-{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_weight":0,"unit":"","unit_price":0,"total":0}}],"subtotal":0,"tax":0,"total":0}}
+{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0}}],"subtotal":0,"tax":0,"total":0}}
 
 CRITICAL rules for line items:
 - Look for patterns like: "2 x 5.00", "5.00 x 2", "2 @ 5.00", "Qty 2 Price 5.00"
@@ -1359,8 +1360,7 @@ CRITICAL rules for line items:
 - total = subtotal + tax
 - Dates must be in YYYY-MM-DD format. Convert any date format you see.
 - Use 0 for any truly missing numeric values
-- pack_weight: The weight per pack/case/unit (e.g., "10 LB" means pack_weight=10, unit="LB"). Look for weight info like "10#", "10 LB", "5 KG", "2.5lb" next to or within item descriptions. If the item says "Chicken Breast 10LB" then raw_name="Chicken Breast", pack_weight=10, unit="LB". If no pack weight is visible, use 0.
-- unit: The unit of measure for the pack weight (LB, KG, OZ, EA, CS, BX, GAL, L, etc.). Use uppercase.
+- pack_size: The pack/case size EXACTLY as shown on the invoice. Common formats: "10/4 LB" (10 packs of 4 LB), "6/5 LB", "BAG 50 LB", "150 EA", "1 GAL", "2/17.5 LB", "1/25 LB", "12/1 QT", "50 LB", "10#". Copy this field verbatim. Leave empty string "" if not visible.
 - Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
             elif document_type == "salary_document":
                 prompt = f"""You are reading a payroll document, salary slip, or payment record for restaurant staff. Extract data into this exact JSON format:
@@ -1487,12 +1487,12 @@ Rules:
                         item_warnings.append("missing item name")
                         item["_warning"] = True
 
-                    # Compute normalized_unit_price (price per weight unit for vendor comparison)
-                    pw = float(item.get("pack_weight", 0) or 0)
-                    if pw > 0 and up > 0:
-                        item["normalized_unit_price"] = round(up / pw, 4)
-                    else:
-                        item["normalized_unit_price"] = 0
+                    # Enrich with pack size parsing and normalized pricing
+                    from preprocessing import enrich_item_with_pack_size
+                    pack_raw = item.get("pack_size", "") or ""
+                    if pack_raw:
+                        item["pack_size"] = pack_raw
+                        enrich_item_with_pack_size(item)
 
                     if item_warnings:
                         item["_warning_detail"] = "; ".join(item_warnings)
@@ -1982,6 +1982,7 @@ async def get_purchase(pid: str, user=Depends(get_user)):
 
 @api_router.post("/purchases")
 async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
+    from preprocessing import enrich_item_with_pack_size
     doc = data.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["restaurant_id"] = user["restaurant_id"]
@@ -1989,6 +1990,9 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     doc["created_by_id"] = user["id"]
     doc["created_by_name"] = user.get("name", "")
     doc["approval_status"] = _compute_approval_status(user, doc.get("total", 0))
+    # Enrich items with pack size parsing
+    for item in doc.get("items", []):
+        enrich_item_with_pack_size(item)
     await db.purchases.insert_one(doc)
     doc.pop("_id", None)
 
@@ -2100,12 +2104,17 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
 
 @api_router.put("/purchases/{pid}")
 async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)):
+    from preprocessing import enrich_item_with_pack_size
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No data")
     old = await db.purchases.find_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
     if not old:
         raise HTTPException(404, "Not found")
+    # Enrich items with pack size parsing
+    if "items" in update_data:
+        for item in update_data["items"]:
+            enrich_item_with_pack_size(item)
     old_vals = {k: old.get(k) for k in update_data}
     await db.purchases.update_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
     await audit_log(user, "UPDATE", "Expense", pid, f'{user["name"]} updated expense ({old.get("supplier_name", "")})', old_value=old_vals, new_value=update_data)

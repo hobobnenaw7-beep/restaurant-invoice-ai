@@ -28,9 +28,8 @@ import { ConfirmSaveDialog } from '@/components/ConfirmSaveDialog';
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
 function nextKey() { return `k${++_keySeq}_${Date.now()}`; }
-const UNIT_OPTIONS = ['LB', 'KG', 'OZ', 'EA', 'CS', 'BX', 'GAL', 'L', 'BAG', 'PK'];
-function mkItem(raw_name = '', quantity = 1, pack_weight = 0, unit = '', unit_price = 0, total = 0, normalized_unit_price = 0, warning = false, warning_detail = '') {
-  return { _key: nextKey(), raw_name, quantity, pack_weight, unit: (unit || '').toUpperCase(), unit_price, total, normalized_unit_price, _warning: warning, _warning_detail: warning_detail };
+function mkItem(raw_name = '', quantity = 1, pack_size = '', unit_price = 0, total = 0, pack_unit = '', total_case_weight = 0, normalized_price_per_lb = 0, warning = false, warning_detail = '') {
+  return { _key: nextKey(), raw_name, quantity, pack_size, unit_price, total, pack_unit, total_case_weight, normalized_price_per_lb, _warning: warning, _warning_detail: warning_detail };
 }
 
 const OTHER_CATEGORIES = ['Utilities', 'Taxes', 'Maintenance & Repairs', 'Software & Subscriptions', 'Services', 'Rent / Facility', 'Miscellaneous'];
@@ -151,7 +150,7 @@ function RawMaterialsTab({ api }) {
     const subtotal = round2(lineItems.reduce((s, it) => s + (parseFloat(it.total) || 0), 0));
     return { subtotal, total: round2(subtotal + (parseFloat(tax) || 0)) };
   };
-  const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') { it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); it[idx]._warning = false; it[idx]._warning_detail = ''; } if (k === 'quantity' || k === 'unit_price' || k === 'pack_weight') { const pw = parseFloat(it[idx].pack_weight || 0); const up = parseFloat(it[idx].unit_price || 0); it[idx].normalized_unit_price = (pw > 0 && up > 0) ? round2(up / pw) : 0; } const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
+  const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') { it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); it[idx]._warning = false; it[idx]._warning_detail = ''; } const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, mkItem()] }));
 
   const openAdd = () => {
@@ -175,7 +174,7 @@ function RawMaterialsTab({ api }) {
       supplier_name: record.supplier_name || '',
       invoice_number: record.invoice_number || '',
       invoice_date: record.invoice_date || '',
-      items: (record.items || []).map(it => mkItem(it.raw_name || '', it.quantity || 0, it.pack_weight || 0, it.unit || '', it.unit_price || 0, it.total || 0, it.normalized_unit_price || 0)),
+      items: (record.items || []).map(it => mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || '', it.total_case_weight || 0, it.normalized_price_per_lb || 0)),
       subtotal: record.subtotal || 0,
       tax: record.tax || 0,
       total: record.total || 0,
@@ -232,7 +231,7 @@ function RawMaterialsTab({ api }) {
         invoice_number: d.invoice_number || '',
         invoice_date: d.invoice_date || new Date().toISOString().split('T')[0],
         items: items.length > 0
-          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, parseFloat(it.pack_weight) || 0, it.unit || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, parseFloat(it.normalized_unit_price) || 0, !!it._warning, it._warning_detail || ''))
+          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.pack_size_raw || it.pack_size || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, it.pack_unit || '', parseFloat(it.total_case_weight) || 0, parseFloat(it.normalized_price_per_lb) || 0, !!it._warning, it._warning_detail || ''))
           : [mkItem()],
         subtotal: parseFloat(d.subtotal) || 0,
         tax: parseFloat(d.tax) || 0,
@@ -264,7 +263,7 @@ function RawMaterialsTab({ api }) {
     const doSave = async () => {
       setSaving(true);
       try {
-        const payload = { ...form, items: form.items.map(({ _key, _warning, _warning_detail, ...rest }) => ({ ...rest, pack_weight: parseFloat(rest.pack_weight) || 0, normalized_unit_price: parseFloat(rest.normalized_unit_price) || 0 })) };
+        const payload = { ...form, items: form.items.map(({ _key, _warning, _warning_detail, pack_unit, total_case_weight, normalized_price_per_lb, ...rest }) => ({ ...rest, pack_size: rest.pack_size || '' })) };
         delete payload._has_warnings; delete payload._warnings; delete payload._subtotal_warning; delete payload._total_warning; delete payload._date_warning;
         if (editingId) {
           await api.put(`/purchases/${editingId}`, payload);
@@ -370,20 +369,20 @@ function RawMaterialsTab({ api }) {
             <Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
               <TableHead className="text-[10px] font-bold text-slate-500 uppercase">Item</TableHead>
               <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Qty</TableHead>
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Pack Wt</TableHead>
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase">Unit</TableHead>
+              <TableHead className="text-[10px] font-bold text-slate-500 uppercase">Pack Size</TableHead>
               <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Price</TableHead>
               <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Total</TableHead>
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">$/Unit</TableHead>
+              <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Case Wt</TableHead>
+              <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">$/LB</TableHead>
             </TableRow></TableHeader><TableBody>
               {(selected.items || []).map((it, i) => <TableRow key={i} className={i % 2 === 0 ? '' : 'bg-slate-50/40'}>
                 <TableCell className="text-sm font-medium">{it.raw_name}</TableCell>
                 <TableCell className="text-sm text-right tabular-nums">{it.quantity}</TableCell>
-                <TableCell className="text-sm text-right tabular-nums">{it.pack_weight || '—'}</TableCell>
-                <TableCell className="text-sm text-slate-500">{it.unit || '—'}</TableCell>
+                <TableCell className="text-sm text-slate-500">{it.pack_size_raw || it.pack_size || '—'}</TableCell>
                 <TableCell className="text-sm text-right tabular-nums">{fmt(it.unit_price)}</TableCell>
                 <TableCell className="text-sm text-right font-semibold tabular-nums">{fmt(it.total)}</TableCell>
-                <TableCell className="text-sm text-right tabular-nums">{it.normalized_unit_price > 0 ? <span className="text-teal-700 font-semibold">{fmt(it.normalized_unit_price)}</span> : <span className="text-slate-300">—</span>}</TableCell>
+                <TableCell className="text-sm text-right tabular-nums">{it.total_case_weight > 0 ? `${it.total_case_weight} ${it.pack_unit || ''}`.trim() : '—'}</TableCell>
+                <TableCell className="text-sm text-right tabular-nums">{it.normalized_price_per_lb > 0 ? <span className="text-teal-700 font-semibold">{fmt(it.normalized_price_per_lb)}</span> : <span className="text-slate-300">—</span>}</TableCell>
               </TableRow>)}
             </TableBody></Table>
             <div className="flex justify-end"><div className="text-right space-y-1 min-w-[200px]"><div className="flex justify-between text-sm"><span className="text-slate-500">Subtotal</span><span className="tabular-nums">{fmt(selected.subtotal)}</span></div><div className="flex justify-between text-sm"><span className="text-slate-500">Tax</span><span className="tabular-nums">{fmt(selected.tax)}</span></div><Separator className="my-1" /><div className="flex justify-between text-base font-bold"><span>Total</span><span className="tabular-nums">{fmt(selected.total)}</span></div></div></div>
@@ -462,31 +461,25 @@ function RawMaterialsTab({ api }) {
             <div>
               <div className="flex items-center justify-between mb-2"><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Line Items</Label><Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={addItem} data-testid="add-line-item-btn"><Plus className="w-3 h-3 mr-1" /> Add Item</Button></div>
               {/* Column headers */}
-              <div className="grid grid-cols-[minmax(140px,2fr)_70px_70px_80px_85px_85px_75px_32px] gap-1.5 items-center px-2 mb-1">
+              <div className="grid grid-cols-[minmax(140px,2fr)_65px_100px_85px_85px_65px_65px_32px] gap-1.5 items-center px-2 mb-1">
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Item Name</span>
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-center">Qty</span>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-center">Pack Wt</span>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-center">Unit</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-center">Pack Size</span>
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-right">Price</span>
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-right">Total</span>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-right">$/Unit</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-center">Case Wt</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-right">$/LB</span>
                 <span />
               </div>
               <div className="space-y-1.5">{form.items.map((item, i) => (
-                <div key={item._key} className={`grid grid-cols-[minmax(140px,2fr)_70px_70px_80px_85px_85px_75px_32px] gap-1.5 items-center rounded-lg p-2 ${item._warning ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'}`} data-testid={`line-item-${i}`}>
+                <div key={item._key} className={`grid grid-cols-[minmax(140px,2fr)_65px_100px_85px_85px_65px_65px_32px] gap-1.5 items-center rounded-lg p-2 ${item._warning ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'}`} data-testid={`line-item-${i}`}>
                   <ItemAutocomplete value={item.raw_name} onChange={(v) => updateItem(i, 'raw_name', v)} knownItems={knownItems} index={i} />
                   <Input className={`text-xs h-8 text-center tabular-nums ${item._warning && (!item.quantity) ? 'border-amber-300' : ''}`} type="number" placeholder="Qty" value={item.quantity || ''} onChange={(e) => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} data-testid={`line-item-qty-${i}`} />
-                  <Input className="text-xs h-8 text-center tabular-nums" type="number" step="0.01" placeholder="Wt" value={item.pack_weight || ''} onChange={(e) => updateItem(i, 'pack_weight', parseFloat(e.target.value) || 0)} data-testid={`line-item-pack-weight-${i}`} />
-                  <Select value={item.unit || '_none'} onValueChange={(v) => updateItem(i, 'unit', v === '_none' ? '' : v)}>
-                    <SelectTrigger className="h-8 text-xs px-2" data-testid={`line-item-unit-${i}`}><SelectValue placeholder="Unit" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="_none" className="text-xs text-slate-400">—</SelectItem>
-                      {UNIT_OPTIONS.map(u => <SelectItem key={u} value={u} className="text-xs">{u}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <Input className="text-xs h-8 text-center tabular-nums" type="text" placeholder="10/4 LB" value={item.pack_size || ''} onChange={(e) => updateItem(i, 'pack_size', e.target.value)} data-testid={`line-item-pack-size-${i}`} />
                   <Input className={`text-xs h-8 text-right tabular-nums ${item._warning && (!item.unit_price) ? 'border-amber-300' : ''}`} type="number" step="0.01" placeholder="Price" value={item.unit_price || ''} onChange={(e) => updateItem(i, 'unit_price', parseFloat(e.target.value) || 0)} data-testid={`line-item-price-${i}`} />
                   <div className={`text-xs h-8 flex items-center justify-end font-semibold tabular-nums px-2 rounded-md bg-slate-100 border border-slate-200 text-slate-700 select-none ${item._warning ? 'border-amber-300 bg-amber-50' : ''}`} data-testid={`line-item-total-${i}`}>{item.total ? `$${Number(item.total).toFixed(2)}` : '$0.00'}</div>
-                  <span className={`text-[10px] tabular-nums text-right pr-1 select-none ${item.normalized_unit_price > 0 ? 'font-semibold text-teal-700' : 'text-slate-300'}`} data-testid={`line-item-nup-${i}`}>{item.normalized_unit_price > 0 ? `$${item.normalized_unit_price.toFixed(2)}` : '—'}</span>
+                  <div className="text-[10px] h-8 flex items-center justify-center tabular-nums rounded-md bg-slate-100 border border-slate-200 text-slate-500 select-none" data-testid={`line-item-casewt-${i}`}>{item.total_case_weight > 0 ? `${item.total_case_weight} ${item.pack_unit || ''}`.trim() : '—'}</div>
+                  <div className={`text-[10px] h-8 flex items-center justify-end tabular-nums rounded-md px-1 select-none ${item.normalized_price_per_lb > 0 ? 'font-semibold text-teal-700 bg-teal-50 border border-teal-200' : 'text-slate-300 bg-slate-100 border border-slate-200'}`} data-testid={`line-item-nup-${i}`}>{item.normalized_price_per_lb > 0 ? `$${item.normalized_price_per_lb.toFixed(2)}` : '—'}</div>
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0 flex-shrink-0" onClick={() => requestDeleteItem(i)} data-testid={`delete-line-item-${i}`}><Trash2 className="w-3 h-3 text-red-400" /></Button>
                   {item._warning_detail && <p className="col-span-full text-[9px] text-amber-600 -mt-0.5 pl-1"><AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />{item._warning_detail}</p>}
                 </div>
