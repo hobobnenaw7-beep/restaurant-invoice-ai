@@ -2293,15 +2293,36 @@ async def delete_sale(sid: str, user=Depends(get_user)):
 
 @api_router.get("/suppliers")
 async def list_suppliers(user=Depends(get_user), search: str = ""):
-    query = {"restaurant_id": user["restaurant_id"]}
+    rid = user["restaurant_id"]
+    query = {"restaurant_id": rid}
     if search:
         query["name"] = {"$regex": search, "$options": "i"}
     suppliers = await db.suppliers.find(query, {"_id": 0}).to_list(1000)
-    purchases = await db.purchases.find({"restaurant_id": user["restaurant_id"]}, {"_id": 0, "supplier_name": 1, "total": 1}).to_list(10000)
+    purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0, "supplier_name": 1, "total": 1}).to_list(10000)
+
+    # Deduplicate suppliers by name (case-insensitive).
+    # After renames/merges, multiple supplier docs may share a name.
+    # Keep the first doc per name, delete extras from DB.
+    seen = {}
+    ids_to_delete = []
     for s in suppliers:
-        s["total_spending"] = round(sum(p["total"] for p in purchases if p.get("supplier_name") == s["name"]), 2)
-        s["invoice_count"] = sum(1 for p in purchases if p.get("supplier_name") == s["name"])
-    return suppliers
+        key = (s.get("name") or "").strip().upper()
+        if key not in seen:
+            seen[key] = s
+        else:
+            ids_to_delete.append(s["id"])
+
+    # Clean up duplicate docs in background
+    if ids_to_delete:
+        await db.suppliers.delete_many({"restaurant_id": rid, "id": {"$in": ids_to_delete}})
+
+    deduped = list(seen.values())
+    for s in deduped:
+        name = s["name"]
+        matching = [p for p in purchases if (p.get("supplier_name") or "").strip().upper() == name.strip().upper()]
+        s["total_spending"] = round(sum(p.get("total", 0) for p in matching), 2)
+        s["invoice_count"] = len(matching)
+    return deduped
 
 @api_router.post("/suppliers")
 async def create_supplier(data: SupplierCreate, user=Depends(get_user)):
@@ -2316,12 +2337,35 @@ async def create_supplier(data: SupplierCreate, user=Depends(get_user)):
 
 @api_router.put("/suppliers/{sid}")
 async def update_supplier(sid: str, data: SupplierCreate, user=Depends(get_user)):
-    old = await db.suppliers.find_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+    rid = user["restaurant_id"]
+    old = await db.suppliers.find_one({"id": sid, "restaurant_id": rid}, {"_id": 0})
+    if not old:
+        raise HTTPException(404, "Vendor not found")
     update_data = data.model_dump()
-    old_vals = {k: old.get(k) for k in update_data} if old else {}
-    await db.suppliers.update_one({"id": sid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    old_name = old.get("name", "")
+    new_name = update_data.get("name", old_name)
+    old_vals = {k: old.get(k) for k in update_data}
+
+    # If name changed, update all associated purchase records
+    if old_name and new_name and old_name != new_name:
+        await db.purchases.update_many(
+            {"restaurant_id": rid, "supplier_name": {"$regex": f"^{re.escape(old_name)}$", "$options": "i"}},
+            {"$set": {"supplier_name": new_name}}
+        )
+        # Check if a supplier with the target name already exists (merge scenario)
+        existing_target = await db.suppliers.find_one(
+            {"restaurant_id": rid, "name": {"$regex": f"^{re.escape(new_name)}$", "$options": "i"}, "id": {"$ne": sid}},
+            {"_id": 0}
+        )
+        if existing_target:
+            # Merge: delete the current supplier doc, keep the existing target
+            await db.suppliers.delete_one({"id": sid, "restaurant_id": rid})
+            await audit_log(user, "UPDATE", "Vendor", sid, f'{user["name"]} merged vendor "{old_name}" into "{new_name}"', old_value=old_vals, new_value=update_data)
+            return existing_target
+    
+    await db.suppliers.update_one({"id": sid, "restaurant_id": rid}, {"$set": update_data})
     updated = await db.suppliers.find_one({"id": sid}, {"_id": 0})
-    await audit_log(user, "UPDATE", "Vendor", sid, f'{user["name"]} updated vendor {old.get("name", "") if old else ""}', old_value=old_vals, new_value=update_data)
+    await audit_log(user, "UPDATE", "Vendor", sid, f'{user["name"]} updated vendor {old_name}', old_value=old_vals, new_value=update_data)
     return updated
 
 @api_router.delete("/suppliers/{sid}")
