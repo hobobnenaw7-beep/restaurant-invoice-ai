@@ -80,6 +80,19 @@ Full-stack restaurant accounting application with AI-powered OCR for invoice ext
 - [x] List, detail, and purchases views all show consistent merged data
 - [x] Fully tested: 4 backend + 6 frontend tests (100%)
 
+### Confidence + Review Layer (March 30, 2026)
+- [x] `validate_and_score_item()` in preprocessing.py — validation + scoring per item
+- [x] Validation checks: qty×price≈total (with tolerance), required fields, pack parse status, name quality
+- [x] 100-point confidence score: +40 calc, +20 fields, +20 pack, +20 name
+- [x] Classification: high>=85, medium>=60, low<60
+- [x] Safety: low-confidence items show "—" for $/LB (never misleading computed values)
+- [x] Injected in extraction endpoint (after OCR), create_purchase, and update_purchase
+- [x] Frontend: confidence dot column (green/amber/red/gray), review banner with count
+- [x] Frontend: "Focus Review" toggle filters to uncertain items only
+- [x] Frontend: per-item "Confirm" button marks uncertain rows as reviewed
+- [x] Frontend: save strips internal fields, DB stores confidence metadata
+- [x] Fully tested: 9 backend + 5 frontend tests (100%)
+
 ### UI/UX
 - [x] Event bus for instant cross-component sync
 - [x] ConfirmDeleteDialog and ConfirmSaveDialog
