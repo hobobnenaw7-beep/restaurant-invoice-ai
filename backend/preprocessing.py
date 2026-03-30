@@ -600,7 +600,7 @@ def enrich_item_with_pack_size(item: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 7. Confidence & Validation Layer
+# 7. Confidence & Validation Layer (Strict — Trust > Coverage)
 # ---------------------------------------------------------------------------
 
 def _item_name_looks_clear(name: str) -> bool:
@@ -608,29 +608,60 @@ def _item_name_looks_clear(name: str) -> bool:
     if not name or len(name.strip()) < 2:
         return False
     s = name.strip()
-    # Mostly digits / special chars → garbled
     alpha = sum(1 for c in s if c.isalpha())
     if alpha < len(s) * 0.3:
         return False
-    # Extremely long single token → garbled
     tokens = s.split()
     if len(tokens) == 1 and len(s) > 40:
         return False
     return True
 
 
+def _detect_suspicious_patterns(item: dict) -> list:
+    """Detect suspicious patterns that should prevent trusted status."""
+    flags = []
+    qty = float(item.get("quantity", 0) or 0)
+    up = float(item.get("unit_price", 0) or 0)
+    total = float(item.get("total", 0) or 0)
+    tcw = item.get("total_case_weight")
+
+    # Unrealistic pack sizes (case weight > 5000 LB or packs > 200)
+    ppc = item.get("packs_per_case")
+    if ppc is not None and ppc > 200:
+        flags.append(f"unrealistic packs_per_case: {ppc}")
+    if tcw is not None and tcw > 5000:
+        flags.append(f"unrealistic case weight: {tcw}")
+
+    # Defaulted/placeholder values
+    if qty == 1 and up == 0 and total == 0:
+        flags.append("likely defaulted values (qty=1, price=0, total=0)")
+    if qty > 0 and up > 0 and qty == up:
+        flags.append(f"qty equals unit_price ({qty}) — possible OCR misread")
+
+    # Extremely high or low prices
+    if up > 50000:
+        flags.append(f"unit_price suspiciously high: ${up}")
+    if total > 0 and up > 0 and up > total:
+        flags.append("unit_price > total")
+
+    return flags
+
+
 def validate_and_score_item(item: dict) -> dict:
     """
-    Validate and compute confidence score for a line item.
-    Injected AFTER extraction + pack-size enrichment.
-    Mutates and returns the item with added fields:
+    Strict validation and confidence scoring.
+    Uses HARD GATES: any critical failure forces 'unverified' status.
+    Trust > Coverage — conservative classification.
+
+    Mutates and returns the item with:
       - valid_calc: bool
       - validation_errors: list[str]
       - confidence_score: int (0-100)
-      - confidence_level: "high" | "medium" | "low"
+      - confidence_level: "trusted" | "unverified"
     """
     errors = []
     score = 0
+    hard_fail = False  # Any hard fail → forced unverified
 
     raw_name = (item.get("raw_name") or "").strip()
     qty = float(item.get("quantity", 0) or 0)
@@ -639,7 +670,7 @@ def validate_and_score_item(item: dict) -> dict:
     pack_status = item.get("pack_parse_status") or "not_applicable"
     pack_size_raw = item.get("pack_size_raw") or item.get("pack_size") or ""
 
-    # --- CHECK 1: qty × unit_price ≈ line_total (+40) ---
+    # ===== HARD GATE 1: Math validation (qty × price ≈ total) =====
     valid_calc = False
     if qty > 0 and up > 0 and total > 0:
         expected = round(qty * up, 2)
@@ -648,18 +679,23 @@ def validate_and_score_item(item: dict) -> dict:
             valid_calc = True
             score += 40
         else:
-            errors.append(f"qty*price={expected:.2f} != total={total:.2f}")
+            hard_fail = True
+            errors.append(f"MATH MISMATCH: qty({qty})×price(${up:.2f})=${expected:.2f} ≠ total(${total:.2f})")
     elif total > 0 and (qty == 0 or up == 0):
-        errors.append("missing qty or unit_price but total exists")
+        hard_fail = True
+        errors.append("total exists but qty or unit_price is missing/zero")
     elif qty > 0 and up > 0 and total == 0:
-        errors.append("missing line total")
+        hard_fail = True
+        errors.append("qty and price exist but total is missing/zero")
     else:
-        errors.append("missing qty, unit_price, and total")
+        hard_fail = True
+        errors.append("missing core numeric fields (qty, unit_price, total)")
 
-    # --- CHECK 2: required fields exist (+20) ---
+    # ===== HARD GATE 2: Required fields =====
     missing = []
     if not raw_name:
         missing.append("item_name")
+        hard_fail = True
     if qty <= 0:
         missing.append("qty")
     if up <= 0:
@@ -671,45 +707,53 @@ def validate_and_score_item(item: dict) -> dict:
     else:
         errors.append(f"missing: {', '.join(missing)}")
 
-    # --- CHECK 3: pack size parsing status (+20) ---
-    if pack_size_raw.strip():
+    # ===== HARD GATE 3: Pack size — if present, must parse or block trusted =====
+    has_pack = bool(pack_size_raw.strip())
+    if has_pack:
         if pack_status == "parsed":
             score += 20
         elif pack_status == "failed":
+            # Pack size present but unparseable → cannot be trusted for price normalization
+            hard_fail = True
             errors.append(f"pack_size parse failed: \"{pack_size_raw}\"")
-            score += 5  # partial credit: at least it has a pack_size string
-        # not_applicable with text → unusual
     else:
-        # No pack_size field — acceptable for many items
-        score += 15  # partial credit: no pack size is not an error
+        # No pack_size → fine, many items don't have one
+        score += 15
 
-    # --- CHECK 4: item name quality (+20) ---
+    # ===== CHECK 4: Item name quality =====
     if _item_name_looks_clear(raw_name):
         score += 20
     else:
         errors.append("item name may be garbled or missing")
 
-    # --- Normalized price safety check ---
+    # ===== CHECK 5: Suspicious patterns =====
+    sus_flags = _detect_suspicious_patterns(item)
+    if sus_flags:
+        hard_fail = True
+        for f in sus_flags:
+            errors.append(f"SUSPICIOUS: {f}")
+
+    # ===== Normalized price safety =====
     nplb = item.get("normalized_price_per_lb")
     if nplb is not None and nplb > 0:
         if pack_status != "parsed":
-            errors.append("normalized price exists but pack_parse_status != parsed")
+            errors.append("normalized price exists but pack_parse_status != parsed — cleared")
             item["normalized_price_per_lb"] = None
-        pack_unit = (item.get("pack_unit") or "").upper()
-        if pack_unit not in NORMALIZABLE_UNITS:
-            errors.append(f"normalized price exists but unit '{pack_unit}' is not weight-based")
-            item["normalized_price_per_lb"] = None
+        else:
+            pack_unit = (item.get("pack_unit") or "").upper()
+            if pack_unit not in NORMALIZABLE_UNITS:
+                errors.append(f"normalized price exists but unit '{pack_unit}' is not weight-based — cleared")
+                item["normalized_price_per_lb"] = None
 
-    # Clamp score
+    # ===== Final classification: Trust > Coverage =====
     score = max(0, min(100, score))
 
-    # Classify
-    if score >= 85:
-        level = "high"
-    elif score >= 60:
-        level = "medium"
+    if hard_fail:
+        level = "unverified"
+    elif score >= 85:
+        level = "trusted"
     else:
-        level = "low"
+        level = "unverified"
 
     item["valid_calc"] = valid_calc
     item["validation_errors"] = errors
@@ -717,3 +761,39 @@ def validate_and_score_item(item: dict) -> dict:
     item["confidence_level"] = level
 
     return item
+
+
+def validate_purchase_items(items: list) -> list:
+    """
+    Cross-item validation: detect suspicious patterns across all items in a purchase.
+    Call AFTER individual validate_and_score_item on each item.
+    """
+    if len(items) < 2:
+        return items
+
+    # Detect repeated identical values across rows
+    prices = [float(it.get("unit_price", 0) or 0) for it in items]
+    totals = [float(it.get("total", 0) or 0) for it in items]
+    names = [(it.get("raw_name") or "").strip().upper() for it in items]
+
+    # Check for duplicate rows (same name + same price + same total)
+    seen = set()
+    for idx, it in enumerate(items):
+        key = (names[idx], prices[idx], totals[idx])
+        if key in seen and names[idx]:
+            if "SUSPICIOUS: duplicate row" not in (it.get("validation_errors") or []):
+                it.setdefault("validation_errors", []).append("SUSPICIOUS: duplicate row (same name, price, total)")
+                it["confidence_level"] = "unverified"
+        seen.add(key)
+
+    # Check if ALL prices are identical (unlikely in real invoices with >3 items)
+    nonzero_prices = [p for p in prices if p > 0]
+    if len(nonzero_prices) >= 4 and len(set(nonzero_prices)) == 1:
+        for it in items:
+            if float(it.get("unit_price", 0) or 0) > 0:
+                if "SUSPICIOUS: all items have identical price" not in (it.get("validation_errors") or []):
+                    it.setdefault("validation_errors", []).append("SUSPICIOUS: all items have identical price")
+                    it["confidence_level"] = "unverified"
+
+    return items
+

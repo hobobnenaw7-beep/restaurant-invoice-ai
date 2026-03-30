@@ -244,7 +244,7 @@ function RawMaterialsTab({ api }) {
         _date_warning: d._date_warning || false,
       });
       // Check for uncertain items that need review
-      const uncertainCount = items.filter(it => (it.confidence_level || 'high') !== 'high').length;
+      const uncertainCount = items.filter(it => (it.confidence_level || 'trusted') !== 'trusted').length;
       if (uncertainCount > 0) {
         toast.warning(`${uncertainCount} item${uncertainCount > 1 ? 's' : ''} need${uncertainCount === 1 ? 's' : ''} review — check highlighted rows`);
         setReviewMode(true);
@@ -451,9 +451,9 @@ function RawMaterialsTab({ api }) {
           )}
           {/* Confidence review banner */}
           {(() => {
-            const uncertain = form.items.filter(it => it.confidence_level && it.confidence_level !== 'high' && !it._reviewed);
+            const uncertain = form.items.filter(it => it.confidence_level && it.confidence_level !== 'trusted' && !it._reviewed);
             const total = form.items.filter(it => it.confidence_level).length;
-            const highCount = form.items.filter(it => it.confidence_level === 'high').length;
+            const trustedCount = form.items.filter(it => it.confidence_level === 'trusted').length;
             if (total === 0 || uncertain.length === 0) return null;
             return (
               <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-50 border border-indigo-200" data-testid="confidence-review-banner">
@@ -465,7 +465,7 @@ function RawMaterialsTab({ api }) {
                     {uncertain.length} of {total} items need review
                   </p>
                   <p className="text-[10px] text-indigo-600 mt-0.5">
-                    {highCount} items auto-verified. Review only the uncertain rows below.
+                    {trustedCount} items auto-verified. Review only the uncertain rows below.
                   </p>
                 </div>
                 <button
@@ -509,16 +509,16 @@ function RawMaterialsTab({ api }) {
               </div>
               <div className="space-y-1.5">{form.items.filter(item => {
                 if (!reviewMode) return true;
-                // In review mode: show uncertain + unreviewed items only
-                return item.confidence_level && item.confidence_level !== 'high' && !item._reviewed;
+                // In review mode: show unverified + unreviewed items only
+                return item.confidence_level && item.confidence_level !== 'trusted' && !item._reviewed;
               }).map((item) => {
                 const i = form.items.indexOf(item);
                 const cl = item.confidence_level;
-                const isUncertain = cl && cl !== 'high' && !item._reviewed;
-                const confidenceDot = cl === 'high' || item._reviewed
-                  ? 'bg-emerald-500' : cl === 'medium' ? 'bg-amber-500' : cl === 'low' ? 'bg-red-500' : 'bg-slate-300';
-                const confidenceTitle = item._reviewed ? 'Confirmed' : cl === 'high' ? 'High confidence' : cl === 'medium' ? 'Medium — review recommended' : cl === 'low' ? 'Low — needs review' : '';
-                const rowBorder = isUncertain ? (cl === 'low' ? 'border-red-200 bg-red-50/40' : 'border-amber-200 bg-amber-50/40') : item._warning ? 'bg-amber-50 border border-amber-200' : item._reviewed ? 'bg-emerald-50/30 border border-emerald-200' : 'bg-slate-50';
+                const isUncertain = cl && cl !== 'trusted' && !item._reviewed;
+                const confidenceDot = cl === 'trusted' || item._reviewed
+                  ? 'bg-emerald-500' : cl === 'unverified' ? 'bg-amber-500' : 'bg-slate-300';
+                const confidenceTitle = item._reviewed ? 'Confirmed by user' : cl === 'trusted' ? 'Trusted — auto-verified' : cl === 'unverified' ? 'Unverified — needs review' : '';
+                const rowBorder = isUncertain ? 'border-amber-200 bg-amber-50/40' : item._warning ? 'bg-amber-50 border border-amber-200' : item._reviewed ? 'bg-emerald-50/30 border border-emerald-200' : 'bg-slate-50';
                 return (
                 <div key={item._key} className={`grid grid-cols-[24px_minmax(140px,2fr)_65px_100px_85px_85px_65px_65px_32px] gap-1.5 items-center rounded-lg p-2 border ${rowBorder}`} data-testid={`line-item-${i}`}>
                   {/* Confidence indicator */}
@@ -534,7 +534,7 @@ function RawMaterialsTab({ api }) {
                   <Input className={`text-xs h-8 text-right tabular-nums ${item._warning && (!item.unit_price) ? 'border-amber-300' : ''}`} type="number" step="0.01" placeholder="Price" value={item.unit_price || ''} onChange={(e) => updateItem(i, 'unit_price', parseFloat(e.target.value) || 0)} data-testid={`line-item-price-${i}`} />
                   <div className={`text-xs h-8 flex items-center justify-end font-semibold tabular-nums px-2 rounded-md bg-slate-100 border border-slate-200 text-slate-700 select-none ${item._warning ? 'border-amber-300 bg-amber-50' : ''}`} data-testid={`line-item-total-${i}`}>{item.total ? `$${Number(item.total).toFixed(2)}` : '$0.00'}</div>
                   <div className={`text-[10px] h-8 flex items-center justify-center tabular-nums rounded-md border select-none ${item.pack_parse_status === 'failed' ? 'bg-red-50 border-red-200 text-red-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`} data-testid={`line-item-casewt-${i}`}>{item.pack_parse_status === 'parsed' && item.total_case_weight != null ? `${item.total_case_weight} ${item.pack_unit || ''}`.trim() : '—'}</div>
-                  <div className={`text-[10px] h-8 flex items-center justify-end tabular-nums rounded-md px-1 select-none ${item.confidence_level === 'low' ? 'text-slate-300 bg-slate-100 border border-slate-200' : item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? 'font-semibold text-teal-700 bg-teal-50 border border-teal-200' : item.pack_parse_status === 'failed' ? 'text-red-400 bg-red-50 border border-red-200' : 'text-slate-300 bg-slate-100 border border-slate-200'}`} data-testid={`line-item-nup-${i}`}>{item.confidence_level === 'low' ? '—' : (item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? `$${item.normalized_price_per_lb.toFixed(2)}` : '—')}</div>
+                  <div className={`text-[10px] h-8 flex items-center justify-end tabular-nums rounded-md px-1 select-none ${item.confidence_level === 'unverified' && !item._reviewed ? 'text-slate-300 bg-slate-100 border border-slate-200' : item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? 'font-semibold text-teal-700 bg-teal-50 border border-teal-200' : item.pack_parse_status === 'failed' ? 'text-red-400 bg-red-50 border border-red-200' : 'text-slate-300 bg-slate-100 border border-slate-200'}`} data-testid={`line-item-nup-${i}`}>{item.confidence_level === 'unverified' && !item._reviewed ? '—' : (item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? `$${item.normalized_price_per_lb.toFixed(2)}` : '—')}</div>
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0 flex-shrink-0" onClick={() => requestDeleteItem(i)} data-testid={`delete-line-item-${i}`}><Trash2 className="w-3 h-3 text-red-400" /></Button>
                   {/* Validation detail row */}
                   {isUncertain && item.validation_errors && item.validation_errors.length > 0 && (

@@ -1488,7 +1488,7 @@ Rules:
                         item["_warning"] = True
 
                     # Enrich with pack size parsing and normalized pricing
-                    from preprocessing import enrich_item_with_pack_size, validate_and_score_item
+                    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
                     pack_raw = item.get("pack_size", "") or ""
                     if pack_raw:
                         item["pack_size"] = pack_raw
@@ -1562,6 +1562,10 @@ Rules:
                     "total": float(it.get("total", 0) or it.get("revenue", 0) or 0),
                 })
             await db.extracted_items.insert_many(item_docs)
+
+        # Cross-item validation (detect duplicate rows, identical prices, etc.)
+        if isinstance(extracted.get("items"), list):
+            validate_purchase_items(extracted["items"])
 
         return {
             "extracted_data": extracted,
@@ -1985,7 +1989,7 @@ async def get_purchase(pid: str, user=Depends(get_user)):
 
 @api_router.post("/purchases")
 async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
-    from preprocessing import enrich_item_with_pack_size, validate_and_score_item
+    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
     doc = data.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["restaurant_id"] = user["restaurant_id"]
@@ -1997,6 +2001,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     for item in doc.get("items", []):
         enrich_item_with_pack_size(item)
         validate_and_score_item(item)
+    validate_purchase_items(doc.get("items", []))
     await db.purchases.insert_one(doc)
     doc.pop("_id", None)
 
@@ -2108,7 +2113,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
 
 @api_router.put("/purchases/{pid}")
 async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)):
-    from preprocessing import enrich_item_with_pack_size, validate_and_score_item
+    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No data")
@@ -2120,6 +2125,7 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
         for item in update_data["items"]:
             enrich_item_with_pack_size(item)
             validate_and_score_item(item)
+        validate_purchase_items(update_data["items"])
     old_vals = {k: old.get(k) for k in update_data}
     await db.purchases.update_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
     await audit_log(user, "UPDATE", "Expense", pid, f'{user["name"]} updated expense ({old.get("supplier_name", "")})', old_value=old_vals, new_value=update_data)
