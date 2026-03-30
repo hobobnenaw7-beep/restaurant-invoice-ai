@@ -1,0 +1,102 @@
+{
+  "summary": "Tested Explainability + Quick Fix features for invoice items. All 21 backend tests passed (100%). Frontend UI tests verified confidence indicators, Fix/Accept buttons, reason text, and instant re-validation. The confidence_reason field correctly explains WHY each item is trusted/unverified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard Charts", "issues": ["Console warning: Chart width/height should be greater than 0 - chart container sizing issue (pre-existing)"]},
+      {"screen": "Dialog Components", "issues": ["Console warning: Missing Description or aria-describedby for DialogContent - accessibility improvement needed (pre-existing)"]}
+    ]
+  },
+  "test_results": {
+    "backend_tests": {
+      "test_trusted_item_reason_all_checks_passed": "PASS - Trusted item returns confidence_reason='All checks passed'",
+      "test_math_mismatch_reason": "PASS - Math mismatch returns confidence_reason='Math mismatch (qty × price ≠ total)'",
+      "test_pack_parse_failed_reason": "PASS - Pack parse failed returns confidence_reason='Pack size could not be parsed'",
+      "test_missing_name_reason": "PASS - Missing name returns confidence_reason='Missing item name'",
+      "test_missing_fields_reason": "PASS - Missing fields returns confidence_reason='Missing fields: ...'",
+      "test_suspicious_values_reason": "PASS - Suspicious values returns confidence_reason='Suspicious values detected'",
+      "test_mixed_items_each_has_reason": "PASS - Mixed items (2 trusted, 2 unverified) each have correct confidence_reason",
+      "test_update_changes_reason_when_fixed": "PASS - After fixing math, confidence_reason changes to 'All checks passed'",
+      "test_perfect_item_trusted_100": "PASS - Perfect item returns confidence_level='trusted', score=100",
+      "test_pack_parse_failed_forces_unverified": "PASS - Pack parse FAILED forces confidence_level='unverified'",
+      "test_math_mismatch_forces_unverified": "PASS - Math mismatch forces confidence_level='unverified'",
+      "test_missing_item_name_forces_unverified": "PASS - Missing name forces confidence_level='unverified'",
+      "test_total_with_zero_qty_price_forces_unverified": "PASS - Total with zero qty/price forces confidence_level='unverified'",
+      "test_qty_equals_price_suspicious_pattern": "PASS - qty equals price forces confidence_level='unverified'",
+      "test_unrealistic_packs_per_case_suspicious": "PASS - Unrealistic packs_per_case forces confidence_level='unverified'",
+      "test_duplicate_rows_second_unverified": "PASS - Duplicate rows force second row to 'unverified'",
+      "test_good_item_without_pack_trusted": "PASS - Good item without pack_size returns 'trusted'",
+      "test_confidence_level_is_binary": "PASS - confidence_level is 'trusted' or 'unverified' (not high/medium/low)",
+      "test_update_purchase_computes_confidence": "PASS - PUT /api/purchases/{id} computes confidence on update",
+      "test_trusted_item_has_normalized_price": "PASS - Trusted item with LB unit has normalized_price_per_lb",
+      "test_unverified_item_no_normalized_price_shown": "PASS - Unverified item shows confidence_level='unverified'"
+    },
+    "frontend_ui_tests": {
+      "confidence_dot_trusted": "PASS - Trusted items show GREEN dot with checkmark (bg-emerald-500)",
+      "confidence_dot_unverified": "PASS - Unverified items show AMBER dot (bg-amber-500)",
+      "status_badge_trusted": "PASS - Trusted items show 'Trusted' or 'Confirmed' badge",
+      "status_badge_unverified": "PASS - Unverified items show 'Unverified' badge",
+      "confidence_reason_text": "PASS - Unverified items show reason text (e.g., 'Pack size could not be parsed')",
+      "fix_button": "PASS - 'Fix' button visible on unverified items, toggles fix mode (blue ring on qty/price)",
+      "accept_button": "PASS - 'Accept' button marks item as reviewed (green 'Confirmed' badge)",
+      "review_banner_count": "PASS - Review banner shows correct count (e.g., '1 of 3 items need review')",
+      "focus_review_toggle": "PASS - 'Focus Review' button filters to only unverified items",
+      "dollar_per_lb_trusted": "PASS - Trusted items show $/LB value with teal styling",
+      "dollar_per_lb_unverified": "PASS - Unverified items show '—' for $/LB"
+    }
+  },
+  "features_verified": [
+    "1. POST /api/purchases: confidence_reason field returned on each item",
+    "2. confidence_reason = 'All checks passed' for trusted items",
+    "3. confidence_reason = 'Math mismatch (qty × price ≠ total)' for math errors",
+    "4. confidence_reason = 'Pack size could not be parsed' for failed pack parse",
+    "5. confidence_reason = 'Missing item name' for empty name",
+    "6. confidence_reason = 'Missing fields: ...' for missing fields",
+    "7. confidence_reason = 'Suspicious values detected' for suspicious patterns",
+    "8. Frontend: trusted items show green dot + 'Trusted' or 'Confirmed' badge",
+    "9. Frontend: unverified items show amber dot + 'Unverified' badge + reason text",
+    "10. Frontend: 'Fix' button on unverified items toggles fix mode (blue ring on qty/price)",
+    "11. Frontend: editing qty or price in fix mode auto-recalculates total",
+    "12. Frontend: 'Accept' button marks item as reviewed (green 'Confirmed' badge)",
+    "13. Frontend: review banner count updates correctly as items are fixed/accepted",
+    "14. Frontend: $/LB shows '—' for unverified items, shows value for trusted/confirmed items",
+    "15. Frontend: Focus Review toggle filters to only unverified items"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_confidence_reason.py",
+    "/app/backend/tests/test_strict_confidence_scoring.py",
+    "/app/test_reports/pytest/pytest_confidence_reason.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "validate_and_score_item() in preprocessing.py correctly assigns confidence_reason based on the primary failure reason",
+    "revalidateItem() in ExpensesPage.js mirrors backend hard gates for client-side instant re-validation",
+    "Fix button toggles _fixing flag which adds blue ring highlight to qty/price fields",
+    "Accept button sets _reviewed=true which changes status to 'Confirmed' without re-validation",
+    "Review banner correctly counts unverified items that haven't been reviewed"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_confidence_reason.py"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21 tests passed)",
+    "frontend": "100% (11/11 UI tests passed)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Created 3 test purchases during testing, all cleaned up after",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Explainability + Quick Fix features fully tested. Key features: (1) confidence_reason field explains WHY each item is trusted/unverified, (2) Fix button toggles fix mode with blue ring on qty/price, (3) Accept button marks item as reviewed, (4) Review banner shows count of unverified items, (5) Focus Review toggle filters to unverified items only. Test files: /app/backend/tests/test_confidence_reason.py, /app/backend/tests/test_strict_confidence_scoring.py",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}

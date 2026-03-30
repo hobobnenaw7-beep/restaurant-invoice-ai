@@ -760,6 +760,22 @@ def validate_and_score_item(item: dict) -> dict:
     item["confidence_score"] = score
     item["confidence_level"] = level
 
+    # Human-readable primary reason
+    if level == "trusted":
+        item["confidence_reason"] = "All checks passed"
+    elif not valid_calc and qty > 0 and up > 0 and total > 0:
+        item["confidence_reason"] = "Math mismatch (qty × price ≠ total)"
+    elif not raw_name:
+        item["confidence_reason"] = "Missing item name"
+    elif has_pack and pack_status == "failed":
+        item["confidence_reason"] = "Pack size could not be parsed"
+    elif sus_flags:
+        item["confidence_reason"] = "Suspicious values detected"
+    elif missing:
+        item["confidence_reason"] = f"Missing fields: {', '.join(missing)}"
+    else:
+        item["confidence_reason"] = "Needs review"
+
     return item
 
 
