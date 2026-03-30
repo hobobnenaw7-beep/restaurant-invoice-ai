@@ -96,6 +96,17 @@ Full-stack restaurant accounting application with AI-powered OCR for invoice ext
 - [x] Frontend: review banner with count, "Focus Review" toggle, per-item "Confirm" button
 - [x] Fully tested: 13 backend + 7 frontend tests (100%)
 
+### Explainability + Quick Fix (March 30, 2026)
+- [x] `confidence_reason` field on each item — human-readable primary reason
+- [x] Reasons: "All checks passed", "Math mismatch (qty × price ≠ total)", "Pack size could not be parsed", "Missing item name", "Missing fields: ...", "Suspicious values detected"
+- [x] Frontend: status badge per row — green "Trusted"/"Confirmed" or amber "Unverified" + reason text
+- [x] "Fix" button on unverified items — highlights qty/price fields (blue ring), auto-recalculates total
+- [x] Client-side `revalidateItem()` mirrors backend hard gates — instant status update on edit
+- [x] "Accept" button — marks item as reviewed (becomes "Confirmed") without re-validation
+- [x] Review banner count updates live as items are fixed/accepted
+- [x] $/LB shows "—" for unverified items, real values for trusted/confirmed
+- [x] Fully tested: 21 backend + 11 frontend tests (100%)
+
 ### UI/UX
 - [x] Event bus for instant cross-component sync
 - [x] ConfirmDeleteDialog and ConfirmSaveDialog
