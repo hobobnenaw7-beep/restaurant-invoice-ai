@@ -81,17 +81,20 @@ Full-stack restaurant accounting application with AI-powered OCR for invoice ext
 - [x] Fully tested: 4 backend + 6 frontend tests (100%)
 
 ### Confidence + Review Layer (March 30, 2026)
-- [x] `validate_and_score_item()` in preprocessing.py — validation + scoring per item
-- [x] Validation checks: qty×price≈total (with tolerance), required fields, pack parse status, name quality
-- [x] 100-point confidence score: +40 calc, +20 fields, +20 pack, +20 name
-- [x] Classification: high>=85, medium>=60, low<60
-- [x] Safety: low-confidence items show "—" for $/LB (never misleading computed values)
-- [x] Injected in extraction endpoint (after OCR), create_purchase, and update_purchase
-- [x] Frontend: confidence dot column (green/amber/red/gray), review banner with count
-- [x] Frontend: "Focus Review" toggle filters to uncertain items only
-- [x] Frontend: per-item "Confirm" button marks uncertain rows as reviewed
-- [x] Frontend: save strips internal fields, DB stores confidence metadata
-- [x] Fully tested: 9 backend + 5 frontend tests (100%)
+- [x] `validate_and_score_item()` in preprocessing.py — strict validation + hard-gate scoring
+- [x] **HARD GATES** (any triggers forced "unverified"):
+  - Math mismatch (qty×price ≠ total)
+  - Missing item name
+  - Pack parse failed (when pack_size is present)
+  - Suspicious patterns: qty==price, unrealistic sizes (>200 packs, >5000 LB), defaulted values, price>total
+- [x] `validate_purchase_items()` — cross-item validation: duplicate rows, all-identical prices
+- [x] Binary classification: **"trusted"** (score≥85 AND zero hard gates) vs **"unverified"** (everything else)
+- [x] Trust > Coverage: conservative, never shows green unless truly verified
+- [x] Safety: unverified items show "—" for $/LB (never misleading computed values)
+- [x] Injected in extraction, create_purchase, update_purchase
+- [x] Frontend: amber dot (unverified) / green dot+checkmark (trusted/confirmed)
+- [x] Frontend: review banner with count, "Focus Review" toggle, per-item "Confirm" button
+- [x] Fully tested: 13 backend + 7 frontend tests (100%)
 
 ### UI/UX
 - [x] Event bus for instant cross-component sync
