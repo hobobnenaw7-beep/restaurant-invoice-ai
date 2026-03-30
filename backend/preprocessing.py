@@ -597,3 +597,123 @@ def enrich_item_with_pack_size(item: dict) -> dict:
         item["normalized_price_per_lb"] = None
 
     return item
+
+
+# ---------------------------------------------------------------------------
+# 7. Confidence & Validation Layer
+# ---------------------------------------------------------------------------
+
+def _item_name_looks_clear(name: str) -> bool:
+    """Heuristic: does the item name look like a real product name, not garbled OCR?"""
+    if not name or len(name.strip()) < 2:
+        return False
+    s = name.strip()
+    # Mostly digits / special chars → garbled
+    alpha = sum(1 for c in s if c.isalpha())
+    if alpha < len(s) * 0.3:
+        return False
+    # Extremely long single token → garbled
+    tokens = s.split()
+    if len(tokens) == 1 and len(s) > 40:
+        return False
+    return True
+
+
+def validate_and_score_item(item: dict) -> dict:
+    """
+    Validate and compute confidence score for a line item.
+    Injected AFTER extraction + pack-size enrichment.
+    Mutates and returns the item with added fields:
+      - valid_calc: bool
+      - validation_errors: list[str]
+      - confidence_score: int (0-100)
+      - confidence_level: "high" | "medium" | "low"
+    """
+    errors = []
+    score = 0
+
+    raw_name = (item.get("raw_name") or "").strip()
+    qty = float(item.get("quantity", 0) or 0)
+    up = float(item.get("unit_price", 0) or 0)
+    total = float(item.get("total", 0) or 0)
+    pack_status = item.get("pack_parse_status") or "not_applicable"
+    pack_size_raw = item.get("pack_size_raw") or item.get("pack_size") or ""
+
+    # --- CHECK 1: qty × unit_price ≈ line_total (+40) ---
+    valid_calc = False
+    if qty > 0 and up > 0 and total > 0:
+        expected = round(qty * up, 2)
+        tolerance = max(0.02, 0.01 * total)
+        if abs(expected - total) <= tolerance:
+            valid_calc = True
+            score += 40
+        else:
+            errors.append(f"qty*price={expected:.2f} != total={total:.2f}")
+    elif total > 0 and (qty == 0 or up == 0):
+        errors.append("missing qty or unit_price but total exists")
+    elif qty > 0 and up > 0 and total == 0:
+        errors.append("missing line total")
+    else:
+        errors.append("missing qty, unit_price, and total")
+
+    # --- CHECK 2: required fields exist (+20) ---
+    missing = []
+    if not raw_name:
+        missing.append("item_name")
+    if qty <= 0:
+        missing.append("qty")
+    if up <= 0:
+        missing.append("unit_price")
+    if total <= 0:
+        missing.append("line_total")
+    if not missing:
+        score += 20
+    else:
+        errors.append(f"missing: {', '.join(missing)}")
+
+    # --- CHECK 3: pack size parsing status (+20) ---
+    if pack_size_raw.strip():
+        if pack_status == "parsed":
+            score += 20
+        elif pack_status == "failed":
+            errors.append(f"pack_size parse failed: \"{pack_size_raw}\"")
+            score += 5  # partial credit: at least it has a pack_size string
+        # not_applicable with text → unusual
+    else:
+        # No pack_size field — acceptable for many items
+        score += 15  # partial credit: no pack size is not an error
+
+    # --- CHECK 4: item name quality (+20) ---
+    if _item_name_looks_clear(raw_name):
+        score += 20
+    else:
+        errors.append("item name may be garbled or missing")
+
+    # --- Normalized price safety check ---
+    nplb = item.get("normalized_price_per_lb")
+    if nplb is not None and nplb > 0:
+        if pack_status != "parsed":
+            errors.append("normalized price exists but pack_parse_status != parsed")
+            item["normalized_price_per_lb"] = None
+        pack_unit = (item.get("pack_unit") or "").upper()
+        if pack_unit not in NORMALIZABLE_UNITS:
+            errors.append(f"normalized price exists but unit '{pack_unit}' is not weight-based")
+            item["normalized_price_per_lb"] = None
+
+    # Clamp score
+    score = max(0, min(100, score))
+
+    # Classify
+    if score >= 85:
+        level = "high"
+    elif score >= 60:
+        level = "medium"
+    else:
+        level = "low"
+
+    item["valid_calc"] = valid_calc
+    item["validation_errors"] = errors
+    item["confidence_score"] = score
+    item["confidence_level"] = level
+
+    return item

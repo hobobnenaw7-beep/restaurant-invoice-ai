@@ -1,0 +1,81 @@
+{
+  "summary": "Tested Confidence + Review Layer for OCR/parsing pipeline. All 9 backend tests passed (100%). Frontend UI tests passed. The confidence scoring system correctly validates items (qty*price≈total, required fields, pack status) and computes 100-point confidence scores with proper thresholds (high>=85, medium>=60, low<60).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Add Raw Material Dialog", "issues": ["Console warning: Missing Description or aria-describedby for DialogContent - accessibility improvement needed"]}
+    ]
+  },
+  "test_results": {
+    "backend_tests": {
+      "test_good_items_high_confidence": "PASS - Good items return confidence_score=100, confidence_level=high, valid_calc=true, validation_errors=[]",
+      "test_bad_math_invalid_calc": "PASS - Bad math (qty*price != total) returns valid_calc=false with error message",
+      "test_missing_fields_lower_confidence": "PASS - Missing fields return lower confidence_score and validation_errors listing missing fields",
+      "test_garbled_item_name_lower_confidence": "PASS - Garbled item name returns lower confidence due to name quality check",
+      "test_failed_pack_size_lower_confidence": "PASS - Failed pack_size returns confidence < 100 with pack parse error",
+      "test_update_purchase_computes_confidence": "PASS - PUT /api/purchases/{id} computes confidence on update",
+      "test_low_confidence_null_normalized_price": "PASS - Low confidence items show normalized_price_per_lb as null",
+      "test_confidence_thresholds": "PASS - Confidence thresholds work correctly (high>=85, medium>=60, low<60)",
+      "test_scoring_breakdown": "PASS - Scoring breakdown: +40 calc, +20 fields, +20 pack, +20 name = 100 max"
+    },
+    "frontend_ui_tests": {
+      "confidence_dot_column": "PASS - Confidence dot element found in first column of line items",
+      "column_headers": "PASS - All expected columns present: Item Name, Qty, Pack Size, Price, Total, Case Wt, $/LB",
+      "total_auto_calculation": "PASS - Total auto-calculates from qty * price",
+      "edit_dialog_confidence": "PASS - Edit dialog shows confidence dots with green checkmark for high confidence items",
+      "confidence_colors": "VERIFIED - Green=high/reviewed, Amber=medium, Red=low, Gray=no score"
+    }
+  },
+  "features_verified": [
+    "1. POST /api/purchases with good items returns confidence_score=100, confidence_level=high, valid_calc=true, validation_errors=[]",
+    "2. POST /api/purchases with bad math (qty*price != total) returns valid_calc=false with error message",
+    "3. POST /api/purchases with missing fields returns lower confidence_score and validation_errors listing missing fields",
+    "4. POST /api/purchases with garbled item name returns lower confidence due to name quality check",
+    "5. POST /api/purchases with failed pack_size returns confidence < 100 with pack parse error",
+    "6. PUT /api/purchases/{id} also computes confidence on update",
+    "7. Low confidence items show normalized_price_per_lb as null even if pack parsed (when confidence_level=low and calc invalid)",
+    "8. Frontend: Add dialog form shows confidence dot (green/amber/red/gray) in first column",
+    "9. Frontend: Review banner appears if uncertain items exist (verified in code, items were high confidence in test)",
+    "10. Frontend: Focus Review toggle filters to only uncertain items (verified in code)",
+    "11. Frontend: Confirm button on uncertain items marks them as reviewed (green dot) (verified in code)",
+    "12. Frontend: Low confidence items show '—' for $/LB instead of computed value (verified in code line 537)",
+    "13. Frontend: Save payload strips internal confidence fields (_reviewed, confidence_score etc) before sending (verified in code line 272)",
+    "14. Frontend: Opening existing record in edit loads confidence data from DB (verified - green checkmark shown)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_confidence_scoring.py",
+    "/app/test_reports/pytest/pytest_confidence_scoring.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "validate_and_score_item() in preprocessing.py correctly implements 100-point scoring: +40 calc, +20 fields, +20 pack, +20 name",
+    "Confidence thresholds correctly set: high>=85, medium>=60, low<60",
+    "Frontend correctly strips internal fields before save: _key, _warning, _warning_detail, _reviewed, confidence_score, confidence_level, validation_errors, valid_calc",
+    "Low confidence items correctly show '—' for $/LB column",
+    "Edit dialog correctly loads confidence data from DB and shows green checkmark for reviewed items"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_confidence_scoring.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 tests passed)",
+    "frontend": "100% (5/5 UI tests passed)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Created test purchases during testing, cleaned up 7 test records after",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Confidence + Review Layer fully tested. Key features: (1) validate_and_score_item() adds valid_calc, validation_errors, confidence_score, confidence_level to each item, (2) Scoring: +40 calc, +20 fields, +20 pack, +20 name, (3) Thresholds: high>=85, medium>=60, low<60, (4) Frontend shows confidence dots, review banner for uncertain items, confirm buttons. Test file: /app/backend/tests/test_confidence_scoring.py",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}

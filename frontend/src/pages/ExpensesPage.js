@@ -28,8 +28,8 @@ import { ConfirmSaveDialog } from '@/components/ConfirmSaveDialog';
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
 function nextKey() { return `k${++_keySeq}_${Date.now()}`; }
-function mkItem(raw_name = '', quantity = 1, pack_size = '', unit_price = 0, total = 0, pack_unit = null, total_case_weight = null, normalized_price_per_lb = null, pack_parse_status = null, warning = false, warning_detail = '') {
-  return { _key: nextKey(), raw_name, quantity, pack_size, unit_price, total, pack_unit, total_case_weight, normalized_price_per_lb, pack_parse_status, _warning: warning, _warning_detail: warning_detail };
+function mkItem(raw_name = '', quantity = 1, pack_size = '', unit_price = 0, total = 0, pack_unit = null, total_case_weight = null, normalized_price_per_lb = null, pack_parse_status = null, warning = false, warning_detail = '', confidence_score = null, confidence_level = null, validation_errors = [], valid_calc = null, _reviewed = false) {
+  return { _key: nextKey(), raw_name, quantity, pack_size, unit_price, total, pack_unit, total_case_weight, normalized_price_per_lb, pack_parse_status, _warning: warning, _warning_detail: warning_detail, confidence_score, confidence_level, validation_errors, valid_calc, _reviewed };
 }
 
 const OTHER_CATEGORIES = ['Utilities', 'Taxes', 'Maintenance & Repairs', 'Software & Subscriptions', 'Services', 'Rent / Facility', 'Miscellaneous'];
@@ -117,6 +117,7 @@ function RawMaterialsTab({ api }) {
   const [receiptId, setReceiptId] = useState(null);
   const [parsingMethod, setParsingMethod] = useState(null);
   const [showConfirmSave, setShowConfirmSave] = useState(false);
+  const [reviewMode, setReviewMode] = useState(false);
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -157,7 +158,7 @@ function RawMaterialsTab({ api }) {
     setEditingId(null);
     setForm({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [mkItem()], subtotal: 0, tax: 0, total: 0 });
     uploadPreviews.forEach(u => URL.revokeObjectURL(u));
-    setUploadFiles([]); setUploadPreviews([]); setShowAdd(true);
+    setUploadFiles([]); setUploadPreviews([]); setShowAdd(true); setReviewMode(false);
     setReceiptId(null); setParsingMethod(null);
     api.get('/items').then(res => {
       const names = [];
@@ -174,13 +175,13 @@ function RawMaterialsTab({ api }) {
       supplier_name: record.supplier_name || '',
       invoice_number: record.invoice_number || '',
       invoice_date: record.invoice_date || '',
-      items: (record.items || []).map(it => mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || null, it.total_case_weight || null, it.normalized_price_per_lb || null, it.pack_parse_status || null)),
+      items: (record.items || []).map(it => mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || null, it.total_case_weight || null, it.normalized_price_per_lb || null, it.pack_parse_status || null, false, '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, true)),
       subtotal: record.subtotal || 0,
       tax: record.tax || 0,
       total: record.total || 0,
     });
     if (uploadPreviews.length) uploadPreviews.forEach(u => URL.revokeObjectURL(u));
-    setUploadFiles([]); setUploadPreviews([]); setShowAdd(true);
+    setUploadFiles([]); setUploadPreviews([]); setShowAdd(true); setReviewMode(false);
     api.get('/items').then(res => {
       const names = [];
       (res.data || []).forEach(item => { names.push(item.name); (item.aliases || []).forEach(a => names.push(a.alias_name)); });
@@ -231,7 +232,7 @@ function RawMaterialsTab({ api }) {
         invoice_number: d.invoice_number || '',
         invoice_date: d.invoice_date || new Date().toISOString().split('T')[0],
         items: items.length > 0
-          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.pack_size_raw || it.pack_size || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, it.pack_unit || null, it.total_case_weight != null ? parseFloat(it.total_case_weight) : null, it.normalized_price_per_lb != null ? parseFloat(it.normalized_price_per_lb) : null, it.pack_parse_status || null, !!it._warning, it._warning_detail || ''))
+          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.pack_size_raw || it.pack_size || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, it.pack_unit || null, it.total_case_weight != null ? parseFloat(it.total_case_weight) : null, it.normalized_price_per_lb != null ? parseFloat(it.normalized_price_per_lb) : null, it.pack_parse_status || null, !!it._warning, it._warning_detail || '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, false))
           : [mkItem()],
         subtotal: parseFloat(d.subtotal) || 0,
         tax: parseFloat(d.tax) || 0,
@@ -242,7 +243,12 @@ function RawMaterialsTab({ api }) {
         _total_warning: d._total_warning || false,
         _date_warning: d._date_warning || false,
       });
-      if (hasWarnings) {
+      // Check for uncertain items that need review
+      const uncertainCount = items.filter(it => (it.confidence_level || 'high') !== 'high').length;
+      if (uncertainCount > 0) {
+        toast.warning(`${uncertainCount} item${uncertainCount > 1 ? 's' : ''} need${uncertainCount === 1 ? 's' : ''} review — check highlighted rows`);
+        setReviewMode(true);
+      } else if (hasWarnings) {
         toast.warning('Some fields need review — highlighted in yellow');
       } else {
         toast.success(res.data.message || 'Data extracted! Review and save.');
@@ -263,7 +269,7 @@ function RawMaterialsTab({ api }) {
     const doSave = async () => {
       setSaving(true);
       try {
-        const payload = { ...form, items: form.items.map(({ _key, _warning, _warning_detail, pack_unit, total_case_weight, normalized_price_per_lb, ...rest }) => ({ ...rest, pack_size: rest.pack_size || '' })) };
+        const payload = { ...form, items: form.items.map(({ _key, _warning, _warning_detail, _reviewed, pack_unit, total_case_weight, normalized_price_per_lb, confidence_score, confidence_level, validation_errors, valid_calc, ...rest }) => ({ ...rest, pack_size: rest.pack_size || '' })) };
         delete payload._has_warnings; delete payload._warnings; delete payload._subtotal_warning; delete payload._total_warning; delete payload._date_warning;
         if (editingId) {
           await api.put(`/purchases/${editingId}`, payload);
@@ -434,7 +440,7 @@ function RawMaterialsTab({ api }) {
           </div>
           <Separator />
           {/* Warning banner for OCR review */}
-          {form._has_warnings && (
+          {form._has_warnings && !reviewMode && (
             <div className="flex items-start gap-2.5 p-3 rounded-lg bg-amber-50 border border-amber-200" data-testid="ocr-warning-banner">
               <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
               <div>
@@ -443,6 +449,35 @@ function RawMaterialsTab({ api }) {
               </div>
             </div>
           )}
+          {/* Confidence review banner */}
+          {(() => {
+            const uncertain = form.items.filter(it => it.confidence_level && it.confidence_level !== 'high' && !it._reviewed);
+            const total = form.items.filter(it => it.confidence_level).length;
+            const highCount = form.items.filter(it => it.confidence_level === 'high').length;
+            if (total === 0 || uncertain.length === 0) return null;
+            return (
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-50 border border-indigo-200" data-testid="confidence-review-banner">
+                <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                  <Eye className="w-4 h-4 text-indigo-600" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-xs font-semibold text-indigo-900">
+                    {uncertain.length} of {total} items need review
+                  </p>
+                  <p className="text-[10px] text-indigo-600 mt-0.5">
+                    {highCount} items auto-verified. Review only the uncertain rows below.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setReviewMode(r => !r)}
+                  className={`text-[10px] font-semibold px-3 py-1.5 rounded-lg transition-colors ${reviewMode ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100'}`}
+                  data-testid="review-mode-toggle"
+                >
+                  {reviewMode ? 'Show All Items' : 'Focus Review'}
+                </button>
+              </div>
+            );
+          })()}
           {parsingMethod && (
             <div className="flex items-center gap-2 text-[10px]" data-testid="parsing-method-badge">
               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold ${parsingMethod === 'vendor' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
@@ -461,7 +496,8 @@ function RawMaterialsTab({ api }) {
             <div>
               <div className="flex items-center justify-between mb-2"><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Line Items</Label><Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={addItem} data-testid="add-line-item-btn"><Plus className="w-3 h-3 mr-1" /> Add Item</Button></div>
               {/* Column headers */}
-              <div className="grid grid-cols-[minmax(140px,2fr)_65px_100px_85px_85px_65px_65px_32px] gap-1.5 items-center px-2 mb-1">
+              <div className="grid grid-cols-[24px_minmax(140px,2fr)_65px_100px_85px_85px_65px_65px_32px] gap-1.5 items-center px-2 mb-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-center" title="Confidence"></span>
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Item Name</span>
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-center">Qty</span>
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-center">Pack Size</span>
@@ -471,19 +507,54 @@ function RawMaterialsTab({ api }) {
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider text-right">$/LB</span>
                 <span />
               </div>
-              <div className="space-y-1.5">{form.items.map((item, i) => (
-                <div key={item._key} className={`grid grid-cols-[minmax(140px,2fr)_65px_100px_85px_85px_65px_65px_32px] gap-1.5 items-center rounded-lg p-2 ${item._warning ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'}`} data-testid={`line-item-${i}`}>
+              <div className="space-y-1.5">{form.items.filter(item => {
+                if (!reviewMode) return true;
+                // In review mode: show uncertain + unreviewed items only
+                return item.confidence_level && item.confidence_level !== 'high' && !item._reviewed;
+              }).map((item) => {
+                const i = form.items.indexOf(item);
+                const cl = item.confidence_level;
+                const isUncertain = cl && cl !== 'high' && !item._reviewed;
+                const confidenceDot = cl === 'high' || item._reviewed
+                  ? 'bg-emerald-500' : cl === 'medium' ? 'bg-amber-500' : cl === 'low' ? 'bg-red-500' : 'bg-slate-300';
+                const confidenceTitle = item._reviewed ? 'Confirmed' : cl === 'high' ? 'High confidence' : cl === 'medium' ? 'Medium — review recommended' : cl === 'low' ? 'Low — needs review' : '';
+                const rowBorder = isUncertain ? (cl === 'low' ? 'border-red-200 bg-red-50/40' : 'border-amber-200 bg-amber-50/40') : item._warning ? 'bg-amber-50 border border-amber-200' : item._reviewed ? 'bg-emerald-50/30 border border-emerald-200' : 'bg-slate-50';
+                return (
+                <div key={item._key} className={`grid grid-cols-[24px_minmax(140px,2fr)_65px_100px_85px_85px_65px_65px_32px] gap-1.5 items-center rounded-lg p-2 border ${rowBorder}`} data-testid={`line-item-${i}`}>
+                  {/* Confidence indicator */}
+                  <div className="flex flex-col items-center gap-0.5" title={confidenceTitle} data-testid={`confidence-dot-${i}`}>
+                    <div className={`w-3 h-3 rounded-full ${confidenceDot} flex items-center justify-center`}>
+                      {(item._reviewed || cl === 'high') && <svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                    </div>
+                    {item.confidence_score != null && <span className="text-[8px] tabular-nums text-slate-400">{item.confidence_score}</span>}
+                  </div>
                   <ItemAutocomplete value={item.raw_name} onChange={(v) => updateItem(i, 'raw_name', v)} knownItems={knownItems} index={i} />
                   <Input className={`text-xs h-8 text-center tabular-nums ${item._warning && (!item.quantity) ? 'border-amber-300' : ''}`} type="number" placeholder="Qty" value={item.quantity || ''} onChange={(e) => updateItem(i, 'quantity', parseFloat(e.target.value) || 0)} data-testid={`line-item-qty-${i}`} />
                   <Input className="text-xs h-8 text-center tabular-nums" type="text" placeholder="10/4 LB" value={item.pack_size || ''} onChange={(e) => updateItem(i, 'pack_size', e.target.value)} data-testid={`line-item-pack-size-${i}`} />
                   <Input className={`text-xs h-8 text-right tabular-nums ${item._warning && (!item.unit_price) ? 'border-amber-300' : ''}`} type="number" step="0.01" placeholder="Price" value={item.unit_price || ''} onChange={(e) => updateItem(i, 'unit_price', parseFloat(e.target.value) || 0)} data-testid={`line-item-price-${i}`} />
                   <div className={`text-xs h-8 flex items-center justify-end font-semibold tabular-nums px-2 rounded-md bg-slate-100 border border-slate-200 text-slate-700 select-none ${item._warning ? 'border-amber-300 bg-amber-50' : ''}`} data-testid={`line-item-total-${i}`}>{item.total ? `$${Number(item.total).toFixed(2)}` : '$0.00'}</div>
                   <div className={`text-[10px] h-8 flex items-center justify-center tabular-nums rounded-md border select-none ${item.pack_parse_status === 'failed' ? 'bg-red-50 border-red-200 text-red-400' : 'bg-slate-100 border-slate-200 text-slate-500'}`} data-testid={`line-item-casewt-${i}`}>{item.pack_parse_status === 'parsed' && item.total_case_weight != null ? `${item.total_case_weight} ${item.pack_unit || ''}`.trim() : '—'}</div>
-                  <div className={`text-[10px] h-8 flex items-center justify-end tabular-nums rounded-md px-1 select-none ${item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? 'font-semibold text-teal-700 bg-teal-50 border border-teal-200' : item.pack_parse_status === 'failed' ? 'text-red-400 bg-red-50 border border-red-200' : 'text-slate-300 bg-slate-100 border border-slate-200'}`} data-testid={`line-item-nup-${i}`}>{item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? `$${item.normalized_price_per_lb.toFixed(2)}` : '—'}</div>
+                  <div className={`text-[10px] h-8 flex items-center justify-end tabular-nums rounded-md px-1 select-none ${item.confidence_level === 'low' ? 'text-slate-300 bg-slate-100 border border-slate-200' : item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? 'font-semibold text-teal-700 bg-teal-50 border border-teal-200' : item.pack_parse_status === 'failed' ? 'text-red-400 bg-red-50 border border-red-200' : 'text-slate-300 bg-slate-100 border border-slate-200'}`} data-testid={`line-item-nup-${i}`}>{item.confidence_level === 'low' ? '—' : (item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? `$${item.normalized_price_per_lb.toFixed(2)}` : '—')}</div>
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0 flex-shrink-0" onClick={() => requestDeleteItem(i)} data-testid={`delete-line-item-${i}`}><Trash2 className="w-3 h-3 text-red-400" /></Button>
-                  {item._warning_detail && <p className="col-span-full text-[9px] text-amber-600 -mt-0.5 pl-1"><AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />{item._warning_detail}</p>}
+                  {/* Validation detail row */}
+                  {isUncertain && item.validation_errors && item.validation_errors.length > 0 && (
+                    <div className="col-span-full flex items-center gap-2 -mt-0.5 pl-7">
+                      <p className="text-[9px] text-amber-600 flex-1"><AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />{item.validation_errors.join('; ')}</p>
+                      <button
+                        className="text-[9px] font-semibold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 px-2 py-0.5 rounded transition-colors"
+                        onClick={() => setForm(f => {
+                          const it = [...f.items];
+                          it[i] = { ...it[i], _reviewed: true };
+                          return { ...f, items: it };
+                        })}
+                        data-testid={`confirm-item-${i}`}
+                      >Confirm</button>
+                    </div>
+                  )}
+                  {item._warning_detail && !isUncertain && <p className="col-span-full text-[9px] text-amber-600 -mt-0.5 pl-7"><AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />{item._warning_detail}</p>}
                 </div>
-              ))}</div>
+                );
+              })}</div>
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div><Label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Subtotal {form._subtotal_warning && <AlertTriangle className="w-3 h-3 inline text-amber-500" />}</Label><div className={`mt-1 h-9 flex items-center px-3 text-sm tabular-nums rounded-md border select-none ${form._subtotal_warning ? 'border-amber-300 bg-amber-50/50 text-amber-900' : 'border-slate-200 bg-slate-100 text-slate-700'}`} data-testid="form-subtotal">{fmt(form.subtotal)}</div></div>

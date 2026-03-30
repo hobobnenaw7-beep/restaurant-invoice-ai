@@ -1488,11 +1488,14 @@ Rules:
                         item["_warning"] = True
 
                     # Enrich with pack size parsing and normalized pricing
-                    from preprocessing import enrich_item_with_pack_size
+                    from preprocessing import enrich_item_with_pack_size, validate_and_score_item
                     pack_raw = item.get("pack_size", "") or ""
                     if pack_raw:
                         item["pack_size"] = pack_raw
                         enrich_item_with_pack_size(item)
+
+                    # Validate and compute confidence score
+                    validate_and_score_item(item)
 
                     if item_warnings:
                         item["_warning_detail"] = "; ".join(item_warnings)
@@ -1982,7 +1985,7 @@ async def get_purchase(pid: str, user=Depends(get_user)):
 
 @api_router.post("/purchases")
 async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
-    from preprocessing import enrich_item_with_pack_size
+    from preprocessing import enrich_item_with_pack_size, validate_and_score_item
     doc = data.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["restaurant_id"] = user["restaurant_id"]
@@ -1990,9 +1993,10 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     doc["created_by_id"] = user["id"]
     doc["created_by_name"] = user.get("name", "")
     doc["approval_status"] = _compute_approval_status(user, doc.get("total", 0))
-    # Enrich items with pack size parsing
+    # Enrich items with pack size parsing and confidence scoring
     for item in doc.get("items", []):
         enrich_item_with_pack_size(item)
+        validate_and_score_item(item)
     await db.purchases.insert_one(doc)
     doc.pop("_id", None)
 
@@ -2104,17 +2108,18 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
 
 @api_router.put("/purchases/{pid}")
 async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)):
-    from preprocessing import enrich_item_with_pack_size
+    from preprocessing import enrich_item_with_pack_size, validate_and_score_item
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No data")
     old = await db.purchases.find_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
     if not old:
         raise HTTPException(404, "Not found")
-    # Enrich items with pack size parsing
+    # Enrich items with pack size parsing and confidence scoring
     if "items" in update_data:
         for item in update_data["items"]:
             enrich_item_with_pack_size(item)
+            validate_and_score_item(item)
     old_vals = {k: old.get(k) for k in update_data}
     await db.purchases.update_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
     await audit_log(user, "UPDATE", "Expense", pid, f'{user["name"]} updated expense ({old.get("supplier_name", "")})', old_value=old_vals, new_value=update_data)
