@@ -1,156 +1,71 @@
-# Restaurant Accountant AI — PRD
+# Restaurant Accounting AI — PRD
 
-## Original Problem Statement
-Full-stack restaurant accounting application with AI-powered OCR for invoice extraction, expense tracking, sales reporting, and vendor management.
+## Problem Statement
+Full-stack restaurant accounting platform with OCR receipt ingestion, vendor price comparison, confidence scoring, and AI chat assistant. Built with React + FastAPI + MongoDB.
 
-## Core Architecture
-- **Frontend:** React + TailwindCSS + Shadcn UI
-- **Backend:** FastAPI + MongoDB
-- **OCR:** OpenAI GPT-5.2 via Emergent LLM Key
-- **Event Bus:** `dataEvents.js` for cross-component sync
+## Architecture (Post V2 Migration)
+```
+/app/backend/
+├── server.py              # 75 lines — FastAPI app, CORS, mount routers
+├── core/
+│   ├── __init__.py        # Re-exports
+│   ├── database.py        # MongoDB client, db, UPLOADS_DIR, LLM_KEY, logger
+│   ├── auth.py            # JWT utils, get_user, hash_pw, verify_pw, require_manager
+│   └── models.py          # All Pydantic models (15+ classes)
+├── services/
+│   ├── audit.py           # audit_log() helper
+│   ├── alerts.py          # generate_smart_alerts() engine
+│   └── approval.py        # compute_approval_status()
+├── routes/                # 20 domain-specific routers
+│   ├── auth.py            # Auth + User management
+│   ├── audit.py           # Audit log API
+│   ├── approvals.py       # Approval workflow
+│   ├── dashboard.py       # Dashboard summary, item-search, drill-down
+│   ├── upload.py          # OCR extraction + Excel parse
+│   ├── receipts.py        # Receipt learning + vendor patterns
+│   ├── records.py         # Records library (file uploads)
+│   ├── duplicates.py      # Duplicate detection
+│   ├── purchases.py       # Purchases CRUD + auto-vendor/item creation
+│   ├── salaries.py        # Salaries CRUD
+│   ├── other_expenses.py  # Other Expenses CRUD
+│   ├── sales.py           # Sales CRUD
+│   ├── suppliers.py       # Suppliers CRUD + merge
+│   ├── items.py           # Items + Aliases + Price History
+│   ├── reports.py         # Reports + Category + PDF/Excel export
+│   ├── prices.py          # Price Intelligence + Vendor Comparison
+│   ├── vendor_comparison.py # Item Mappings + Normalized $/LB Comparison
+│   ├── alerts.py          # Alerts + Smart Purchase Decisions
+│   ├── chat.py            # AI Chat (GPT-5.2 via Emergent LLM Key)
+│   └── settings.py        # Settings + Seed
+├── preprocessing.py       # Trust logic (UNTOUCHED — Trusted/Unverified hard gates)
+└── requirements.txt
+```
 
-## What's Been Implemented
-
-### Authentication
-- [x] JWT-based login/register with demo account (demo@test.com / testpassword)
-
-### Dashboard
-- [x] Summary cards, donut charts with year/month filters
-- [x] Drill-down navigation to full expense/sales pages
-
-### Expenses (3 tabs)
-- [x] Raw Materials: full CRUD, upload/extract, duplicate detection
-- [x] Raw Materials: pack_size text field, server-side parsing with strict validation
-- [x] Raw Materials: $/LB ONLY computed when parsed AND unit is LB or OZ
-- [x] Raw Materials: ALL computed values strictly read-only
-- [x] Salaries: CRUD
-- [x] Other Expenses: CRUD with OCR, fixed subcategories
-
-### Sales
-- [x] Full CRUD with OCR upload
-
-### OCR & Document Extraction
-- [x] Real OCR via OpenAI GPT-5.2 Vision, multi-page PDF (up to 5 pages)
-- [x] Image preprocessing: auto-rotate, deskew, crop margins, contrast, noise reduction
-- [x] Multi-page classification & page-type-aware extraction
-- [x] Pack size extracted as verbatim text and parsed server-side
-
-### Data Standardization (Phase 2)
-- [x] Pack size parser: 18+ formats with strict validation, 22/22 unit tests
-- [x] Parser coverage expansion: OCR artifacts (BAG50, BX24/12, spaced slashes)
-- [x] Normalization audit: all 6 rules verified safe, zero false positives
-
-### Vendor Price Comparison Dashboard (March 29, 2026)
-- [x] `GET /api/vendor-comparison/normalized` — strict $/LB comparison
-- [x] Only `normalized_price_per_lb > 0` AND `pack_unit ∈ {LB, OZ}` items
-- [x] Conservative exact-match grouping by default
-- [x] `match_source` flag: "exact" | "user_confirmed" on every group
-- [x] `raw_names_in_group` shows all linked names for confirmed groups
-- [x] Frontend: stat cards, search, filters (All/Multi-Vendor/Single/Confirmed Links)
-- [x] BEST badge, spread %, Confirmed badge on merged groups
-
-### Manual/Assisted Item Matching (March 29, 2026)
-- [x] `item_mappings` MongoDB collection for confirmed links
-- [x] CRUD: `GET/POST/PUT/DELETE /api/item-mappings`
-- [x] `GET /api/item-mappings/suggestions` — word-overlap (Jaccard) similarity
-- [x] Suggestions exclude already-mapped items, require user confirmation
-- [x] Confirmed mappings merge comparison groups, never auto-merge
-- [x] Frontend: "Manage Item Matches" toggle panel
-- [x] Suggestion cards with editable canonical name + "Confirm Link" button
-- [x] Confirmed Mappings list with delete capability
-- [x] Fully tested: 24 backend + 10 frontend tests (100% pass rate)
-
-### Decision-Making Layer (March 29, 2026)
-- [x] Quick Decisions summary card at page top — multi-vendor items sorted by savings opportunity
-- [x] Each decision: "Buy from X to save Y% vs Z" with exact $/LB and per-pound savings
-- [x] Decision banner inside each expanded multi-vendor group
-- [x] "Best Deal" badge (green) on cheapest vendor row
-- [x] "High Price" warning badge (red) on most expensive vendor row
-- [x] Spread color-coded: red >=15%, amber 8-15%, green <8%
-- [x] $/LB column: green for best, red for worst
-- [x] Signal column in table for visual badges
-- [x] No badges/banners for single-vendor groups (nothing to compare)
-- [x] Deterministic logic only — no trends, no charts
-- [x] Fully tested: 12/12 frontend tests (100% pass rate)
-
-### Vendor Rename/Merge Fix (March 29, 2026)
-- [x] `PUT /api/suppliers/{id}` on rename: updates all `purchases.supplier_name` records
-- [x] If target name already exists: merges vendor docs (deletes renamed, keeps target)
-- [x] `GET /api/suppliers` deduplicates by name (case-insensitive), auto-cleans duplicate docs
-- [x] List, detail, and purchases views all show consistent merged data
-- [x] Fully tested: 4 backend + 6 frontend tests (100%)
-
-### Confidence + Review Layer (March 30, 2026)
-- [x] `validate_and_score_item()` in preprocessing.py — strict validation + hard-gate scoring
-- [x] **HARD GATES** (any triggers forced "unverified"):
-  - Math mismatch (qty×price ≠ total)
-  - Missing item name
-  - Pack parse failed (when pack_size is present)
-  - Suspicious patterns: qty==price, unrealistic sizes (>200 packs, >5000 LB), defaulted values, price>total
-- [x] `validate_purchase_items()` — cross-item validation: duplicate rows, all-identical prices
-- [x] Binary classification: **"trusted"** (score≥85 AND zero hard gates) vs **"unverified"** (everything else)
-- [x] Trust > Coverage: conservative, never shows green unless truly verified
-- [x] Safety: unverified items show "—" for $/LB (never misleading computed values)
-- [x] Injected in extraction, create_purchase, update_purchase
-- [x] Frontend: amber dot (unverified) / green dot+checkmark (trusted/confirmed)
-- [x] Frontend: review banner with count, "Focus Review" toggle, per-item "Confirm" button
-- [x] Fully tested: 13 backend + 7 frontend tests (100%)
-
-### Explainability + Quick Fix (March 30, 2026)
-- [x] `confidence_reason` field on each item — human-readable primary reason
-- [x] Reasons: "All checks passed", "Math mismatch (qty × price ≠ total)", "Pack size could not be parsed", "Missing item name", "Missing fields: ...", "Suspicious values detected"
-- [x] Frontend: status badge per row — green "Trusted"/"Confirmed" or amber "Unverified" + reason text
-- [x] "Fix" button on unverified items — highlights qty/price fields (blue ring), auto-recalculates total
-- [x] Client-side `revalidateItem()` mirrors backend hard gates — instant status update on edit
-- [x] "Accept" button — marks item as reviewed (becomes "Confirmed") without re-validation
-- [x] Review banner count updates live as items are fixed/accepted
-- [x] $/LB shows "—" for unverified items, real values for trusted/confirmed
-- [x] Fully tested: 21 backend + 11 frontend tests (100%)
-
-### UI/UX
-- [x] Event bus for instant cross-component sync
-- [x] ConfirmDeleteDialog and ConfirmSaveDialog
-- [x] Read-only computed fields with visual distinction
-
-## Backlog
-
-### P0
-- Backend refactoring: break down server.py (~3800+ lines) into modular route files
-
-### P1
-- AI Chat Assistant Page Polish
-- Core Workflow Hardening
-- Add OCR/Image Upload support to Salaries tab
-
-### P2
-- Client-side pack size preview during entry
-- Vendor-specific OCR preprocessing
-- Fix bcrypt `__about__` warning in backend startup logs
+## Completed Features
+- OCR Receipt Extraction (GPT-5.2 via Emergent LLM Key)
+- Pack-size regex parsing with confidence scoring
+- Vendor Price Comparison Dashboard (normalized $/LB)
+- Manual/Assisted Item Matching (Jaccard similarity suggestions)
+- Decision-Making UI (best/worst deal, spread %, savings banners)
+- Confidence + Review Layer (Trusted vs Unverified hard gates)
+- Explainability + Quick Fix UI (inline editing, confidence_reason)
+- Full CRUD: Purchases, Sales, Salaries, Other Expenses, Suppliers, Items
+- Audit Logs, Approval Workflow, User Management
+- Reports with PDF/Excel export (category + summary)
+- AI Chat Assistant
+- Records Library (file uploads)
+- **Backend V2 Migration (COMPLETED Feb 2026)** — 4007-line monolith → 75-line orchestrator + 20 route modules
 
 ## Key DB Schema
+- `purchases.items`: includes `confidence_level`, `confidence_reason`, `pack_parse_status`
+- `item_mappings`: `raw_name` → `canonical_name` for vendor comparison
+- `vendor_patterns`: learned OCR hints per vendor
 
-### purchases.items
-```
-{
-  raw_name, quantity, pack_size, unit_price, total,
-  pack_size_raw, pack_parse_status, packs_per_case,
-  weight_per_pack, pack_unit, total_case_weight,
-  normalized_price_per_lb
-}
-```
+## 3rd Party Integrations
+- OpenAI GPT-5.2 via Emergent LLM Key (`emergentintegrations`)
 
-### item_mappings
-```
-{
-  id, restaurant_id, canonical_name,
-  mapped_names: [str],  // uppercase normalized
-  created_at, updated_at
-}
-```
-
-## Key API Endpoints
-- `POST /api/upload/extract` — OCR with preprocessing
-- `POST /api/purchases` — Create purchase with pack size enrichment
-- `GET /api/vendor-comparison/normalized` — Strict $/LB comparison with mappings
-- `GET/POST/PUT/DELETE /api/item-mappings` — CRUD for confirmed item links
-- `GET /api/item-mappings/suggestions` — Similarity suggestions
+## Backlog (P1/P2)
+- P1: AI Chat Assistant Page Polish
+- P1: OCR/Image Upload for Salaries tab
+- P2: Client-side pack size preview
+- P2: bcrypt warning cleanup
