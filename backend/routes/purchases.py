@@ -149,7 +149,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
         prev_record = None
         for p in sorted(existing, key=lambda x: x.get("invoice_date", ""), reverse=True):
             for it in p.get("items", []):
-                if it.get("raw_name", "").lower() in match_names and float(it.get("unit_price", 0)) > 0:
+                if it.get("raw_name", "").lower() in match_names and float(it.get("unit_price") or 0) > 0:
                     prev_record = {"price": float(it["unit_price"]), "vendor": p.get("supplier_name", "Unknown"), "date": p.get("invoice_date", "")}
                     break
             if prev_record:
