@@ -18,7 +18,16 @@ async def list_salaries(user=Depends(get_user), date_from: str = "", date_to: st
         query.setdefault("payment_date", {})["$gte"] = date_from
     if date_to:
         query.setdefault("payment_date", {})["$lte"] = date_to
-    return await db.salaries.find(query, {"_id": 0}).sort(sort_by, -1 if sort_order == "desc" else 1).to_list(1000)
+    direction = -1 if sort_order == "desc" else 1
+    if sort_by == "payment_date":
+        pipeline = [
+            {"$match": query},
+            {"$addFields": {"_sort_date": {"$cond": [{"$gt": ["$payment_date", ""]}, "$payment_date", "$created_at"]}}},
+            {"$sort": {"_sort_date": direction}},
+            {"$project": {"_id": 0, "_sort_date": 0}},
+        ]
+        return await db.salaries.aggregate(pipeline).to_list(1000)
+    return await db.salaries.find(query, {"_id": 0}).sort(sort_by, direction).to_list(1000)
 
 
 @router.post("/salaries")

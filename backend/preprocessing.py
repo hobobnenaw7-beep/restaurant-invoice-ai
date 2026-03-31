@@ -817,3 +817,33 @@ def validate_purchase_items(items: list) -> list:
 
     return items
 
+
+
+def compute_review_status(items: list) -> str:
+    """
+    Compute invoice-level review status from item validation signals.
+    Returns: "clean" | "warning" | "error"
+    - clean:   no items need review
+    - warning: some items need review (minor issues)
+    - error:   items have hard errors (math mismatch, missing name, suspicious)
+    """
+    has_warning = False
+    has_error = False
+    for item in items:
+        if not item.get("needs_review"):
+            continue
+        errors = item.get("validation_errors", [])
+        reason = (item.get("review_reason") or "").lower()
+        is_hard = any(
+            "math mismatch" in e.lower() or "suspicious" in e.lower() or "item_name" in e.lower()
+            for e in errors
+        ) or "math mismatch" in reason or "missing item name" in reason or "suspicious" in reason
+        if is_hard:
+            has_error = True
+        else:
+            has_warning = True
+    if has_error:
+        return "error"
+    if has_warning:
+        return "warning"
+    return "clean"

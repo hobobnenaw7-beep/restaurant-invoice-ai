@@ -405,21 +405,26 @@ function RawMaterialsTab({ api }) {
                   <Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add</Button>
                 </div>
               </TableCell></TableRow>
-            ) : items.map((p, i) => (
-              <TableRow key={p.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} data-testid={`raw-material-row-${i}`}>
+            ) : items.map((p, i) => {
+              const rs = p.review_status;
+              const rowBg = rs === 'error' ? 'bg-red-50/50' : rs === 'warning' ? 'bg-amber-50/40' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40';
+              const borderLeft = rs === 'error' ? 'border-l-2 border-l-red-400' : rs === 'warning' ? 'border-l-2 border-l-amber-400' : '';
+              return (
+              <TableRow key={p.id} className={`transition-colors ${rowBg} ${borderLeft} hover:bg-teal-50/30`} data-testid={`raw-material-row-${i}`}>
                 <TableCell className="text-xs tabular-nums text-slate-600">{p.invoice_date}</TableCell>
                 <TableCell className="text-xs font-semibold text-navy-900">{p.supplier_name}</TableCell>
                 <TableCell><Badge variant="outline" className="text-[10px] font-mono">{p.invoice_number}</Badge></TableCell>
                 <TableCell className="text-xs text-center text-slate-500">
                   <span>{(p.items || []).length}</span>
-                  {(() => {
-                    const reviewCount = (p.items || []).filter(it => it.needs_review).length;
-                    return reviewCount > 0 ? (
-                      <span className="ml-1 inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-600" title={`${reviewCount} item${reviewCount !== 1 ? 's' : ''} need review`} data-testid={`review-count-${i}`}>
-                        <AlertTriangle className="w-2.5 h-2.5" />{reviewCount}
-                      </span>
-                    ) : null;
-                  })()}
+                  {rs === 'error' ? (
+                    <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600" title="Has errors requiring attention" data-testid={`review-status-${i}`}>
+                      <AlertTriangle className="w-2.5 h-2.5" />
+                    </span>
+                  ) : rs === 'warning' ? (
+                    <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-600" title="Items need review" data-testid={`review-status-${i}`}>
+                      <AlertTriangle className="w-2.5 h-2.5" />
+                    </span>
+                  ) : null}
                 </TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(p.total)}</TableCell>
                 <TableCell className="text-right"><div className="flex justify-end gap-0.5">
@@ -428,7 +433,8 @@ function RawMaterialsTab({ api }) {
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => requestDeleteRecord(p.id)} data-testid={`delete-purchase-${i}`}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
                 </div></TableCell>
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody></Table>
           {items.length > 0 && <div className="px-4 py-2.5 border-t border-slate-100 bg-slate-50/50"><p className="text-[11px] text-slate-400">{items.length} invoice{items.length !== 1 ? 's' : ''} &middot; Total: <span className="font-bold text-navy-900">{fmt(items.reduce((s, p) => s + (p.total || 0), 0))}</span></p></div>}
         </div>

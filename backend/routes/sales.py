@@ -18,7 +18,16 @@ async def list_sales(user=Depends(get_user), search: str = "", date_from: str = 
         query.setdefault("report_date", {})["$gte"] = date_from
     if date_to:
         query.setdefault("report_date", {})["$lte"] = date_to
-    return await db.sales.find(query, {"_id": 0}).sort(sort_by, -1 if sort_order == "desc" else 1).to_list(1000)
+    direction = -1 if sort_order == "desc" else 1
+    if sort_by == "report_date":
+        pipeline = [
+            {"$match": query},
+            {"$addFields": {"_sort_date": {"$cond": [{"$gt": ["$report_date", ""]}, "$report_date", "$created_at"]}}},
+            {"$sort": {"_sort_date": direction}},
+            {"$project": {"_id": 0, "_sort_date": 0}},
+        ]
+        return await db.sales.aggregate(pipeline).to_list(1000)
+    return await db.sales.find(query, {"_id": 0}).sort(sort_by, direction).to_list(1000)
 
 
 @router.get("/sales/{sid}")

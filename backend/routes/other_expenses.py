@@ -20,7 +20,16 @@ async def list_other_expenses(user=Depends(get_user), category: str = "", date_f
         query.setdefault("expense_date", {})["$gte"] = date_from
     if date_to:
         query.setdefault("expense_date", {})["$lte"] = date_to
-    return await db.other_expenses.find(query, {"_id": 0}).sort(sort_by, -1 if sort_order == "desc" else 1).to_list(1000)
+    direction = -1 if sort_order == "desc" else 1
+    if sort_by == "expense_date":
+        pipeline = [
+            {"$match": query},
+            {"$addFields": {"_sort_date": {"$cond": [{"$gt": ["$expense_date", ""]}, "$expense_date", "$created_at"]}}},
+            {"$sort": {"_sort_date": direction}},
+            {"$project": {"_id": 0, "_sort_date": 0}},
+        ]
+        return await db.other_expenses.aggregate(pipeline).to_list(1000)
+    return await db.other_expenses.find(query, {"_id": 0}).sort(sort_by, direction).to_list(1000)
 
 
 @router.post("/other-expenses")

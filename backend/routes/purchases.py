@@ -22,7 +22,17 @@ async def list_purchases(user=Depends(get_user), search: str = "", supplier: str
         query.setdefault("invoice_date", {})["$gte"] = date_from
     if date_to:
         query.setdefault("invoice_date", {})["$lte"] = date_to
-    return await db.purchases.find(query, {"_id": 0}).sort(sort_by, -1 if sort_order == "desc" else 1).to_list(1000)
+    direction = -1 if sort_order == "desc" else 1
+    # Sort by date field with fallback to created_at when date is missing/empty
+    if sort_by == "invoice_date":
+        pipeline = [
+            {"$match": query},
+            {"$addFields": {"_sort_date": {"$cond": [{"$gt": ["$invoice_date", ""]}, "$invoice_date", "$created_at"]}}},
+            {"$sort": {"_sort_date": direction}},
+            {"$project": {"_id": 0, "_sort_date": 0}},
+        ]
+        return await db.purchases.aggregate(pipeline).to_list(1000)
+    return await db.purchases.find(query, {"_id": 0}).sort(sort_by, direction).to_list(1000)
 
 
 @router.get("/purchases/{pid}")
@@ -35,7 +45,7 @@ async def get_purchase(pid: str, user=Depends(get_user)):
 
 @router.post("/purchases")
 async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
-    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
+    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items, compute_review_status
     from services.normalization import normalize_item
     from services.correction_memory import apply_corrections
     doc = data.model_dump()
@@ -63,6 +73,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     if supplier_id:
         await apply_corrections(doc.get("items", []), rid, supplier_id)
     validate_purchase_items(doc.get("items", []))
+    doc["review_status"] = compute_review_status(doc.get("items", []))
     await db.purchases.insert_one(doc)
     doc.pop("_id", None)
 
@@ -169,7 +180,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
 
 @router.put("/purchases/{pid}")
 async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)):
-    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
+    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items, compute_review_status
     from services.normalization import normalize_item
     from services.correction_memory import save_correction
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
@@ -216,6 +227,7 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
                         corrected_specs=new_norm.get("specs"),
                     )
         validate_purchase_items(update_data["items"])
+        update_data["review_status"] = compute_review_status(update_data["items"])
     old_vals = {k: old.get(k) for k in update_data}
     await db.purchases.update_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
     await audit_log(user, "UPDATE", "Expense", pid, f'{user["name"]} updated expense ({old.get("supplier_name", "")})', old_value=old_vals, new_value=update_data)
