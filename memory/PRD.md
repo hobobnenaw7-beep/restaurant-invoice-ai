@@ -9,7 +9,7 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - Conservative normalization (preserve meaningful product distinctions)
 - Correction Memory: auto-apply learned user edits per supplier
 - Review lifecycle: needs_review, review_reason, confidence_level persist across saves
-- Invoice-level review_status: clean | warning | error
+- Invoice-level review_status: clean | warning | error — always in sync with item signals
 - Hard invoice handling: robust extraction for messy/low-quality inputs
 
 ## Architecture
@@ -24,17 +24,15 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - [x] Normalization Layer (services/normalization.py)
 - [x] Correction Memory System V1 (services/correction_memory.py)
 - [x] "Save Now, Review Later" Data Persistence
-- [x] Quick Review UI
+- [x] Quick Review UI (item-level review indicators)
 - [x] Invoice Sorting Fix (all lists sort by date, fallback to created_at)
 - [x] Invoice-level review_status (clean/warning/error)
-- [x] Hard Invoice Robustness Layer (2026-03-31)
-  - sanitize_extracted_item: type coercion, negative values, null handling
-  - detect_column_misread: flags qty/price column swap patterns
-  - compute_extraction_meta: invoice-level extraction confidence (high/medium/low)
-  - salvage_partial_extraction: recovers data from broken JSON responses
-  - Per-item try/except in extraction pipeline (one bad item doesn't crash)
-  - extraction_meta returned in /upload/extract response
-  - sanitize_extracted_item called in create/update purchase endpoints
+- [x] Hard Invoice Robustness Layer (sanitize, column misread, extraction_meta, salvage)
+- [x] Bug Fix: compute_review_status resilient to old items (2026-03-31)
+  - Root cause: items without needs_review field were treated as "clean"
+  - Fix: infer review need from confidence_level and raw data when needs_review is absent
+  - Backfilled all 106 purchases with proper validation + recomputed review_status
+  - Secondary fix: correction_memory no longer clears needs_review on items with validation errors
 
 ## Known Issues
 - P0: Old pytest suite failures (test_profit_calculation.py etc.) — deferred by user
