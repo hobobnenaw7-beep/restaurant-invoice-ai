@@ -499,6 +499,21 @@ Rules:
             from preprocessing import validate_purchase_items
             validate_purchase_items(extracted["items"])
 
+        # Apply correction memory (supplier-scoped, strict_match_key only)
+        if document_type == "purchase_invoice" and isinstance(extracted.get("items"), list):
+            from services.correction_memory import apply_corrections
+            supplier_id_for_correction = ""
+            detected_name = (detected_vendor or "").strip()
+            if detected_name and detected_name.upper() != "UNKNOWN":
+                sup = await db.suppliers.find_one(
+                    {"restaurant_id": rid, "name": {"$regex": f".*{re.escape(detected_name[:20])}.*", "$options": "i"}},
+                    {"_id": 0, "id": 1},
+                )
+                if sup:
+                    supplier_id_for_correction = sup["id"]
+            if supplier_id_for_correction:
+                await apply_corrections(extracted["items"], rid, supplier_id_for_correction)
+
         return {
             "extracted_data": extracted,
             "document_type": document_type,

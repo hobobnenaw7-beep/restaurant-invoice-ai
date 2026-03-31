@@ -26,6 +26,7 @@ from routes.vendor_comparison import router as vendor_comparison_router
 from routes.alerts import router as alerts_router
 from routes.chat import router as chat_router
 from routes.settings import router as settings_router
+from routes.correction_memory import router as correction_memory_router
 
 # --- App setup ---
 app = FastAPI()
@@ -57,6 +58,7 @@ api_router.include_router(vendor_comparison_router)
 api_router.include_router(alerts_router)
 api_router.include_router(chat_router)
 api_router.include_router(settings_router)
+api_router.include_router(correction_memory_router)
 
 app.include_router(api_router)
 

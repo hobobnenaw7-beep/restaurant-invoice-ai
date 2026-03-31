@@ -37,6 +37,7 @@ async def get_purchase(pid: str, user=Depends(get_user)):
 async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
     from services.normalization import normalize_item
+    from services.correction_memory import apply_corrections
     doc = data.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["restaurant_id"] = user["restaurant_id"]
@@ -44,10 +45,23 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     doc["created_by_id"] = user["id"]
     doc["created_by_name"] = user.get("name", "")
     doc["approval_status"] = compute_approval_status(user, doc.get("total", 0))
+    rid = user["restaurant_id"]
+    supplier_id = doc.get("supplier_id") or ""
+    if not supplier_id:
+        supplier_name = doc.get("supplier_name", "").strip()
+        if supplier_name:
+            sup = await db.suppliers.find_one(
+                {"restaurant_id": rid, "name": {"$regex": f"^{re.escape(supplier_name)}$", "$options": "i"}},
+                {"_id": 0, "id": 1},
+            )
+            if sup:
+                supplier_id = sup["id"]
     for item in doc.get("items", []):
         enrich_item_with_pack_size(item)
         normalize_item(item)
         validate_and_score_item(item)
+    if supplier_id:
+        await apply_corrections(doc.get("items", []), rid, supplier_id)
     validate_purchase_items(doc.get("items", []))
     await db.purchases.insert_one(doc)
     doc.pop("_id", None)
@@ -157,17 +171,50 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
 async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)):
     from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
     from services.normalization import normalize_item
+    from services.correction_memory import save_correction
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No data")
     old = await db.purchases.find_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
     if not old:
         raise HTTPException(404, "Not found")
+    rid = user["restaurant_id"]
+    supplier_id = old.get("supplier_id") or ""
+    if not supplier_id:
+        supplier_name = old.get("supplier_name", "").strip()
+        if supplier_name:
+            sup = await db.suppliers.find_one(
+                {"restaurant_id": rid, "name": {"$regex": f"^{re.escape(supplier_name)}$", "$options": "i"}},
+                {"_id": 0, "id": 1},
+            )
+            if sup:
+                supplier_id = sup["id"]
     if "items" in update_data:
-        for item in update_data["items"]:
+        old_items = old.get("items", [])
+        old_items_by_idx = {i: it for i, it in enumerate(old_items)}
+        for idx, item in enumerate(update_data["items"]):
             enrich_item_with_pack_size(item)
             normalize_item(item)
             validate_and_score_item(item)
+            # Detect edits and save corrections
+            if supplier_id and idx < len(old_items):
+                old_item = old_items_by_idx.get(idx, {})
+                old_raw = old_item.get("raw_name", "").strip()
+                new_raw = item.get("raw_name", "").strip()
+                old_norm = old_item.get("norm", {})
+                old_key = old_norm.get("strict_match_key", "")
+                new_norm = item.get("norm", {})
+                new_key = new_norm.get("strict_match_key", "")
+                if old_raw and new_raw and old_raw != new_raw and old_key:
+                    await save_correction(
+                        user_id=user["id"],
+                        restaurant_id=rid,
+                        supplier_id=supplier_id,
+                        original_raw_name=old_raw,
+                        normalized_key=old_key,
+                        corrected_name=new_raw,
+                        corrected_specs=new_norm.get("specs"),
+                    )
         validate_purchase_items(update_data["items"])
     old_vals = {k: old.get(k) for k in update_data}
     await db.purchases.update_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
