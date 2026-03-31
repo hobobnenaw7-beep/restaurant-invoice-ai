@@ -1,7 +1,7 @@
 # Restaurant Accountant AI — Product Requirements Document
 
 ## Original Problem Statement
-Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-powered OCR invoice extraction. Features modular backend architecture, normalization layer, correction memory system, review lifecycle management, and hard invoice robustness.
+Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-powered OCR invoice extraction. Features modular backend architecture, normalization layer, correction memory system, review lifecycle, hard invoice robustness, and guided correction suggestions.
 
 ## Core Requirements
 - OCR extraction pipeline (GPT-5.2 via Emergent LLM Key)
@@ -9,8 +9,9 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - Conservative normalization (preserve meaningful product distinctions)
 - Correction Memory: auto-apply learned user edits per supplier
 - Review lifecycle: needs_review, review_reason, confidence_level persist across saves
-- Invoice-level review_status: clean | warning | error — always in sync with item signals
+- Invoice-level review_status: clean | warning | error
 - Hard invoice handling: robust extraction for messy/low-quality inputs
+- Guided Correction Suggestions: rule-based fix proposals per flagged item
 
 ## Architecture
 - Backend: FastAPI modular (core/, routes/, services/)
@@ -19,20 +20,27 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - LLM: OpenAI GPT-5.2 via emergentintegrations
 
 ## Completed Features
-- [x] Clean Backend V2 Migration (monolith -> modular)
+- [x] Clean Backend V2 Migration
 - [x] Performance & Architecture Validation Audit
-- [x] Normalization Layer (services/normalization.py)
-- [x] Correction Memory System V1 (services/correction_memory.py)
+- [x] Normalization Layer
+- [x] Correction Memory System V1
 - [x] "Save Now, Review Later" Data Persistence
 - [x] Quick Review UI (item-level review indicators)
-- [x] Invoice Sorting Fix (all lists sort by date, fallback to created_at)
+- [x] Invoice Sorting Fix (date-based, created_at fallback)
 - [x] Invoice-level review_status (clean/warning/error)
-- [x] Hard Invoice Robustness Layer (sanitize, column misread, extraction_meta, salvage)
-- [x] Bug Fix: compute_review_status resilient to old items (2026-03-31)
-  - Root cause: items without needs_review field were treated as "clean"
-  - Fix: infer review need from confidence_level and raw data when needs_review is absent
-  - Backfilled all 106 purchases with proper validation + recomputed review_status
-  - Secondary fix: correction_memory no longer clears needs_review on items with validation errors
+- [x] Hard Invoice Robustness Layer
+- [x] Bug Fix: compute_review_status resilient to old items
+- [x] Guided Correction Suggestions V1 (2026-03-31)
+  - Math mismatch → suggest corrected total (qty × price)
+  - Missing total/price/qty → suggest computed value
+  - Pack parse failure → suggest normalized format (1x30LB → 1/30 LB)
+  - Correction memory → surface learned corrections
+  - Missing name → suggest from normalization data
+  - UI: blue "Suggested fix" box with Apply/Dismiss buttons
+  - Apply writes suggested values and revalidates item
+  - Dismiss hides suggestion without changing data
+  - Edit Manually / Ignore buttons for manual workflow
+  - Old items get client-side suggestions via revalidateItem on edit open
 
 ## Known Issues
 - P0: Old pytest suite failures (test_profit_calculation.py etc.) — deferred by user
