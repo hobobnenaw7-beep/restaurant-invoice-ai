@@ -145,8 +145,12 @@ async def apply_corrections(items: list, restaurant_id: str, supplier_id: str):
                     norm["specs"][k] = v
 
         item["confidence_level"] = "learned"
-        item["needs_review"] = False
-        item["review_reason"] = None
+        # Only clear needs_review if item has no validation errors
+        # (math mismatch, missing name, etc. should still require review)
+        has_validation_errors = bool(item.get("validation_errors"))
+        if not has_validation_errors:
+            item["needs_review"] = False
+            item["review_reason"] = None
 
         logger.info(
             f"Correction applied: '{item.get('raw_name','')}' → '{corrected_name}' "

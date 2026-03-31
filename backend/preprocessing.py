@@ -1063,18 +1063,60 @@ def compute_review_status(items: list) -> str:
     - clean:   no items need review
     - warning: some items need review (minor issues)
     - error:   items have hard errors (math mismatch, missing name, suspicious)
+
+    Resilient: if needs_review isn't set on items, infers from raw data.
     """
     has_warning = False
     has_error = False
     for item in items:
-        if not item.get("needs_review"):
+        # Determine if this item needs review — use explicit flag when available,
+        # otherwise infer from raw data (handles old items without validation fields)
+        needs_review = item.get("needs_review")
+        if needs_review is None:
+            cl = item.get("confidence_level")
+            if cl == "trusted":
+                continue
+            if cl == "unverified":
+                needs_review = True
+            else:
+                # No validation fields at all — check raw data
+                name = (item.get("raw_name") or "").strip()
+                qty = float(item.get("quantity") or 0)
+                up = float(item.get("unit_price") or 0)
+                total = float(item.get("total") or 0)
+                if not name:
+                    needs_review = True
+                elif qty > 0 and up > 0 and total > 0:
+                    expected = round(qty * up, 2)
+                    tolerance = max(0.02, 0.01 * total)
+                    needs_review = abs(expected - total) > tolerance
+                elif qty <= 0 or up <= 0 or total <= 0:
+                    needs_review = True
+                else:
+                    needs_review = False
+        if not needs_review:
             continue
+
+        # Determine severity: error vs warning
         errors = item.get("validation_errors", [])
         reason = (item.get("review_reason") or "").lower()
-        is_hard = any(
-            "math mismatch" in e.lower() or "suspicious" in e.lower() or "item_name" in e.lower()
-            for e in errors
-        ) or "math mismatch" in reason or "missing item name" in reason or "suspicious" in reason
+        name = (item.get("raw_name") or "").strip()
+        is_hard = (
+            any("math mismatch" in e.lower() or "suspicious" in e.lower() or "item_name" in e.lower() for e in errors)
+            or "math mismatch" in reason
+            or "missing item name" in reason
+            or "suspicious" in reason
+            or not name
+        )
+        # Also check raw math as fallback for items without validation_errors
+        if not is_hard and not errors:
+            qty = float(item.get("quantity") or 0)
+            up = float(item.get("unit_price") or 0)
+            total = float(item.get("total") or 0)
+            if qty > 0 and up > 0 and total > 0:
+                expected = round(qty * up, 2)
+                if abs(expected - total) > max(0.02, 0.01 * total):
+                    is_hard = True
         if is_hard:
             has_error = True
         else:
