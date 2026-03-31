@@ -15,7 +15,7 @@ Full-stack restaurant accounting platform with OCR receipt ingestion, vendor pri
 │   ├── audit.py           # audit_log() helper
 │   ├── alerts.py          # generate_smart_alerts() engine
 │   ├── approval.py        # compute_approval_status()
-│   └── normalization.py   # Item name normalization layer (NEW)
+│   └── normalization.py   # Item name normalization layer
 ├── routes/                # 20 domain-specific routers
 ├── preprocessing.py       # Trust logic (UNTOUCHED — pack parsing + confidence)
 ├── tests/
@@ -23,23 +23,31 @@ Full-stack restaurant accounting platform with OCR receipt ingestion, vendor pri
 └── requirements.txt
 ```
 
-## Pipeline (updated)
+## Pipeline (current)
 ```
-OCR → Extraction (GPT) → NORMALIZATION → Validation/Trust → Save
-                          ^^^^^^^^^^^^^
-                          services/normalization.py
+OCR → Extraction (GPT) → Pack Enrichment → NORMALIZATION → Validation/Trust → Save
+                                            ^^^^^^^^^^^^^
+                                            services/normalization.py
 ```
 
-## Normalization Layer Design
-- **clean_name**: conservative (uppercase + whitespace + grade separator only)
-- **base_name**: aggressive (specs + embedded weight stripped for broad matching)
-- **strict_match_key**: token-normalized sorted words of clean_name (distinguishes products)
-- **loose_match_key**: token-normalized sorted words of base_name (groups broadly)
-- **specs**: structured extraction (grade, size_code, product_code, embedded_weight/count)
-- **unit_std**: standardized unit field
-- Token normalization: abbreviation expansion (BNLS→BONELESS, HDLS→HEADLESS, etc.)
-- Singular/plural normalization (TOMATOES→TOMATO, ONIONS→ONION)
+## Normalization Layer
+- **Integrated** at 3 points: upload/extract, purchase create, purchase update
+- `norm` dict stored alongside original fields on each item
+- `strict_match_key`: trusted for exact grouping (token-normalized, sorted words of clean_name)
+- `loose_match_key`: suggestion-only (token-normalized, sorted words of base_name)
+- Token normalization: 60+ abbreviation expansions + singular/plural rules
+- Spec extraction: grade, size_code, product_code, embedded_weight/count
 - Pure functions, no DB calls, no side effects
+- **NOT yet used** for vendor comparison auto-linking or correction memory
+
+## Integration Rules (approved)
+1. strict_match_key trusted for exact grouping only
+2. loose_match_key suggestion-only — never auto-merge, never auto-correct
+3. raw_name preserved exactly
+4. norm output stored alongside originals, not as source of truth
+5. Correction memory NOT yet implemented
+6. UI NOT modified
+7. Loose matching NOT used in vendor comparison without explicit approval
 
 ## Completed Features
 - OCR Receipt Extraction (GPT-5.2 via Emergent LLM Key)
@@ -55,7 +63,8 @@ OCR → Extraction (GPT) → NORMALIZATION → Validation/Trust → Save
 - AI Chat Assistant, Records Library
 - Backend V2 Migration (Feb 2026) — 4007→75 lines
 - Performance Audit (Feb 2026) — All endpoints <160ms
-- **Normalization Layer (Feb 2026)** — Item name/unit standardization module
+- Normalization Layer (Feb 2026) — Module built + validated
+- **Normalization Pipeline Integration (Feb 2026)** — Wired into extraction/save path
 
 ## Known Bottlenecks (from audit)
 1. Dashboard double `generate_smart_alerts` call (HIGH)

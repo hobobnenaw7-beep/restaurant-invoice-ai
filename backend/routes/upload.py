@@ -425,11 +425,13 @@ Rules:
                         item["_warning"] = True
 
                     from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
+                    from services.normalization import normalize_item
                     pack_raw = item.get("pack_size", "") or ""
                     if pack_raw:
                         item["pack_size"] = pack_raw
                         enrich_item_with_pack_size(item)
 
+                    normalize_item(item)
                     validate_and_score_item(item)
 
                     if item_warnings:

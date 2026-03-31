@@ -36,6 +36,7 @@ async def get_purchase(pid: str, user=Depends(get_user)):
 @router.post("/purchases")
 async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
+    from services.normalization import normalize_item
     doc = data.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["restaurant_id"] = user["restaurant_id"]
@@ -45,6 +46,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
     doc["approval_status"] = compute_approval_status(user, doc.get("total", 0))
     for item in doc.get("items", []):
         enrich_item_with_pack_size(item)
+        normalize_item(item)
         validate_and_score_item(item)
     validate_purchase_items(doc.get("items", []))
     await db.purchases.insert_one(doc)
@@ -154,6 +156,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
 @router.put("/purchases/{pid}")
 async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)):
     from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
+    from services.normalization import normalize_item
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(400, "No data")
@@ -163,6 +166,7 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
     if "items" in update_data:
         for item in update_data["items"]:
             enrich_item_with_pack_size(item)
+            normalize_item(item)
             validate_and_score_item(item)
         validate_purchase_items(update_data["items"])
     old_vals = {k: old.get(k) for k in update_data}
