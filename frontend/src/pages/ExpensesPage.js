@@ -28,8 +28,8 @@ import { ConfirmSaveDialog } from '@/components/ConfirmSaveDialog';
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
 function nextKey() { return `k${++_keySeq}_${Date.now()}`; }
-function mkItem(raw_name = '', quantity = 1, pack_size = '', unit_price = 0, total = 0, pack_unit = null, total_case_weight = null, normalized_price_per_lb = null, pack_parse_status = null, warning = false, warning_detail = '', confidence_score = null, confidence_level = null, validation_errors = [], valid_calc = null, _reviewed = false, confidence_reason = null, needs_review = false, review_reason = null) {
-  return { _key: nextKey(), raw_name, quantity, pack_size, unit_price, total, pack_unit, total_case_weight, normalized_price_per_lb, pack_parse_status, _warning: warning, _warning_detail: warning_detail, confidence_score, confidence_level, validation_errors, valid_calc, _reviewed, confidence_reason, needs_review, review_reason, _fixing: false };
+function mkItem(raw_name = '', quantity = 1, pack_size = '', unit_price = 0, total = 0, pack_unit = null, total_case_weight = null, normalized_price_per_lb = null, pack_parse_status = null, warning = false, warning_detail = '', confidence_score = null, confidence_level = null, validation_errors = [], valid_calc = null, _reviewed = false, confidence_reason = null, needs_review = false, review_reason = null, suggested_fix = null) {
+  return { _key: nextKey(), raw_name, quantity, pack_size, unit_price, total, pack_unit, total_case_weight, normalized_price_per_lb, pack_parse_status, _warning: warning, _warning_detail: warning_detail, confidence_score, confidence_level, validation_errors, valid_calc, _reviewed, confidence_reason, needs_review, review_reason, suggested_fix, _fixing: false, _suggestionDismissed: false };
 }
 
 // Client-side re-validation (mirrors backend hard gates)
@@ -88,7 +88,29 @@ function revalidateItem(item) {
   else reason = 'Needs review';
 
   const needsReview = level !== 'trusted';
-  return { ...item, valid_calc: validCalc, validation_errors: errors, confidence_score: score, confidence_level: level, confidence_reason: reason, needs_review: needsReview, review_reason: needsReview ? reason : null, _reviewed: false, _fixing: false };
+  // Generate client-side suggestion for math issues
+  let suggestedFix = item.suggested_fix || null;
+  if (needsReview && !suggestedFix && !item._suggestionDismissed) {
+    const sf = {};
+    const sfReasons = [];
+    if (!validCalc && qty > 0 && up > 0 && total > 0) {
+      const expected = Math.round(qty * up * 100) / 100;
+      sf.total = expected;
+      sfReasons.push(`Recalculate total: ${qty} × $${up.toFixed(2)} = $${expected.toFixed(2)}`);
+    } else if (qty > 0 && up > 0 && total === 0) {
+      const computed = Math.round(qty * up * 100) / 100;
+      sf.total = computed;
+      sfReasons.push(`Compute total: ${qty} × $${up.toFixed(2)} = $${computed.toFixed(2)}`);
+    } else if (total > 0 && qty > 0 && up === 0) {
+      sf.unit_price = Math.round(total / qty * 100) / 100;
+      sfReasons.push(`Compute price: $${total.toFixed(2)} ÷ ${qty} = $${sf.unit_price.toFixed(2)}`);
+    } else if (total > 0 && up > 0 && qty === 0) {
+      sf.quantity = Math.round(total / up * 100) / 100;
+      sfReasons.push(`Compute quantity: $${total.toFixed(2)} ÷ $${up.toFixed(2)} = ${sf.quantity}`);
+    }
+    if (sfReasons.length > 0) suggestedFix = { fields: sf, reasons: sfReasons, type: 'math' };
+  }
+  return { ...item, valid_calc: validCalc, validation_errors: errors, confidence_score: score, confidence_level: level, confidence_reason: reason, needs_review: needsReview, review_reason: needsReview ? reason : null, suggested_fix: suggestedFix, _reviewed: false, _fixing: false };
 }
 
 const OTHER_CATEGORIES = ['Utilities', 'Taxes', 'Maintenance & Repairs', 'Software & Subscriptions', 'Services', 'Rent / Facility', 'Miscellaneous'];
@@ -234,7 +256,14 @@ function RawMaterialsTab({ api }) {
       supplier_name: record.supplier_name || '',
       invoice_number: record.invoice_number || '',
       invoice_date: record.invoice_date || '',
-      items: (record.items || []).map(it => mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || null, it.total_case_weight || null, it.normalized_price_per_lb || null, it.pack_parse_status || null, false, '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, it.confidence_level === 'trusted', it.confidence_reason || null, !!it.needs_review, it.review_reason || null)),
+      items: (record.items || []).map(it => {
+        const item = mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || null, it.total_case_weight || null, it.normalized_price_per_lb || null, it.pack_parse_status || null, false, '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, it.confidence_level === 'trusted', it.confidence_reason || null, !!it.needs_review, it.review_reason || null, it.suggested_fix || null);
+        // For items needing review but missing suggestions (old data), generate client-side
+        if ((item.needs_review || (item.confidence_level && item.confidence_level !== 'trusted')) && !item.suggested_fix && !item._reviewed) {
+          return revalidateItem(item);
+        }
+        return item;
+      }),
       subtotal: record.subtotal || 0,
       tax: record.tax || 0,
       total: record.total || 0,
@@ -291,7 +320,7 @@ function RawMaterialsTab({ api }) {
         invoice_number: d.invoice_number || '',
         invoice_date: d.invoice_date || new Date().toISOString().split('T')[0],
         items: items.length > 0
-          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.pack_size_raw || it.pack_size || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, it.pack_unit || null, it.total_case_weight != null ? parseFloat(it.total_case_weight) : null, it.normalized_price_per_lb != null ? parseFloat(it.normalized_price_per_lb) : null, it.pack_parse_status || null, !!it._warning, it._warning_detail || '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, false, it.confidence_reason || null, !!it.needs_review, it.review_reason || null))
+          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.pack_size_raw || it.pack_size || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, it.pack_unit || null, it.total_case_weight != null ? parseFloat(it.total_case_weight) : null, it.normalized_price_per_lb != null ? parseFloat(it.normalized_price_per_lb) : null, it.pack_parse_status || null, !!it._warning, it._warning_detail || '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, false, it.confidence_reason || null, !!it.needs_review, it.review_reason || null, it.suggested_fix || null))
           : [mkItem()],
         subtotal: parseFloat(d.subtotal) || 0,
         tax: parseFloat(d.tax) || 0,
@@ -647,41 +676,85 @@ function RawMaterialsTab({ api }) {
                     <div className={`text-[10px] h-8 flex items-center justify-end tabular-nums rounded-md px-1 select-none ${isUncertain ? 'text-slate-300 bg-slate-100 border border-slate-200' : item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? 'font-semibold text-teal-700 bg-teal-50 border border-teal-200' : item.pack_parse_status === 'failed' ? 'text-red-400 bg-red-50 border border-red-200' : 'text-slate-300 bg-slate-100 border border-slate-200'}`} data-testid={`line-item-nup-${i}`}>{isUncertain ? '—' : (item.normalized_price_per_lb != null && item.normalized_price_per_lb > 0 ? `$${item.normalized_price_per_lb.toFixed(2)}` : '—')}</div>
                     <Button size="sm" variant="ghost" className="h-7 w-7 p-0 flex-shrink-0" onClick={() => requestDeleteItem(i)} data-testid={`delete-line-item-${i}`}><Trash2 className="w-3 h-3 text-red-400" /></Button>
                   </div>
-                  {/* Status + reason + actions row */}
+                  {/* Status + reason + suggestion + actions row */}
                   {(cl || item.needs_review) && (
-                    <div className="flex items-center gap-2 mt-1.5 pl-7">
-                      {isTrusted ? (
-                        <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full" data-testid={`status-badge-${i}`}>
-                          <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                          {item._reviewed ? 'Confirmed' : 'Trusted'}
-                        </span>
-                      ) : (
-                        <>
-                          <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full" data-testid={`status-badge-${i}`}>
-                            <AlertTriangle className="w-2.5 h-2.5" /> Needs Review
+                    <div className="mt-1.5 pl-7 space-y-1">
+                      <div className="flex items-center gap-2">
+                        {isTrusted ? (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full" data-testid={`status-badge-${i}`}>
+                            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                            {item._reviewed ? 'Confirmed' : 'Trusted'}
                           </span>
-                          <span className="text-[9px] text-amber-600" data-testid={`review-reason-${i}`}>{item.review_reason || item.confidence_reason || item.validation_errors?.[0] || 'Needs review'}</span>
-                          <div className="ml-auto flex items-center gap-1.5">
-                            <button
-                              className={`text-[9px] font-semibold px-2 py-0.5 rounded transition-colors ${item._fixing ? 'text-blue-700 bg-blue-200' : 'text-blue-700 bg-blue-100 hover:bg-blue-200'}`}
-                              onClick={() => setForm(f => {
-                                const it = [...f.items];
-                                it[i] = { ...it[i], _fixing: !it[i]._fixing };
-                                return { ...f, items: it };
-                              })}
-                              data-testid={`fix-item-${i}`}
-                            >{item._fixing ? 'Done Fixing' : 'Fix'}</button>
-                            <button
-                              className="text-[9px] font-semibold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 px-2 py-0.5 rounded transition-colors"
-                              onClick={() => setForm(f => {
-                                const it = [...f.items];
-                                it[i] = { ...it[i], _reviewed: true, _fixing: false };
-                                return { ...f, items: it };
-                              })}
-                              data-testid={`accept-item-${i}`}
-                            >Accept</button>
+                        ) : (
+                          <>
+                            <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full" data-testid={`status-badge-${i}`}>
+                              <AlertTriangle className="w-2.5 h-2.5" /> Needs Review
+                            </span>
+                            <span className="text-[9px] text-amber-600" data-testid={`review-reason-${i}`}>{item.review_reason || item.confidence_reason || item.validation_errors?.[0] || 'Needs review'}</span>
+                            <div className="ml-auto flex items-center gap-1.5">
+                              <button
+                                className={`text-[9px] font-semibold px-2 py-0.5 rounded transition-colors ${item._fixing ? 'text-blue-700 bg-blue-200' : 'text-blue-700 bg-blue-100 hover:bg-blue-200'}`}
+                                onClick={() => setForm(f => {
+                                  const it = [...f.items];
+                                  it[i] = { ...it[i], _fixing: !it[i]._fixing };
+                                  return { ...f, items: it };
+                                })}
+                                data-testid={`fix-item-${i}`}
+                              >{item._fixing ? 'Done Fixing' : 'Edit Manually'}</button>
+                              <button
+                                className="text-[9px] font-semibold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 px-2 py-0.5 rounded transition-colors"
+                                onClick={() => setForm(f => {
+                                  const it = [...f.items];
+                                  it[i] = { ...it[i], _reviewed: true, _fixing: false };
+                                  return { ...f, items: it };
+                                })}
+                                data-testid={`accept-item-${i}`}
+                              >Ignore</button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      {/* Suggested fix */}
+                      {!isTrusted && item.suggested_fix && !item._suggestionDismissed && !item._reviewed && (
+                        <div className="flex items-start gap-2 p-1.5 rounded-md bg-blue-50 border border-blue-200" data-testid={`suggestion-${i}`}>
+                          <Sparkles className="w-3 h-3 text-blue-500 mt-0.5 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[9px] font-semibold text-blue-800">Suggested fix</p>
+                            {item.suggested_fix.reasons.map((r, ri) => (
+                              <p key={ri} className="text-[9px] text-blue-600" data-testid={`suggestion-reason-${i}-${ri}`}>{r}</p>
+                            ))}
                           </div>
-                        </>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button
+                              className="text-[9px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded transition-colors"
+                              data-testid={`apply-suggestion-${i}`}
+                              onClick={() => setForm(f => {
+                                const it = [...f.items];
+                                const fields = item.suggested_fix.fields;
+                                const updated = { ...it[i] };
+                                if (fields.total != null) updated.total = fields.total;
+                                if (fields.unit_price != null) updated.unit_price = fields.unit_price;
+                                if (fields.quantity != null) updated.quantity = fields.quantity;
+                                if (fields.raw_name != null) updated.raw_name = fields.raw_name;
+                                if (fields.pack_size != null) updated.pack_size = fields.pack_size;
+                                updated.suggested_fix = null;
+                                updated._suggestionDismissed = false;
+                                it[i] = revalidateItem(updated);
+                                const sub = Math.round(it.reduce((s, x) => s + (parseFloat(x.total) || 0), 0) * 100) / 100;
+                                return { ...f, items: it, subtotal: sub, total: Math.round((sub + (f.tax || 0)) * 100) / 100 };
+                              })}
+                            >Apply</button>
+                            <button
+                              className="text-[9px] font-semibold text-blue-600 bg-blue-100 hover:bg-blue-200 px-2 py-1 rounded transition-colors"
+                              data-testid={`dismiss-suggestion-${i}`}
+                              onClick={() => setForm(f => {
+                                const it = [...f.items];
+                                it[i] = { ...it[i], _suggestionDismissed: true };
+                                return { ...f, items: it };
+                              })}
+                            >Dismiss</button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}

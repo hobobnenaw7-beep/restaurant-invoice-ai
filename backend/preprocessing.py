@@ -884,6 +884,88 @@ def _detect_suspicious_patterns(item: dict) -> list:
     return flags
 
 
+def _generate_suggested_fix(item: dict) -> dict | None:
+    """
+    Generate a lightweight, rule-based correction suggestion for a flagged item.
+    Returns a dict with suggested field changes, or None if no suggestion available.
+
+    Uses ONLY: math, raw text parsing, existing normalization data.
+    No LLM calls. No fuzzy matching.
+    """
+    suggestion = {}
+    reasons = []
+
+    qty = float(item.get("quantity") or 0)
+    up = float(item.get("unit_price") or 0)
+    total = float(item.get("total") or 0)
+    raw_name = (item.get("raw_name") or "").strip()
+    pack_raw = (item.get("pack_size_raw") or item.get("pack_size") or "").strip()
+    pack_status = item.get("pack_parse_status") or "not_applicable"
+
+    # --- 1. Math mismatch → suggest corrected total ---
+    if qty > 0 and up > 0 and total > 0:
+        expected = round(qty * up, 2)
+        tolerance = max(0.02, 0.01 * total)
+        if abs(expected - total) > tolerance:
+            suggestion["total"] = expected
+            reasons.append(f"Recalculate total: {qty} × ${up:.2f} = ${expected:.2f}")
+    elif qty > 0 and up > 0 and total == 0:
+        suggestion["total"] = round(qty * up, 2)
+        reasons.append(f"Compute total: {qty} × ${up:.2f} = ${suggestion['total']:.2f}")
+    elif total > 0 and qty > 0 and up == 0:
+        suggestion["unit_price"] = round(total / qty, 2)
+        reasons.append(f"Compute price: ${total:.2f} ÷ {qty} = ${suggestion['unit_price']:.2f}")
+    elif total > 0 and up > 0 and qty == 0:
+        suggestion["quantity"] = round(total / up, 2)
+        reasons.append(f"Compute quantity: ${total:.2f} ÷ ${up:.2f} = {suggestion['quantity']}")
+
+    # --- 2. Pack parse failure → try to recover from raw text ---
+    if pack_status == "failed" and pack_raw:
+        upper = pack_raw.upper().strip()
+        # Try common OCR variants: "1x30" → "1/30", "1X30LB" → "1/30 LB"
+        normalized = re.sub(r'[xX×]', '/', upper)
+        # Ensure space before unit: "30LB" → "30 LB"
+        normalized = re.sub(r'(\d)(LB|OZ|GAL|EA|CT|KG|QT|PT|CS|PK|BX)\b', r'\1 \2', normalized)
+        if normalized != upper:
+            # Try parsing the normalized version
+            test_result = parse_pack_size(normalized)
+            if test_result.get("pack_parse_status") == "parsed":
+                suggestion["pack_size"] = normalized
+                reasons.append(f"Normalize pack size: \"{pack_raw}\" → \"{normalized}\"")
+
+    # --- 3. Correction memory match → already applied by pipeline, surface it ---
+    correction = item.get("correction_applied")
+    if correction and isinstance(correction, dict):
+        if correction.get("corrected_name") and correction["corrected_name"] != raw_name:
+            suggestion["raw_name"] = correction["corrected_name"]
+            reasons.append(f"Learned correction: \"{raw_name}\" → \"{correction['corrected_name']}\"")
+        if correction.get("corrected_specs") and isinstance(correction["corrected_specs"], dict):
+            for k, v in correction["corrected_specs"].items():
+                if v and str(v) != str(item.get(k, "")):
+                    suggestion[k] = v
+                    reasons.append(f"Learned {k}: \"{item.get(k, '')}\" → \"{v}\"")
+
+    # --- 4. Missing name but has normalization data ---
+    if not raw_name:
+        clean = (item.get("clean_name") or "").strip()
+        if clean:
+            suggestion["raw_name"] = clean
+            reasons.append(f"Use normalized name: \"{clean}\"")
+
+    if not reasons:
+        return None
+
+    return {
+        "fields": suggestion,
+        "reasons": reasons,
+        "type": "math" if "total" in suggestion or "unit_price" in suggestion or "quantity" in suggestion
+            else "pack" if "pack_size" in suggestion
+            else "correction" if correction
+            else "missing",
+    }
+
+
+
 def validate_and_score_item(item: dict) -> dict:
     """
     Strict validation and confidence scoring.
@@ -1016,6 +1098,12 @@ def validate_and_score_item(item: dict) -> dict:
     # Explicit review markers for "save now, review later"
     item["needs_review"] = level != "trusted"
     item["review_reason"] = item["confidence_reason"] if level != "trusted" else None
+
+    # Generate lightweight correction suggestion for flagged items
+    if level != "trusted":
+        item["suggested_fix"] = _generate_suggested_fix(item)
+    else:
+        item["suggested_fix"] = None
 
     return item
 
