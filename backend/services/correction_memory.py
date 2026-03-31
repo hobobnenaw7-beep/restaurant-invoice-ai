@@ -145,6 +145,8 @@ async def apply_corrections(items: list, restaurant_id: str, supplier_id: str):
                     norm["specs"][k] = v
 
         item["confidence_level"] = "learned"
+        item["needs_review"] = False
+        item["review_reason"] = None
 
         logger.info(
             f"Correction applied: '{item.get('raw_name','')}' → '{corrected_name}' "

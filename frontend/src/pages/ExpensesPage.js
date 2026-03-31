@@ -327,7 +327,7 @@ function RawMaterialsTab({ api }) {
     const doSave = async () => {
       setSaving(true);
       try {
-        const payload = { ...form, items: form.items.map(({ _key, _warning, _warning_detail, _reviewed, _fixing, pack_unit, total_case_weight, normalized_price_per_lb, confidence_score, confidence_level, confidence_reason, validation_errors, valid_calc, ...rest }) => ({ ...rest, pack_size: rest.pack_size || '' })) };
+        const payload = { ...form, items: form.items.map(({ _key, _warning, _warning_detail, _reviewed, _fixing, ...rest }) => ({ ...rest, pack_size: rest.pack_size || '' })) };
         delete payload._has_warnings; delete payload._warnings; delete payload._subtotal_warning; delete payload._total_warning; delete payload._date_warning;
         if (editingId) {
           await api.put(`/purchases/${editingId}`, payload);

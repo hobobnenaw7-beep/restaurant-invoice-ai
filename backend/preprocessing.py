@@ -776,6 +776,10 @@ def validate_and_score_item(item: dict) -> dict:
     else:
         item["confidence_reason"] = "Needs review"
 
+    # Explicit review markers for "save now, review later"
+    item["needs_review"] = level != "trusted"
+    item["review_reason"] = item["confidence_reason"] if level != "trusted" else None
+
     return item
 
 
