@@ -28,8 +28,8 @@ import { ConfirmSaveDialog } from '@/components/ConfirmSaveDialog';
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
 function nextKey() { return `k${++_keySeq}_${Date.now()}`; }
-function mkItem(raw_name = '', quantity = 1, pack_size = '', unit_price = 0, total = 0, pack_unit = null, total_case_weight = null, normalized_price_per_lb = null, pack_parse_status = null, warning = false, warning_detail = '', confidence_score = null, confidence_level = null, validation_errors = [], valid_calc = null, _reviewed = false, confidence_reason = null) {
-  return { _key: nextKey(), raw_name, quantity, pack_size, unit_price, total, pack_unit, total_case_weight, normalized_price_per_lb, pack_parse_status, _warning: warning, _warning_detail: warning_detail, confidence_score, confidence_level, validation_errors, valid_calc, _reviewed, confidence_reason, _fixing: false };
+function mkItem(raw_name = '', quantity = 1, pack_size = '', unit_price = 0, total = 0, pack_unit = null, total_case_weight = null, normalized_price_per_lb = null, pack_parse_status = null, warning = false, warning_detail = '', confidence_score = null, confidence_level = null, validation_errors = [], valid_calc = null, _reviewed = false, confidence_reason = null, needs_review = false, review_reason = null) {
+  return { _key: nextKey(), raw_name, quantity, pack_size, unit_price, total, pack_unit, total_case_weight, normalized_price_per_lb, pack_parse_status, _warning: warning, _warning_detail: warning_detail, confidence_score, confidence_level, validation_errors, valid_calc, _reviewed, confidence_reason, needs_review, review_reason, _fixing: false };
 }
 
 // Client-side re-validation (mirrors backend hard gates)
@@ -87,7 +87,8 @@ function revalidateItem(item) {
   else if (missing.length) reason = `Missing fields: ${missing.join(', ')}`;
   else reason = 'Needs review';
 
-  return { ...item, valid_calc: validCalc, validation_errors: errors, confidence_score: score, confidence_level: level, confidence_reason: reason, _reviewed: false, _fixing: false };
+  const needsReview = level !== 'trusted';
+  return { ...item, valid_calc: validCalc, validation_errors: errors, confidence_score: score, confidence_level: level, confidence_reason: reason, needs_review: needsReview, review_reason: needsReview ? reason : null, _reviewed: false, _fixing: false };
 }
 
 const OTHER_CATEGORIES = ['Utilities', 'Taxes', 'Maintenance & Repairs', 'Software & Subscriptions', 'Services', 'Rent / Facility', 'Miscellaneous'];
@@ -233,7 +234,7 @@ function RawMaterialsTab({ api }) {
       supplier_name: record.supplier_name || '',
       invoice_number: record.invoice_number || '',
       invoice_date: record.invoice_date || '',
-      items: (record.items || []).map(it => mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || null, it.total_case_weight || null, it.normalized_price_per_lb || null, it.pack_parse_status || null, false, '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, it.confidence_level === 'trusted', it.confidence_reason || null)),
+      items: (record.items || []).map(it => mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || null, it.total_case_weight || null, it.normalized_price_per_lb || null, it.pack_parse_status || null, false, '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, it.confidence_level === 'trusted', it.confidence_reason || null, !!it.needs_review, it.review_reason || null)),
       subtotal: record.subtotal || 0,
       tax: record.tax || 0,
       total: record.total || 0,
@@ -290,7 +291,7 @@ function RawMaterialsTab({ api }) {
         invoice_number: d.invoice_number || '',
         invoice_date: d.invoice_date || new Date().toISOString().split('T')[0],
         items: items.length > 0
-          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.pack_size_raw || it.pack_size || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, it.pack_unit || null, it.total_case_weight != null ? parseFloat(it.total_case_weight) : null, it.normalized_price_per_lb != null ? parseFloat(it.normalized_price_per_lb) : null, it.pack_parse_status || null, !!it._warning, it._warning_detail || '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, false, it.confidence_reason || null))
+          ? items.map(it => mkItem(it.raw_name || '', parseFloat(it.quantity) || 0, it.pack_size_raw || it.pack_size || '', parseFloat(it.unit_price) || 0, parseFloat(it.total) || 0, it.pack_unit || null, it.total_case_weight != null ? parseFloat(it.total_case_weight) : null, it.normalized_price_per_lb != null ? parseFloat(it.normalized_price_per_lb) : null, it.pack_parse_status || null, !!it._warning, it._warning_detail || '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, false, it.confidence_reason || null, !!it.needs_review, it.review_reason || null))
           : [mkItem()],
         subtotal: parseFloat(d.subtotal) || 0,
         tax: parseFloat(d.tax) || 0,
@@ -301,8 +302,8 @@ function RawMaterialsTab({ api }) {
         _total_warning: d._total_warning || false,
         _date_warning: d._date_warning || false,
       });
-      // Check for uncertain items that need review
-      const uncertainCount = items.filter(it => (it.confidence_level || 'trusted') !== 'trusted').length;
+      // Check for items that need review
+      const uncertainCount = items.filter(it => it.needs_review || ((it.confidence_level || 'trusted') !== 'trusted')).length;
       if (uncertainCount > 0) {
         toast.warning(`${uncertainCount} item${uncertainCount > 1 ? 's' : ''} need${uncertainCount === 1 ? 's' : ''} review — check highlighted rows`);
         setReviewMode(true);
@@ -409,7 +410,17 @@ function RawMaterialsTab({ api }) {
                 <TableCell className="text-xs tabular-nums text-slate-600">{p.invoice_date}</TableCell>
                 <TableCell className="text-xs font-semibold text-navy-900">{p.supplier_name}</TableCell>
                 <TableCell><Badge variant="outline" className="text-[10px] font-mono">{p.invoice_number}</Badge></TableCell>
-                <TableCell className="text-xs text-center text-slate-500">{(p.items || []).length}</TableCell>
+                <TableCell className="text-xs text-center text-slate-500">
+                  <span>{(p.items || []).length}</span>
+                  {(() => {
+                    const reviewCount = (p.items || []).filter(it => it.needs_review).length;
+                    return reviewCount > 0 ? (
+                      <span className="ml-1 inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-600" title={`${reviewCount} item${reviewCount !== 1 ? 's' : ''} need review`} data-testid={`review-count-${i}`}>
+                        <AlertTriangle className="w-2.5 h-2.5" />{reviewCount}
+                      </span>
+                    ) : null;
+                  })()}
+                </TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(p.total)}</TableCell>
                 <TableCell className="text-right"><div className="flex justify-end gap-0.5">
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(p)} data-testid={`view-purchase-${i}`}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
@@ -429,8 +440,22 @@ function RawMaterialsTab({ api }) {
           <DialogHeader><DialogTitle className="font-heading text-lg">Purchase Details</DialogTitle></DialogHeader>
           {selected && <div className="space-y-5">
             <div className="grid grid-cols-3 gap-4">{[['Vendor', selected.supplier_name], ['Invoice #', selected.invoice_number], ['Date', selected.invoice_date]].map(([l, v]) => <div key={l}><p className="text-[10px] font-bold text-slate-400 uppercase">{l}</p><p className="text-sm font-semibold text-navy-900 mt-0.5">{v}</p></div>)}</div>
+            {/* Review summary banner in detail view */}
+            {(() => {
+              const reviewItems = (selected.items || []).filter(it => it.needs_review);
+              if (reviewItems.length === 0) return null;
+              return (
+                <div className="flex items-center gap-2.5 p-2.5 rounded-lg bg-amber-50 border border-amber-200" data-testid="detail-review-banner">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                  <p className="text-xs text-amber-800">
+                    <span className="font-semibold">{reviewItems.length} item{reviewItems.length !== 1 ? 's' : ''}</span> flagged for review — edit this invoice to resolve
+                  </p>
+                </div>
+              );
+            })()}
             <Separator />
             <Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+              <TableHead className="text-[10px] font-bold text-slate-500 uppercase w-8">Status</TableHead>
               <TableHead className="text-[10px] font-bold text-slate-500 uppercase">Item</TableHead>
               <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Qty</TableHead>
               <TableHead className="text-[10px] font-bold text-slate-500 uppercase">Pack Size</TableHead>
@@ -439,15 +464,34 @@ function RawMaterialsTab({ api }) {
               <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Case Wt</TableHead>
               <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">$/LB</TableHead>
             </TableRow></TableHeader><TableBody>
-              {(selected.items || []).map((it, i) => <TableRow key={i} className={i % 2 === 0 ? '' : 'bg-slate-50/40'}>
-                <TableCell className="text-sm font-medium">{it.raw_name}</TableCell>
-                <TableCell className="text-sm text-right tabular-nums">{it.quantity}</TableCell>
-                <TableCell className="text-sm text-slate-500">{it.pack_size_raw || it.pack_size || '—'}</TableCell>
-                <TableCell className="text-sm text-right tabular-nums">{fmt(it.unit_price)}</TableCell>
-                <TableCell className="text-sm text-right font-semibold tabular-nums">{fmt(it.total)}</TableCell>
-                <TableCell className="text-sm text-right tabular-nums">{it.pack_parse_status === 'parsed' && it.total_case_weight != null ? `${it.total_case_weight} ${it.pack_unit || ''}`.trim() : '—'}</TableCell>
-                <TableCell className="text-sm text-right tabular-nums">{it.normalized_price_per_lb != null && it.normalized_price_per_lb > 0 ? <span className="text-teal-700 font-semibold">{fmt(it.normalized_price_per_lb)}</span> : <span className="text-slate-300">—</span>}</TableCell>
-              </TableRow>)}
+              {(selected.items || []).map((it, i) => {
+                const flagged = it.needs_review;
+                return (
+                <TableRow key={i} className={`${flagged ? 'bg-amber-50/60' : i % 2 === 0 ? '' : 'bg-slate-50/40'}`} data-testid={`detail-item-row-${i}`}>
+                  <TableCell className="text-center">
+                    {flagged ? (
+                      <span className="inline-flex w-5 h-5 rounded-full bg-amber-100 items-center justify-center" title={it.review_reason || 'Needs review'} data-testid={`detail-review-dot-${i}`}>
+                        <AlertTriangle className="w-3 h-3 text-amber-600" />
+                      </span>
+                    ) : it.confidence_level ? (
+                      <span className="inline-flex w-5 h-5 rounded-full bg-emerald-100 items-center justify-center" title="Verified" data-testid={`detail-ok-dot-${i}`}>
+                        <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      </span>
+                    ) : <span className="text-slate-300">—</span>}
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-sm font-medium">{it.raw_name}</div>
+                    {flagged && it.review_reason && <div className="text-[10px] text-amber-600 mt-0.5" data-testid={`detail-review-reason-${i}`}>{it.review_reason}</div>}
+                  </TableCell>
+                  <TableCell className="text-sm text-right tabular-nums">{it.quantity}</TableCell>
+                  <TableCell className="text-sm text-slate-500">{it.pack_size_raw || it.pack_size || '—'}</TableCell>
+                  <TableCell className="text-sm text-right tabular-nums">{fmt(it.unit_price)}</TableCell>
+                  <TableCell className="text-sm text-right font-semibold tabular-nums">{fmt(it.total)}</TableCell>
+                  <TableCell className="text-sm text-right tabular-nums">{it.pack_parse_status === 'parsed' && it.total_case_weight != null ? `${it.total_case_weight} ${it.pack_unit || ''}`.trim() : '—'}</TableCell>
+                  <TableCell className="text-sm text-right tabular-nums">{it.normalized_price_per_lb != null && it.normalized_price_per_lb > 0 ? <span className="text-teal-700 font-semibold">{fmt(it.normalized_price_per_lb)}</span> : <span className="text-slate-300">—</span>}</TableCell>
+                </TableRow>
+                );
+              })}
             </TableBody></Table>
             <div className="flex justify-end"><div className="text-right space-y-1 min-w-[200px]"><div className="flex justify-between text-sm"><span className="text-slate-500">Subtotal</span><span className="tabular-nums">{fmt(selected.subtotal)}</span></div><div className="flex justify-between text-sm"><span className="text-slate-500">Tax</span><span className="tabular-nums">{fmt(selected.tax)}</span></div><Separator className="my-1" /><div className="flex justify-between text-base font-bold"><span>Total</span><span className="tabular-nums">{fmt(selected.total)}</span></div></div></div>
           </div>}
@@ -509,9 +553,9 @@ function RawMaterialsTab({ api }) {
           )}
           {/* Confidence review banner */}
           {(() => {
-            const uncertain = form.items.filter(it => it.confidence_level && it.confidence_level !== 'trusted' && !it._reviewed);
-            const total = form.items.filter(it => it.confidence_level).length;
-            const trustedCount = form.items.filter(it => it.confidence_level === 'trusted').length;
+            const uncertain = form.items.filter(it => (it.needs_review || (it.confidence_level && it.confidence_level !== 'trusted')) && !it._reviewed);
+            const total = form.items.filter(it => it.confidence_level || it.needs_review).length;
+            const trustedCount = form.items.filter(it => !it.needs_review && it.confidence_level === 'trusted').length;
             if (total === 0 || uncertain.length === 0) return null;
             return (
               <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-50 border border-indigo-200" data-testid="confidence-review-banner">
@@ -567,12 +611,12 @@ function RawMaterialsTab({ api }) {
               </div>
               <div className="space-y-1.5">{form.items.filter(item => {
                 if (!reviewMode) return true;
-                return item.confidence_level && item.confidence_level !== 'trusted' && !item._reviewed;
+                return (item.needs_review || (item.confidence_level && item.confidence_level !== 'trusted')) && !item._reviewed;
               }).map((item) => {
                 const i = form.items.indexOf(item);
                 const cl = item.confidence_level;
-                const isUncertain = cl && cl !== 'trusted' && !item._reviewed;
-                const isTrusted = cl === 'trusted' || item._reviewed;
+                const isUncertain = (item.needs_review || (cl && cl !== 'trusted')) && !item._reviewed;
+                const isTrusted = (!item.needs_review && cl === 'trusted') || item._reviewed;
                 const confidenceDot = isTrusted ? 'bg-emerald-500' : cl === 'unverified' ? 'bg-amber-500' : 'bg-slate-300';
                 const confidenceTitle = item._reviewed ? 'Confirmed by user' : cl === 'trusted' ? 'Trusted — auto-verified' : cl === 'unverified' ? 'Unverified — needs review' : '';
                 const rowBorder = item._fixing ? 'border-blue-300 bg-blue-50/40 ring-1 ring-blue-200' : isUncertain ? 'border-amber-200 bg-amber-50/40' : item._reviewed ? 'bg-emerald-50/30 border border-emerald-200' : item._warning ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50';
@@ -598,7 +642,7 @@ function RawMaterialsTab({ api }) {
                     <Button size="sm" variant="ghost" className="h-7 w-7 p-0 flex-shrink-0" onClick={() => requestDeleteItem(i)} data-testid={`delete-line-item-${i}`}><Trash2 className="w-3 h-3 text-red-400" /></Button>
                   </div>
                   {/* Status + reason + actions row */}
-                  {cl && (
+                  {(cl || item.needs_review) && (
                     <div className="flex items-center gap-2 mt-1.5 pl-7">
                       {isTrusted ? (
                         <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full" data-testid={`status-badge-${i}`}>
@@ -608,9 +652,9 @@ function RawMaterialsTab({ api }) {
                       ) : (
                         <>
                           <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full" data-testid={`status-badge-${i}`}>
-                            <AlertTriangle className="w-2.5 h-2.5" /> Unverified
+                            <AlertTriangle className="w-2.5 h-2.5" /> Needs Review
                           </span>
-                          <span className="text-[9px] text-amber-600" data-testid={`confidence-reason-${i}`}>{item.confidence_reason || item.validation_errors?.[0] || 'Needs review'}</span>
+                          <span className="text-[9px] text-amber-600" data-testid={`review-reason-${i}`}>{item.review_reason || item.confidence_reason || item.validation_errors?.[0] || 'Needs review'}</span>
                           <div className="ml-auto flex items-center gap-1.5">
                             <button
                               className={`text-[9px] font-semibold px-2 py-0.5 rounded transition-colors ${item._fixing ? 'text-blue-700 bg-blue-200' : 'text-blue-700 bg-blue-100 hover:bg-blue-200'}`}
