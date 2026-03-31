@@ -8,7 +8,6 @@ Full-stack restaurant accounting platform with OCR receipt ingestion, vendor pri
 /app/backend/
 ├── server.py              # 75 lines — FastAPI app, CORS, mount routers
 ├── core/
-│   ├── __init__.py        # Re-exports
 │   ├── database.py        # MongoDB client, db, UPLOADS_DIR, LLM_KEY, logger
 │   ├── auth.py            # JWT utils, get_user, hash_pw, verify_pw, require_manager
 │   └── models.py          # All Pydantic models (15+ classes)
@@ -17,27 +16,7 @@ Full-stack restaurant accounting platform with OCR receipt ingestion, vendor pri
 │   ├── alerts.py          # generate_smart_alerts() engine
 │   └── approval.py        # compute_approval_status()
 ├── routes/                # 20 domain-specific routers
-│   ├── auth.py            # Auth + User management
-│   ├── audit.py           # Audit log API
-│   ├── approvals.py       # Approval workflow
-│   ├── dashboard.py       # Dashboard summary, item-search, drill-down
-│   ├── upload.py          # OCR extraction + Excel parse
-│   ├── receipts.py        # Receipt learning + vendor patterns
-│   ├── records.py         # Records library (file uploads)
-│   ├── duplicates.py      # Duplicate detection
-│   ├── purchases.py       # Purchases CRUD + auto-vendor/item creation
-│   ├── salaries.py        # Salaries CRUD
-│   ├── other_expenses.py  # Other Expenses CRUD
-│   ├── sales.py           # Sales CRUD
-│   ├── suppliers.py       # Suppliers CRUD + merge
-│   ├── items.py           # Items + Aliases + Price History
-│   ├── reports.py         # Reports + Category + PDF/Excel export
-│   ├── prices.py          # Price Intelligence + Vendor Comparison
-│   ├── vendor_comparison.py # Item Mappings + Normalized $/LB Comparison
-│   ├── alerts.py          # Alerts + Smart Purchase Decisions
-│   ├── chat.py            # AI Chat (GPT-5.2 via Emergent LLM Key)
-│   └── settings.py        # Settings + Seed
-├── preprocessing.py       # Trust logic (UNTOUCHED — Trusted/Unverified hard gates)
+├── preprocessing.py       # Trust logic (UNTOUCHED)
 └── requirements.txt
 ```
 
@@ -45,26 +24,24 @@ Full-stack restaurant accounting platform with OCR receipt ingestion, vendor pri
 - OCR Receipt Extraction (GPT-5.2 via Emergent LLM Key)
 - Pack-size regex parsing with confidence scoring
 - Vendor Price Comparison Dashboard (normalized $/LB)
-- Manual/Assisted Item Matching (Jaccard similarity suggestions)
-- Decision-Making UI (best/worst deal, spread %, savings banners)
+- Manual/Assisted Item Matching
+- Decision-Making UI (best/worst deal, spread %, savings)
 - Confidence + Review Layer (Trusted vs Unverified hard gates)
-- Explainability + Quick Fix UI (inline editing, confidence_reason)
+- Explainability + Quick Fix UI
 - Full CRUD: Purchases, Sales, Salaries, Other Expenses, Suppliers, Items
 - Audit Logs, Approval Workflow, User Management
-- Reports with PDF/Excel export (category + summary)
-- AI Chat Assistant
-- Records Library (file uploads)
-- **Backend V2 Migration (COMPLETED Feb 2026)** — 4007-line monolith → 75-line orchestrator + 20 route modules
+- Reports with PDF/Excel export
+- AI Chat Assistant, Records Library
+- **Backend V2 Migration (Feb 2026)** — 4007→75 lines
+- **Performance Audit (Feb 2026)** — All endpoints <160ms, 3 bottlenecks identified
 
-## Key DB Schema
-- `purchases.items`: includes `confidence_level`, `confidence_reason`, `pack_parse_status`
-- `item_mappings`: `raw_name` → `canonical_name` for vendor comparison
-- `vendor_patterns`: learned OCR hints per vendor
+## Known Bottlenecks (from audit)
+1. Dashboard double `generate_smart_alerts` call (HIGH)
+2. Purchase save loads ALL purchases for price comparison (MEDIUM)
+3. Full-collection scans in analytics endpoints (MEDIUM, scaling concern)
+4. N+1 query in items endpoint (LOW)
 
-## 3rd Party Integrations
-- OpenAI GPT-5.2 via Emergent LLM Key (`emergentintegrations`)
-
-## Backlog (P1/P2)
+## Backlog
 - P1: AI Chat Assistant Page Polish
 - P1: OCR/Image Upload for Salaries tab
 - P2: Client-side pack size preview
