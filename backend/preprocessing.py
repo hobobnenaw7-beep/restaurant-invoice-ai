@@ -599,6 +599,243 @@ def enrich_item_with_pack_size(item: dict) -> dict:
     return item
 
 
+
+# ---------------------------------------------------------------------------
+# 6b. Hard Invoice Robustness Layer
+# ---------------------------------------------------------------------------
+
+def sanitize_extracted_item(item: dict) -> dict:
+    """
+    Defensive cleanup of a raw extracted item before validation.
+    Handles: type coercion, garbled values, negative numbers, nulls.
+    Mutates and returns the item.
+    """
+    parse_issues = []
+
+    # Coerce numeric fields safely
+    for field in ("quantity", "unit_price", "total"):
+        val = item.get(field)
+        if val is None:
+            item[field] = 0
+            continue
+        if isinstance(val, str):
+            cleaned = re.sub(r'[^0-9.\-]', '', val)
+            try:
+                item[field] = float(cleaned) if cleaned else 0
+            except ValueError:
+                parse_issues.append(f"non-numeric {field}: {repr(val)}")
+                item[field] = 0
+        else:
+            try:
+                item[field] = float(val)
+            except (ValueError, TypeError):
+                parse_issues.append(f"unparseable {field}: {repr(val)}")
+                item[field] = 0
+
+    # Negative values → likely OCR errors, not credits
+    for field in ("quantity", "unit_price", "total"):
+        if item[field] < 0:
+            parse_issues.append(f"negative {field}: {item[field]}, using absolute value")
+            item[field] = abs(item[field])
+
+    # Sanitize name
+    name = item.get("raw_name", "")
+    if isinstance(name, (int, float)):
+        name = str(name)
+    item["raw_name"] = (name or "").strip()
+
+    # Sanitize pack_size
+    ps = item.get("pack_size")
+    if ps is None or (isinstance(ps, (int, float)) and ps == 0):
+        item["pack_size"] = ""
+    else:
+        item["pack_size"] = str(ps).strip()
+
+    if parse_issues:
+        item["_parse_issues"] = parse_issues
+
+    return item
+
+
+def detect_column_misread(items: list) -> list:
+    """
+    Detect likely column misalignment from OCR/extraction.
+    E.g., quantity column has values like 42.50 (looks like prices),
+    or unit_price column has values like 2 (looks like quantities).
+    Returns list of issue strings.
+    """
+    issues = []
+    if len(items) < 3:
+        return issues
+
+    qty_vals = [float(it.get("quantity", 0) or 0) for it in items if float(it.get("quantity", 0) or 0) > 0]
+    price_vals = [float(it.get("unit_price", 0) or 0) for it in items if float(it.get("unit_price", 0) or 0) > 0]
+
+    if not qty_vals or not price_vals:
+        return issues
+
+    avg_qty = sum(qty_vals) / len(qty_vals)
+    avg_price = sum(price_vals) / len(price_vals)
+
+    # Typical restaurant: qty 1-50, price 5-500
+    # If avg "quantity" is much higher than avg "price", they may be swapped
+    if avg_qty > avg_price * 3 and avg_price < 20 and avg_qty > 10:
+        issues.append(f"possible column swap: avg quantity={avg_qty:.1f} looks like prices, avg price={avg_price:.1f} looks like quantities")
+
+    # Check if most quantities have cents (e.g., 42.50, 18.99)
+    decimal_qtys = sum(1 for q in qty_vals if q != int(q) and q > 5)
+    if decimal_qtys > len(qty_vals) * 0.5 and len(qty_vals) >= 3:
+        issues.append("most quantities have decimal values — likely prices in quantity column")
+
+    return issues
+
+
+def compute_extraction_meta(items: list, extracted_data: dict) -> dict:
+    """
+    Compute invoice-level extraction quality metadata.
+    Runs AFTER item-level validation. Returns a meta dict.
+    """
+    total_items = len(items)
+    meta = {
+        "extraction_confidence": "high",
+        "extraction_issues": [],
+        "items_extracted": total_items,
+        "items_with_issues": 0,
+        "partial_extraction": False,
+    }
+
+    if total_items == 0:
+        meta["extraction_confidence"] = "low"
+        meta["extraction_issues"].append("no items extracted")
+        meta["partial_extraction"] = True
+    else:
+        issues_count = 0
+        empty_names = 0
+        garbled_names = 0
+        zero_totals = 0
+
+        for item in items:
+            has_issue = False
+            name = (item.get("raw_name") or "").strip()
+            total = float(item.get("total", 0) or 0)
+
+            if not name:
+                empty_names += 1
+                has_issue = True
+            elif not _item_name_looks_clear(name):
+                garbled_names += 1
+                has_issue = True
+
+            if total == 0:
+                zero_totals += 1
+                has_issue = True
+
+            if item.get("needs_review"):
+                has_issue = True
+
+            if has_issue:
+                issues_count += 1
+
+        meta["items_with_issues"] = issues_count
+        issue_ratio = issues_count / total_items
+
+        if issue_ratio > 0.7:
+            meta["extraction_confidence"] = "low"
+        elif issue_ratio > 0.3:
+            meta["extraction_confidence"] = "medium"
+
+        if empty_names > total_items * 0.5:
+            meta["extraction_issues"].append(f"{empty_names}/{total_items} items missing names")
+            meta["extraction_confidence"] = "low"
+
+        if garbled_names > total_items * 0.3:
+            meta["extraction_issues"].append(f"{garbled_names}/{total_items} items have garbled names")
+
+        if zero_totals > total_items * 0.5:
+            meta["extraction_issues"].append(f"{zero_totals}/{total_items} items have zero totals")
+            meta["partial_extraction"] = True
+
+        # Column misread detection
+        col_issues = detect_column_misread(items)
+        if col_issues:
+            meta["extraction_issues"].extend(col_issues)
+            if meta["extraction_confidence"] == "high":
+                meta["extraction_confidence"] = "medium"
+
+        # Subtotal consistency
+        items_sum = round(sum(float(it.get("total", 0) or 0) for it in items), 2)
+        subtotal = float(extracted_data.get("subtotal", 0) or 0)
+        if items_sum > 0 and subtotal > 0:
+            diff_pct = abs(items_sum - subtotal) / subtotal
+            if diff_pct > 0.20:
+                meta["extraction_issues"].append(f"items sum (${items_sum:.2f}) differs from subtotal (${subtotal:.2f}) by {diff_pct*100:.0f}%")
+                if meta["extraction_confidence"] == "high":
+                    meta["extraction_confidence"] = "medium"
+
+    # Missing header data
+    if not (extracted_data.get("supplier_name") or "").strip():
+        meta["extraction_issues"].append("supplier name not detected")
+    if not (extracted_data.get("invoice_date") or "").strip():
+        meta["extraction_issues"].append("invoice date not detected")
+    if not (extracted_data.get("invoice_number") or "").strip():
+        meta["extraction_issues"].append("invoice number not detected")
+
+    return meta
+
+
+def salvage_partial_extraction(raw_response: str) -> dict:
+    """
+    When JSON parsing fails entirely, try to salvage partial data
+    from the raw GPT response using regex.
+    Returns a best-effort dict (may be mostly empty).
+    """
+    result = {"items": [], "_salvaged": True}
+
+    # Try individual JSON fields
+    for field, pattern in [
+        ("supplier_name", r'"supplier_name"\s*:\s*"([^"]*)"'),
+        ("invoice_number", r'"invoice_number"\s*:\s*"([^"]*)"'),
+        ("invoice_date", r'"invoice_date"\s*:\s*"([^"]*)"'),
+    ]:
+        m = re.search(pattern, raw_response)
+        if m:
+            result[field] = m.group(1).strip()
+
+    # Try to find a date anywhere
+    if not result.get("invoice_date"):
+        m = re.search(r'(\d{4}-\d{2}-\d{2})', raw_response)
+        if m:
+            result["invoice_date"] = m.group(1)
+
+    # Try to extract items array even if outer JSON is broken
+    items_match = re.search(r'"items"\s*:\s*\[([\s\S]*?)\]', raw_response)
+    if items_match:
+        try:
+            items_json = "[" + items_match.group(1) + "]"
+            items = json.loads(items_json)
+            if isinstance(items, list):
+                result["items"] = items
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Try to find total
+    for field, patterns in [
+        ("total", [r'"total"\s*:\s*([0-9.]+)', r'total[:\s]+\$?([0-9,.]+)']),
+        ("subtotal", [r'"subtotal"\s*:\s*([0-9.]+)']),
+        ("tax", [r'"tax"\s*:\s*([0-9.]+)']),
+    ]:
+        for p in patterns:
+            m = re.search(p, raw_response, re.IGNORECASE)
+            if m:
+                try:
+                    result[field] = float(m.group(1).replace(",", ""))
+                except ValueError:
+                    pass
+                break
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # 7. Confidence & Validation Layer (Strict — Trust > Coverage)
 # ---------------------------------------------------------------------------

@@ -363,9 +363,16 @@ Rules:
 
         json_match = re.search(r'\{[\s\S]*\}', response)
         if json_match:
-            extracted = json.loads(json_match.group())
+            try:
+                extracted = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                from preprocessing import salvage_partial_extraction
+                extracted = salvage_partial_extraction(response)
+                logger.warning(f"JSON decode failed, salvaged partial extraction: {list(extracted.keys())}")
         else:
-            extracted = {"error": "Could not parse extraction results"}
+            from preprocessing import salvage_partial_extraction
+            extracted = salvage_partial_extraction(response)
+            logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
 
         receipt_id = str(uuid.uuid4())
         receipt_doc = {
@@ -389,54 +396,82 @@ Rules:
         receipt_doc["file_url"] = f"/uploads/{stored_name}"
         await db.uploaded_receipts.insert_one(receipt_doc)
 
+        extraction_meta = None
+
         if "error" not in extracted:
             if document_type == "purchase_invoice":
+                from preprocessing import (
+                    enrich_item_with_pack_size, validate_and_score_item,
+                    validate_purchase_items, sanitize_extracted_item,
+                    compute_extraction_meta,
+                )
+                from services.normalization import normalize_item
+
                 warnings = []
+                processed_items = []
                 for idx, item in enumerate(extracted.get("items", [])):
-                    qty = float(item.get("quantity", 0) or 0)
-                    up = float(item.get("unit_price", 0) or 0)
-                    tot = float(item.get("total", 0) or 0)
-                    item_warnings = []
+                    try:
+                        sanitize_extracted_item(item)
 
-                    if tot == 0 and qty > 0 and up > 0:
-                        item["total"] = round(qty * up, 2)
-                        tot = item["total"]
-                    elif up == 0 and tot > 0 and qty > 0:
-                        item["unit_price"] = round(tot / qty, 2)
-                        up = item["unit_price"]
-                    elif qty == 0 and tot > 0 and up > 0:
-                        item["quantity"] = round(tot / up, 2)
-                        qty = item["quantity"]
+                        qty = float(item.get("quantity", 0) or 0)
+                        up = float(item.get("unit_price", 0) or 0)
+                        tot = float(item.get("total", 0) or 0)
+                        item_warnings = []
 
-                    if qty > 0 and up > 0 and tot > 0:
-                        expected = round(qty * up, 2)
-                        if abs(expected - tot) > 0.02:
-                            item_warnings.append(f"qty*price={expected} but total={tot}")
+                        if tot == 0 and qty > 0 and up > 0:
+                            item["total"] = round(qty * up, 2)
+                            tot = item["total"]
+                        elif up == 0 and tot > 0 and qty > 0:
+                            item["unit_price"] = round(tot / qty, 2)
+                            up = item["unit_price"]
+                        elif qty == 0 and tot > 0 and up > 0:
+                            item["quantity"] = round(tot / up, 2)
+                            qty = item["quantity"]
+
+                        if qty > 0 and up > 0 and tot > 0:
+                            expected = round(qty * up, 2)
+                            if abs(expected - tot) > 0.02:
+                                item_warnings.append(f"qty*price={expected} but total={tot}")
+                                item["_warning"] = True
+
+                        if qty == 0:
+                            item_warnings.append("missing quantity")
+                            item["_warning"] = True
+                        if up == 0 and tot == 0:
+                            item_warnings.append("missing price and total")
+                            item["_warning"] = True
+                        if not item.get("raw_name", "").strip():
+                            item_warnings.append("missing item name")
                             item["_warning"] = True
 
-                    if qty == 0:
-                        item_warnings.append("missing quantity")
-                        item["_warning"] = True
-                    if up == 0 and tot == 0:
-                        item_warnings.append("missing price and total")
-                        item["_warning"] = True
-                    if not item.get("raw_name", "").strip():
-                        item_warnings.append("missing item name")
-                        item["_warning"] = True
+                        pack_raw = item.get("pack_size", "") or ""
+                        if pack_raw:
+                            item["pack_size"] = pack_raw
+                            enrich_item_with_pack_size(item)
 
-                    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items
-                    from services.normalization import normalize_item
-                    pack_raw = item.get("pack_size", "") or ""
-                    if pack_raw:
-                        item["pack_size"] = pack_raw
-                        enrich_item_with_pack_size(item)
+                        normalize_item(item)
+                        validate_and_score_item(item)
 
-                    normalize_item(item)
-                    validate_and_score_item(item)
+                        if item.get("_parse_issues"):
+                            item_warnings.extend(item["_parse_issues"])
 
-                    if item_warnings:
-                        item["_warning_detail"] = "; ".join(item_warnings)
-                        warnings.extend(item_warnings)
+                        if item_warnings:
+                            item["_warning_detail"] = "; ".join(item_warnings)
+                            warnings.extend(item_warnings)
+
+                        processed_items.append(item)
+                    except Exception as item_err:
+                        logger.error(f"Item {idx} processing failed: {item_err}")
+                        item["_warning"] = True
+                        item["_warning_detail"] = f"Processing error: {str(item_err)}"
+                        item["confidence_level"] = "unverified"
+                        item["confidence_score"] = 0
+                        item["needs_review"] = True
+                        item["review_reason"] = f"Processing error: {str(item_err)}"
+                        warnings.append(f"Item {idx}: processing error")
+                        processed_items.append(item)
+
+                extracted["items"] = processed_items
 
                 items_sum = round(sum(float(it.get("total", 0) or 0) for it in extracted.get("items", [])), 2)
                 if not extracted.get("subtotal") and items_sum > 0:
@@ -469,6 +504,12 @@ Rules:
                 extracted["_warnings"] = warnings
                 extracted["_has_warnings"] = len(warnings) > 0
 
+                # Cross-item validation
+                validate_purchase_items(extracted["items"])
+
+                # Compute invoice-level extraction quality
+                extraction_meta = compute_extraction_meta(extracted["items"], extracted)
+
         extraction_id = str(uuid.uuid4())
         ext_doc = {
             "id": extraction_id,
@@ -495,7 +536,7 @@ Rules:
                 })
             await db.extracted_items.insert_many(item_docs)
 
-        if isinstance(extracted.get("items"), list):
+        if isinstance(extracted.get("items"), list) and document_type != "purchase_invoice":
             from preprocessing import validate_purchase_items
             validate_purchase_items(extracted["items"])
 
@@ -514,7 +555,7 @@ Rules:
             if supplier_id_for_correction:
                 await apply_corrections(extracted["items"], rid, supplier_id_for_correction)
 
-        return {
+        result = {
             "extracted_data": extracted,
             "document_type": document_type,
             "receipt_id": receipt_id,
@@ -523,6 +564,15 @@ Rules:
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
             "message": f"Data extracted using {parsing_method} parsing" + (" (vendor pattern matched)" if parsing_method == "vendor" else "") + (f" -- pages classified as {page_types}" if page_types else ""),
         }
+
+        # Attach extraction quality metadata for purchase invoices
+        if document_type == "purchase_invoice":
+            if extraction_meta is None:
+                from preprocessing import compute_extraction_meta
+                extraction_meta = compute_extraction_meta(extracted.get("items", []) if isinstance(extracted.get("items"), list) else [], extracted)
+            result["extraction_meta"] = extraction_meta
+
+        return result
     except HTTPException:
         raise
     except Exception as e:

@@ -45,7 +45,7 @@ async def get_purchase(pid: str, user=Depends(get_user)):
 
 @router.post("/purchases")
 async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
-    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items, compute_review_status
+    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items, compute_review_status, sanitize_extracted_item
     from services.normalization import normalize_item
     from services.correction_memory import apply_corrections
     doc = data.model_dump()
@@ -67,6 +67,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
             if sup:
                 supplier_id = sup["id"]
     for item in doc.get("items", []):
+        sanitize_extracted_item(item)  # Sanitize first to handle None, negatives, type coercion
         enrich_item_with_pack_size(item)
         normalize_item(item)
         validate_and_score_item(item)
@@ -134,7 +135,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
 
     for item in doc.get("items", []):
         raw = item.get("raw_name", "").strip()
-        new_price = float(item.get("unit_price", 0))
+        new_price = float(item.get("unit_price") or 0)
         if not raw or new_price <= 0:
             continue
 
@@ -180,7 +181,7 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
 
 @router.put("/purchases/{pid}")
 async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)):
-    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items, compute_review_status
+    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, validate_purchase_items, compute_review_status, sanitize_extracted_item
     from services.normalization import normalize_item
     from services.correction_memory import save_correction
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
@@ -204,6 +205,7 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
         old_items = old.get("items", [])
         old_items_by_idx = {i: it for i, it in enumerate(old_items)}
         for idx, item in enumerate(update_data["items"]):
+            sanitize_extracted_item(item)  # Sanitize first to handle None, negatives, type coercion
             enrich_item_with_pack_size(item)
             normalize_item(item)
             validate_and_score_item(item)
