@@ -46,7 +46,6 @@ async def save_correction(
             "original_raw_name": original_raw_name,
             "user_id": user_id,
             "updated_at": now,
-            "confidence": min(existing.get("confidence", 1.0) + 0.1, 2.0),
         }
         await db.correction_memory.update_one(
             {"id": existing["id"]},
@@ -67,7 +66,9 @@ async def save_correction(
             "original_raw_name": original_raw_name,
             "corrected_name": corrected_name,
             "corrected_specs": corrected_specs or {},
-            "confidence": 1.0,
+            "enabled": True,
+            "usage_count": 0,
+            "last_used_at": None,
             "created_at": now,
             "updated_at": now,
         }
@@ -101,12 +102,15 @@ async def apply_corrections(items: list, restaurant_id: str, supplier_id: str):
     if not corrections:
         return items
 
-    # Index by normalized_key for O(1) lookup
+    # Index by normalized_key for O(1) lookup — skip disabled corrections
     correction_map = {}
     for c in corrections:
         key = c.get("normalized_key", "")
-        if key:
+        if key and c.get("enabled", True):
             correction_map[key] = c
+
+    now = datetime.now(timezone.utc).isoformat()
+    used_ids = []
 
     for item in items:
         norm = item.get("norm")
@@ -155,6 +159,14 @@ async def apply_corrections(items: list, restaurant_id: str, supplier_id: str):
         logger.info(
             f"Correction applied: '{item.get('raw_name','')}' → '{corrected_name}' "
             f"(key={strict_key}, confidence={correction.get('confidence', 1.0)})"
+        )
+        used_ids.append(correction["id"])
+
+    # Batch-update usage stats for all applied corrections
+    if used_ids:
+        await db.correction_memory.update_many(
+            {"id": {"$in": used_ids}},
+            {"$inc": {"usage_count": 1}, "$set": {"last_used_at": now}},
         )
 
     return items

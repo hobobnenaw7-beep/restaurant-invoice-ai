@@ -19,6 +19,7 @@ import ChatPage from "@/pages/ChatPage";
 import SettingsPage from "@/pages/SettingsPage";
 import PurchaseDecisionsPage from "@/pages/PurchaseDecisionsPage";
 import AuditLogPage from "@/pages/AuditLogPage";
+import CorrectionMemoryPage from "@/pages/CorrectionMemoryPage";
 import VendorComparisonPage from "@/pages/VendorComparisonPage";
 
 function ProtectedRoute({ children }) {
@@ -56,6 +57,7 @@ function App() {
           <Route path="/purchase-decisions" element={<ProtectedRoute><PurchaseDecisionsPage /></ProtectedRoute>} />
           <Route path="/audit-log" element={<ProtectedRoute><AuditLogPage /></ProtectedRoute>} />
           <Route path="/vendor-comparison" element={<ProtectedRoute><VendorComparisonPage /></ProtectedRoute>} />
+          <Route path="/correction-memory" element={<ProtectedRoute><CorrectionMemoryPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         <Toaster position="top-right" richColors />
