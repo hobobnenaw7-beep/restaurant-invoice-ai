@@ -7,9 +7,10 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - OCR extraction pipeline (GPT-5.2 via Emergent LLM Key)
 - Dual pricing mode detection: CASE_PRICE vs WEIGHT_BASED
 - Conservative normalization (preserve meaningful product distinctions)
-- Correction Memory: auto-apply learned user edits per supplier
+- Correction Memory: store user edits per supplier (name, pack_size, unit_price, total)
 - Review lifecycle with guided correction suggestions + Fix All Issues
 - Invoice-level review_status: clean | warning | error
+- Issue type classification: math, pack, name, suspicious, missing, review
 
 ## Architecture
 - Backend: FastAPI modular (core/, routes/, services/)
@@ -30,24 +31,21 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - [x] Guided Correction Suggestions V1
 - [x] Fix All Issues Bulk Action
 - [x] Pricing Mode Detection & $/LB Fix (2026-04-01) **FOUNDATIONAL**
-  - Simple math tried FIRST: Qty×Price=Total → CASE_PRICE mode
-  - Weight math as fallback: Qty×CaseWT×Price=Total → WEIGHT_BASED mode
-  - CASE_PRICE: $/LB = CasePrice / CaseWT (derived, not direct)
-  - WEIGHT_BASED: $/LB = unit_price (IS the price per pound)
-  - pricing_mode field set on every item
-  - enrich_item_with_pack_size no longer computes $/LB (deferred to validation)
-  - NxN pack format parsing: 1x30, 1x30LB, 12x1LB
-  - 39 $/LB values corrected across 108 invoices
-  - Performance Foodservice: false $/LB values fixed (e.g., $60.84 → $24.34/LB)
-  - Frontend revalidateItem mirrors backend pricing mode logic
+- [x] Correction Layer Phase 1: Capture + Visibility (2026-04-01)
+  - Issue type classification (classifyIssue): math, pack, name, suspicious, missing, review
+  - List view: categorized issue tags ("1 math · 1 pack") per invoice
+  - Edit dialog: specific issue type badges (Math Mismatch, Pack Parse Failed, Missing Name, etc.)
+  - Backend: correction_memory stores edits for pack_size, unit_price, total (not just name)
+  - Apply only for deterministic fixes (math recalculation)
+  - Edit Manually + Ignore always available
 
 ## Known Issues
 - P0: Old pytest suite failures — deferred by user
 - P2: bcrypt.__about__ warning in backend startup logs
-- Minor: OCR sometimes corrupts pack text (e.g., "2/5 LB" → "2.5 LB") — extraction-level issue
+- Minor: OCR sometimes corrupts pack text (e.g., "2/5 LB" -> "2.5 LB") — extraction-level issue
 
 ## Upcoming Tasks (P1)
-- Correction Review UI / Correction Memory Management UI
+- Correction Layer Phase 2: Surface stored corrections as simple hints (not AI suggestions)
 - Integrate loose match keys into vendor comparison for auto-grouping
 
 ## Future/Backlog (P2)
