@@ -143,6 +143,25 @@ function revalidateItem(item) {
   return { ...item, valid_calc: validCalc, validation_errors: errors, confidence_score: score, confidence_level: level, confidence_reason: reason, needs_review: needsReview, review_reason: needsReview ? reason : null, suggested_fix: suggestedFix, _reviewed: false, _fixing: false };
 }
 
+// Issue type classifier — maps validation state to a human-readable label + color
+function classifyIssue(item) {
+  const errors = item.validation_errors || [];
+  const reason = (item.review_reason || '').toLowerCase();
+  const name = (item.raw_name || '').trim();
+
+  if (errors.some(e => /math mismatch/i.test(e)) || reason.includes('math mismatch'))
+    return { type: 'math', label: 'Math Mismatch', badge: 'bg-red-100 text-red-700 border-red-200' };
+  if (errors.some(e => /pack.*parse.*failed/i.test(e)) || reason.includes('pack size'))
+    return { type: 'pack', label: 'Pack Parse Failed', badge: 'bg-orange-100 text-orange-700 border-orange-200' };
+  if (!name || errors.some(e => /item_name/i.test(e)) || reason.includes('missing item name'))
+    return { type: 'name', label: 'Missing Name', badge: 'bg-red-100 text-red-700 border-red-200' };
+  if (errors.some(e => /suspicious/i.test(e)) || reason.includes('suspicious'))
+    return { type: 'suspicious', label: 'Suspicious Values', badge: 'bg-red-100 text-red-700 border-red-200' };
+  if (errors.some(e => /missing:/i.test(e)) || reason.includes('missing fields'))
+    return { type: 'missing', label: 'Missing Fields', badge: 'bg-amber-100 text-amber-700 border-amber-200' };
+  return { type: 'review', label: 'Needs Review', badge: 'bg-amber-100 text-amber-700 border-amber-200' };
+}
+
 const OTHER_CATEGORIES = ['Utilities', 'Taxes', 'Maintenance & Repairs', 'Software & Subscriptions', 'Services', 'Rent / Facility', 'Miscellaneous'];
 
 // ======================== ITEM AUTOCOMPLETE ========================
@@ -534,27 +553,33 @@ function RawMaterialsTab({ api }) {
                 <TableCell className="text-xs text-center text-slate-500">
                   <span>{(p.items || []).length}</span>
                   {(() => {
-                    const items = p.items || [];
-                    const errCount = items.filter(it => it.needs_review && (it.validation_errors?.some(e => /math mismatch|suspicious|item_name/i.test(e)) || !it.raw_name?.trim())).length;
-                    const warnCount = items.filter(it => it.needs_review).length - errCount;
-                    if (errCount > 0 && warnCount > 0) return (
-                      <span className="ml-1.5 text-[9px] font-semibold" data-testid={`issue-count-${i}`}>
-                        <span className="text-red-600">{errCount} err</span>
-                        <span className="text-slate-400 mx-0.5">/</span>
-                        <span className="text-amber-600">{warnCount} warn</span>
+                    const reviewItems = (p.items || []).filter(it => it.needs_review);
+                    if (reviewItems.length === 0) return null;
+                    const counts = {};
+                    reviewItems.forEach(it => {
+                      const { type } = classifyIssue(it);
+                      counts[type] = (counts[type] || 0) + 1;
+                    });
+                    const tagDefs = {
+                      math: { label: 'math', color: 'text-red-600' },
+                      pack: { label: 'pack', color: 'text-orange-600' },
+                      name: { label: 'name', color: 'text-red-600' },
+                      suspicious: { label: 'suspicious', color: 'text-red-600' },
+                      missing: { label: 'missing', color: 'text-amber-600' },
+                      review: { label: 'review', color: 'text-amber-600' },
+                    };
+                    const tags = Object.entries(counts).map(([type, count]) => ({ ...tagDefs[type], count }));
+                    return (
+                      <span className="ml-1.5 inline-flex items-center gap-0.5 flex-wrap text-[9px] font-semibold" data-testid={`issue-tags-${i}`}>
+                        <AlertTriangle className="w-2.5 h-2.5 text-amber-500 flex-shrink-0" />
+                        {tags.map((t, ti) => (
+                          <span key={ti}>
+                            {ti > 0 && <span className="text-slate-300">&middot;</span>}
+                            <span className={t.color}>{t.count} {t.label}</span>
+                          </span>
+                        ))}
                       </span>
                     );
-                    if (errCount > 0) return (
-                      <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600" data-testid={`issue-count-${i}`}>
-                        <AlertTriangle className="w-2.5 h-2.5" />{errCount} error{errCount !== 1 ? 's' : ''}
-                      </span>
-                    );
-                    if (warnCount > 0) return (
-                      <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-600" data-testid={`issue-count-${i}`}>
-                        <AlertTriangle className="w-2.5 h-2.5" />{warnCount} issue{warnCount !== 1 ? 's' : ''}
-                      </span>
-                    );
-                    return null;
                   })()}
                 </TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(p.total)}</TableCell>
@@ -767,6 +792,7 @@ function RawMaterialsTab({ api }) {
                 const confidenceTitle = item._reviewed ? 'Confirmed by user' : cl === 'trusted' ? 'Trusted — auto-verified' : cl === 'unverified' ? 'Unverified — needs review' : '';
                 const rowBorder = item._fixing ? 'border-blue-300 bg-blue-50/40 ring-1 ring-blue-200' : isUncertain ? 'border-amber-200 bg-amber-50/40' : item._reviewed ? 'bg-emerald-50/30 border border-emerald-200' : item._warning ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50';
                 const fixHighlight = item._fixing ? 'ring-1 ring-blue-300 border-blue-300' : '';
+                const issue = isUncertain ? classifyIssue(item) : null;
                 return (
                 <div key={item._key} className={`rounded-lg p-2 border ${rowBorder}`} data-testid={`line-item-${i}`}>
                   <div className="grid grid-cols-[24px_minmax(140px,2fr)_65px_100px_85px_85px_65px_65px_32px] gap-1.5 items-center">
@@ -798,10 +824,10 @@ function RawMaterialsTab({ api }) {
                           </span>
                         ) : (
                           <>
-                            <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full" data-testid={`status-badge-${i}`}>
-                              <AlertTriangle className="w-2.5 h-2.5" /> Needs Review
+                            <span className={`inline-flex items-center gap-1 text-[9px] font-semibold px-2 py-0.5 rounded-full border ${issue?.badge || 'bg-amber-100 text-amber-700 border-amber-200'}`} data-testid={`status-badge-${i}`}>
+                              <AlertTriangle className="w-2.5 h-2.5" /> {issue?.label || 'Needs Review'}
                             </span>
-                            <span className="text-[9px] text-amber-600" data-testid={`review-reason-${i}`}>{item.review_reason || item.confidence_reason || item.validation_errors?.[0] || 'Needs review'}</span>
+                            <span className="text-[9px] text-slate-500" data-testid={`review-reason-${i}`}>{item.review_reason || item.confidence_reason || item.validation_errors?.[0] || 'Needs review'}</span>
                             <div className="ml-auto flex items-center gap-1.5">
                               <button
                                 className={`text-[9px] font-semibold px-2 py-0.5 rounded transition-colors ${item._fixing ? 'text-blue-700 bg-blue-200' : 'text-blue-700 bg-blue-100 hover:bg-blue-200'}`}

@@ -217,16 +217,41 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
                 old_norm = old_item.get("norm", {})
                 old_key = old_norm.get("strict_match_key", "")
                 new_norm = item.get("norm", {})
-                new_key = new_norm.get("strict_match_key", "")
-                if old_raw and new_raw and old_raw != new_raw and old_key:
+
+                # Detect field-level changes
+                name_changed = bool(old_raw and new_raw and old_raw != new_raw)
+
+                old_pack = (old_item.get("pack_size_raw") or old_item.get("pack_size") or "").strip()
+                new_pack = (item.get("pack_size_raw") or item.get("pack_size") or "").strip()
+                pack_changed = bool(old_pack != new_pack and new_pack)
+
+                old_up = float(old_item.get("unit_price") or 0)
+                new_up = float(item.get("unit_price") or 0)
+                price_changed = abs(old_up - new_up) > 0.001 and new_up > 0
+
+                old_total = float(old_item.get("total") or 0)
+                new_total = float(item.get("total") or 0)
+                total_changed = abs(old_total - new_total) > 0.001 and new_total > 0
+
+                has_changes = name_changed or pack_changed or price_changed or total_changed
+
+                if has_changes and old_key:
+                    corrected_specs = dict(new_norm.get("specs") or {})
+                    if pack_changed:
+                        corrected_specs["pack_size"] = new_pack
+                    if price_changed:
+                        corrected_specs["unit_price"] = new_up
+                    if total_changed:
+                        corrected_specs["total"] = new_total
+
                     await save_correction(
                         user_id=user["id"],
                         restaurant_id=rid,
                         supplier_id=supplier_id,
                         original_raw_name=old_raw,
                         normalized_key=old_key,
-                        corrected_name=new_raw,
-                        corrected_specs=new_norm.get("specs"),
+                        corrected_name=new_raw if name_changed else old_raw,
+                        corrected_specs=corrected_specs,
                     )
         validate_purchase_items(update_data["items"])
         update_data["review_status"] = compute_review_status(update_data["items"])
