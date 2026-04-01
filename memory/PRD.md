@@ -11,6 +11,7 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - Review lifecycle with guided correction suggestions + Fix All Issues
 - Invoice-level review_status: clean | warning | error
 - Issue type classification: math, pack, name, suspicious, missing, review
+- Correction hints: surface stored corrections as user-controlled hints (no auto-apply)
 
 ## Architecture
 - Backend: FastAPI modular (core/, routes/, services/)
@@ -30,22 +31,24 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - [x] Hard Invoice Robustness Layer
 - [x] Guided Correction Suggestions V1
 - [x] Fix All Issues Bulk Action
-- [x] Pricing Mode Detection & $/LB Fix (2026-04-01) **FOUNDATIONAL**
+- [x] Pricing Mode Detection & $/LB Fix **FOUNDATIONAL**
 - [x] Correction Layer Phase 1: Capture + Visibility (2026-04-01)
   - Issue type classification (classifyIssue): math, pack, name, suspicious, missing, review
   - List view: categorized issue tags ("1 math · 1 pack") per invoice
-  - Edit dialog: specific issue type badges (Math Mismatch, Pack Parse Failed, Missing Name, etc.)
-  - Backend: correction_memory stores edits for pack_size, unit_price, total (not just name)
-  - Apply only for deterministic fixes (math recalculation)
-  - Edit Manually + Ignore always available
+  - Edit dialog: specific issue type badges (Math Mismatch, Pack Parse Failed, etc.)
+  - Backend: correction_memory stores edits for pack_size, unit_price, total
+- [x] Correction Layer Phase 2: Correction Hints (2026-04-01)
+  - GET /api/correction-hints?supplier_name=X — returns unambiguous stored corrections
+  - Ambiguity filtering: multiple corrections for same normalized_key → show nothing
+  - "Previously corrected" hints in edit dialog with per-field Use/Dismiss buttons
+  - No auto-apply, no ranking, no AI, no confidence scoring
+  - User explicitly clicks "Use" to apply a specific field correction
 
-## Known Issues
-- P0: Old pytest suite failures — deferred by user
-- P2: bcrypt.__about__ warning in backend startup logs
-- Minor: OCR sometimes corrupts pack text (e.g., "2/5 LB" -> "2.5 LB") — extraction-level issue
+## Known Issues (Parked)
+- Old pytest suite failures — deferred by user (Message 5)
+- bcrypt.__about__ warning in backend startup logs (P2)
 
 ## Upcoming Tasks (P1)
-- Correction Layer Phase 2: Surface stored corrections as simple hints (not AI suggestions)
 - Integrate loose match keys into vendor comparison for auto-grouping
 
 ## Future/Backlog (P2)
