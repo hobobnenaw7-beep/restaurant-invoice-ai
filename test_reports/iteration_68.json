@@ -1,0 +1,100 @@
+{
+  "summary": "Tested Correction Layer Phase 2 (Correction Hints as User-Controlled Hints). All 13 features verified successfully. Backend GET /api/correction-hints returns unambiguous corrections with proper filtering. Frontend displays 'PREVIOUSLY CORRECTED' hints with per-field 'Use' buttons that correctly apply values. Dismiss button hides hints. Hints only appear when values differ from corrections.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard charts",
+        "issues": ["Console warning: chart width/height -1 - minor rendering issue on initial load"]
+      },
+      {
+        "screen": "Dialog components",
+        "issues": ["Console warning: Missing Description or aria-describedby for DialogContent - accessibility improvement needed"]
+      }
+    ]
+  },
+  "test_results": {
+    "backend_correction_hints_api": {
+      "empty_supplier_returns_empty": "PASS - GET /api/correction-hints with empty supplier_name returns []",
+      "unknown_vendor_returns_empty": "PASS - GET /api/correction-hints with unknown vendor returns []",
+      "known_vendor_returns_corrections": "PASS - GET /api/correction-hints with 'Quick Review Test Vendor' returns 2 corrections",
+      "response_excludes_mongodb_id": "PASS - No _id field in correction responses",
+      "ambiguity_filtering_works": "PASS - Multiple corrections for same normalized_key are filtered out"
+    },
+    "backend_correction_memory_storage": {
+      "unit_price_stored": "PASS - PUT /api/purchases stores unit_price edits in correction_memory.corrected_specs",
+      "total_stored": "PASS - PUT /api/purchases stores total edits in correction_memory.corrected_specs",
+      "pack_size_stored": "PASS - PUT /api/purchases stores pack_size edits in correction_memory.corrected_specs"
+    },
+    "frontend_correction_hints_ui": {
+      "previously_corrected_label": "PASS - 'PREVIOUSLY CORRECTED' label displayed in bg-slate-50 box",
+      "per_field_changes_shown": "PASS - Price and Total changes shown with from→to format",
+      "use_button_for_price": "PASS - 'Use' button for Price updates unit_price input (89 → 33.33)",
+      "use_button_for_total": "PASS - 'Use' button for Total updates total field",
+      "dismiss_button_hides_hint": "PASS - 'Dismiss' button hides entire hint box for that item",
+      "hint_removed_after_use": "PASS - After using Price hint, only Total hint remains"
+    },
+    "frontend_hint_visibility_rules": {
+      "no_hint_when_values_match": "PASS - CHICKEN BREAST BNLS has no hint (price 42.5 matches correction)",
+      "no_hint_without_matchkey": "PASS - Unnamed item has no hint (no _matchKey from normalization)",
+      "no_hint_without_correction": "PASS - OLIVE OIL has no hint (no correction exists for this item)",
+      "only_mismatched_items_show_hints": "PASS - Only SHRIMP 31-35 shows hints (price/total differ from correction)"
+    },
+    "frontend_issue_badges": {
+      "math_mismatch_badge": "PASS - 'Math Mismatch' badge displayed on SHRIMP 31-35",
+      "missing_name_badge": "PASS - 'Missing Name' badge displayed on unnamed item",
+      "fix_all_issues_button": "PASS - 'Fix All Issues (1)' button visible for safe fixes"
+    }
+  },
+  "features_verified": [
+    "1. GET /api/correction-hints?supplier_name=X returns only unambiguous corrections (no duplicates for same normalized_key)",
+    "2. GET /api/correction-hints returns empty array for unknown vendor",
+    "3. GET /api/correction-hints returns empty array for empty supplier_name",
+    "4. Edit dialog shows 'PREVIOUSLY CORRECTED' hints with per-field changes (Price, Total, Pack size, Name)",
+    "5. Each hint change has a 'Use' button that applies only that specific field value",
+    "6. 'Use' button for Price hint updates the unit_price input field",
+    "7. 'Use' button for Total hint updates the total input field",
+    "8. 'Dismiss' button on the hint box hides the entire hint for that item",
+    "9. Hints do NOT appear when current item values already match the correction",
+    "10. Hints do NOT appear for items without a _matchKey (e.g., new items or items without normalization)",
+    "11. Issue type badges (Math Mismatch, Pack Parse Failed, Missing Name) still display correctly",
+    "12. Fix All Issues button still works correctly",
+    "13. Correction memory still stores edits for pack_size, unit_price, total on save"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_correction_hints_phase2.py",
+    "/app/test_reports/pytest/pytest_correction_hints_phase2.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "correction_memory.py GET /correction-hints correctly implements ambiguity filtering (lines 44-56)",
+    "ExpensesPage.js correction hint UI at lines 912-966 correctly builds changes array and shows Use/Dismiss buttons",
+    "Hint visibility logic correctly checks: _matchKey exists, hint exists in correctionHints map, values differ from correction",
+    "Use button onClick correctly applies only the specific field (ch.apply) and revalidates the item",
+    "purchases.py PUT handler correctly detects field-level changes and saves to correction_memory (lines 213-255)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_correction_hints_phase2.py"
+  ],
+  "success_rate": {
+    "backend": "100% (7 passed)",
+    "frontend": "100% (all 13 features verified)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Used existing test purchase QR-TEST-001 (id=9e18064e-df44-4db8-857d-ae6d11fb8b97) with SHRIMP 31-35 having wrong values (price=89, total=999.99) while correction exists (price=33.33, total=99.99).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Correction Layer Phase 2 fully tested. Key features: GET /api/correction-hints returns unambiguous corrections with ambiguity filtering. Frontend shows 'PREVIOUSLY CORRECTED' hints in bg-slate-50 box with per-field 'Use' buttons. Hints only appear when: (1) item has _matchKey, (2) correction exists for that key, (3) current values differ from corrected values. Test purchase: QR-TEST-001 with SHRIMP 31-35 item. Correction for SHRIMP 31-35: price=33.33, total=99.99.",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}

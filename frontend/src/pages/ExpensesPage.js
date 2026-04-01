@@ -249,6 +249,7 @@ function RawMaterialsTab({ api }) {
   const [showConfirmSave, setShowConfirmSave] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
   const [fixAllPreview, setFixAllPreview] = useState(null);
+  const [correctionHints, setCorrectionHints] = useState({});
 
 
   // ---- Fix All Issues helpers ----
@@ -347,7 +348,7 @@ function RawMaterialsTab({ api }) {
     setForm({ supplier_name: '', invoice_number: '', invoice_date: new Date().toISOString().split('T')[0], items: [mkItem()], subtotal: 0, tax: 0, total: 0 });
     uploadPreviews.forEach(u => URL.revokeObjectURL(u));
     setUploadFiles([]); setUploadPreviews([]); setShowAdd(true); setReviewMode(false);
-    setReceiptId(null); setParsingMethod(null);
+    setReceiptId(null); setParsingMethod(null); setCorrectionHints({});
     api.get('/items').then(res => {
       const names = [];
       (res.data || []).forEach(item => {
@@ -365,6 +366,8 @@ function RawMaterialsTab({ api }) {
       invoice_date: record.invoice_date || '',
       items: (record.items || []).map(it => {
         const item = mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || null, it.total_case_weight || null, it.normalized_price_per_lb || null, it.pack_parse_status || null, false, '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, it.confidence_level === 'trusted', it.confidence_reason || null, !!it.needs_review, it.review_reason || null, it.suggested_fix || null);
+        // Store match key from normalization for correction hint matching
+        item._matchKey = (it.norm && it.norm.strict_match_key) || '';
         // For items needing review but missing suggestions (old data), generate client-side
         if ((item.needs_review || (item.confidence_level && item.confidence_level !== 'trusted')) && !item.suggested_fix && !item._reviewed) {
           return revalidateItem(item);
@@ -377,6 +380,15 @@ function RawMaterialsTab({ api }) {
     });
     if (uploadPreviews.length) uploadPreviews.forEach(u => URL.revokeObjectURL(u));
     setUploadFiles([]); setUploadPreviews([]); setShowAdd(true); setReviewMode(false);
+    // Fetch correction hints for this vendor
+    setCorrectionHints({});
+    if (record.supplier_name) {
+      api.get('/correction-hints', { params: { supplier_name: record.supplier_name } }).then(res => {
+        const map = {};
+        (res.data || []).forEach(c => { if (c.normalized_key) map[c.normalized_key] = c; });
+        setCorrectionHints(map);
+      }).catch(() => {});
+    }
     api.get('/items').then(res => {
       const names = [];
       (res.data || []).forEach(item => { names.push(item.name); (item.aliases || []).forEach(a => names.push(a.alias_name)); });
@@ -464,7 +476,7 @@ function RawMaterialsTab({ api }) {
     const doSave = async () => {
       setSaving(true);
       try {
-        const payload = { ...form, items: form.items.map(({ _key, _warning, _warning_detail, _reviewed, _fixing, ...rest }) => ({ ...rest, pack_size: rest.pack_size || '' })) };
+        const payload = { ...form, items: form.items.map(({ _key, _warning, _warning_detail, _reviewed, _fixing, _matchKey, _hintDismissed, ...rest }) => ({ ...rest, pack_size: rest.pack_size || '' })) };
         delete payload._has_warnings; delete payload._warnings; delete payload._subtotal_warning; delete payload._total_warning; delete payload._date_warning;
         if (editingId) {
           await api.put(`/purchases/${editingId}`, payload);
@@ -896,6 +908,62 @@ function RawMaterialsTab({ api }) {
                     </div>
                   )}
                   {item._warning_detail && !isUncertain && !cl && <p className="text-[9px] text-amber-600 mt-1 pl-7"><AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />{item._warning_detail}</p>}
+                  {/* Correction hint — "Previously corrected" */}
+                  {(() => {
+                    const key = item._matchKey;
+                    if (!key || item._hintDismissed) return null;
+                    const hint = correctionHints[key];
+                    if (!hint) return null;
+                    // Build list of changes to display
+                    const changes = [];
+                    const specs = hint.corrected_specs || {};
+                    if (hint.corrected_name && hint.original_raw_name && hint.corrected_name !== hint.original_raw_name) {
+                      changes.push({ field: 'Name', from: hint.original_raw_name, to: hint.corrected_name, apply: { raw_name: hint.corrected_name } });
+                    }
+                    if (specs.pack_size && specs.pack_size !== (item.pack_size || '')) {
+                      changes.push({ field: 'Pack size', from: item.pack_size || '(empty)', to: specs.pack_size, apply: { pack_size: specs.pack_size } });
+                    }
+                    if (specs.unit_price != null && Math.abs(specs.unit_price - (parseFloat(item.unit_price) || 0)) > 0.001) {
+                      changes.push({ field: 'Price', from: `$${(parseFloat(item.unit_price) || 0).toFixed(2)}`, to: `$${specs.unit_price.toFixed(2)}`, apply: { unit_price: specs.unit_price } });
+                    }
+                    if (specs.total != null && Math.abs(specs.total - (parseFloat(item.total) || 0)) > 0.001) {
+                      changes.push({ field: 'Total', from: `$${(parseFloat(item.total) || 0).toFixed(2)}`, to: `$${specs.total.toFixed(2)}`, apply: { total: specs.total } });
+                    }
+                    if (changes.length === 0) return null;
+                    return (
+                      <div className="mt-1.5 ml-7 p-2 rounded-md bg-slate-50 border border-slate-200" data-testid={`correction-hint-${i}`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">Previously corrected</span>
+                          <button
+                            className="text-[9px] text-slate-400 hover:text-slate-600 transition-colors"
+                            onClick={() => setForm(f => { const it = [...f.items]; it[i] = { ...it[i], _hintDismissed: true }; return { ...f, items: it }; })}
+                            data-testid={`dismiss-hint-${i}`}
+                          >Dismiss</button>
+                        </div>
+                        <div className="space-y-1">
+                          {changes.map((ch, ci) => (
+                            <div key={ci} className="flex items-center gap-2 text-[10px]" data-testid={`hint-change-${i}-${ci}`}>
+                              <span className="text-slate-400 font-medium w-12 flex-shrink-0">{ch.field}:</span>
+                              <span className="text-slate-500">{ch.from}</span>
+                              <span className="text-slate-300">&rarr;</span>
+                              <span className="text-slate-700 font-semibold">{ch.to}</span>
+                              <button
+                                className="ml-auto text-[9px] font-semibold text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 px-2 py-0.5 rounded transition-colors"
+                                data-testid={`use-hint-${i}-${ci}`}
+                                onClick={() => setForm(f => {
+                                  const it = [...f.items];
+                                  const updated = { ...it[i], ...ch.apply };
+                                  it[i] = revalidateItem(updated);
+                                  const sub = Math.round(it.reduce((s, x) => s + (parseFloat(x.total) || 0), 0) * 100) / 100;
+                                  return { ...f, items: it, subtotal: sub, total: Math.round((sub + (f.tax || 0)) * 100) / 100 };
+                                })}
+                              >Use</button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
                 );
               })}</div>
