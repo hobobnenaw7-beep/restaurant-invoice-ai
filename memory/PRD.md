@@ -1,7 +1,7 @@
 # Restaurant Accountant AI — Product Requirements Document
 
 ## Original Problem Statement
-Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-powered OCR invoice extraction. Features modular backend architecture, normalization layer, correction memory system, review lifecycle, hard invoice robustness, guided correction suggestions, and weight-based invoice math.
+Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-powered OCR invoice extraction. Features modular backend architecture, normalization layer, correction memory system, review lifecycle, hard invoice robustness, guided correction suggestions, weight-based invoice math, and bulk fix actions.
 
 ## Core Requirements
 - OCR extraction pipeline (GPT-5.2 via Emergent LLM Key)
@@ -11,6 +11,7 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - Correction Memory: auto-apply learned user edits per supplier
 - Review lifecycle with guided correction suggestions
 - Invoice-level review_status: clean | warning | error
+- Fix All Issues bulk action for batch corrections
 
 ## Architecture
 - Backend: FastAPI modular (core/, routes/, services/)
@@ -29,16 +30,17 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - [x] Invoice-level review_status (clean/warning/error)
 - [x] Hard Invoice Robustness Layer
 - [x] Guided Correction Suggestions V1
-- [x] Weight-Based Invoice Math Fix (2026-03-31)
-  - parse_pack_size handles NxN formats: 1x30, 1x30LB, 12x1LB, 1X30, etc.
-  - Validation: Qty × CaseWT × $/LB = Total (for weight-based items)
-  - Fallback: Qty × Price for non-weight items (GAL, EA, CT, etc.)
-  - Case WT auto-fills from parsed pack weight
-  - $/LB = unit_price directly (not unit_price ÷ case_weight)
-  - $/LB auto-computed from total when price missing
-  - Suggestions use weight-based formula
-  - False mismatches eliminated (AFS invoice: error → clean)
-  - All 107 purchases re-backfilled with corrected math
+- [x] Weight-Based Invoice Math Fix
+- [x] Fix All Issues Bulk Action (2026-04-01)
+  - "Fix All Issues" button in confidence review banner with count
+  - Only safe fixes: math recalculation, pack normalization, correction memory
+  - Excludes unsafe: fuzzy guesses, missing name, unknown units
+  - Confirmation modal with summary + per-item detail
+  - Apply All: batch-applies fixes, revalidates each item
+  - Fixed items become Trusted, unfixable items stay flagged
+  - Button disappears when no safe fixes remain
+  - Subtotals/totals auto-update after apply
+  - Per-row Apply/Edit/Ignore preserved alongside bulk action
 
 ## Known Issues
 - P0: Old pytest suite failures (test_profit_calculation.py etc.) — deferred by user
