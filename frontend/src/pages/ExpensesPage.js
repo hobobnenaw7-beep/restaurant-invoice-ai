@@ -533,15 +533,29 @@ function RawMaterialsTab({ api }) {
                 <TableCell><Badge variant="outline" className="text-[10px] font-mono">{p.invoice_number}</Badge></TableCell>
                 <TableCell className="text-xs text-center text-slate-500">
                   <span>{(p.items || []).length}</span>
-                  {rs === 'error' ? (
-                    <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600" title="Has errors requiring attention" data-testid={`review-status-${i}`}>
-                      <AlertTriangle className="w-2.5 h-2.5" />
-                    </span>
-                  ) : rs === 'warning' ? (
-                    <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-600" title="Items need review" data-testid={`review-status-${i}`}>
-                      <AlertTriangle className="w-2.5 h-2.5" />
-                    </span>
-                  ) : null}
+                  {(() => {
+                    const items = p.items || [];
+                    const errCount = items.filter(it => it.needs_review && (it.validation_errors?.some(e => /math mismatch|suspicious|item_name/i.test(e)) || !it.raw_name?.trim())).length;
+                    const warnCount = items.filter(it => it.needs_review).length - errCount;
+                    if (errCount > 0 && warnCount > 0) return (
+                      <span className="ml-1.5 text-[9px] font-semibold" data-testid={`issue-count-${i}`}>
+                        <span className="text-red-600">{errCount} err</span>
+                        <span className="text-slate-400 mx-0.5">/</span>
+                        <span className="text-amber-600">{warnCount} warn</span>
+                      </span>
+                    );
+                    if (errCount > 0) return (
+                      <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-semibold text-red-600" data-testid={`issue-count-${i}`}>
+                        <AlertTriangle className="w-2.5 h-2.5" />{errCount} error{errCount !== 1 ? 's' : ''}
+                      </span>
+                    );
+                    if (warnCount > 0) return (
+                      <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-600" data-testid={`issue-count-${i}`}>
+                        <AlertTriangle className="w-2.5 h-2.5" />{warnCount} issue{warnCount !== 1 ? 's' : ''}
+                      </span>
+                    );
+                    return null;
+                  })()}
                 </TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(p.total)}</TableCell>
                 <TableCell className="text-right"><div className="flex justify-end gap-0.5">
