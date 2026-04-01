@@ -43,33 +43,33 @@ function revalidateItem(item) {
   let score = 0;
   let validCalc = false;
 
-  // Determine if weight-based math applies
+  // Determine if weight-based math is available
   const tcw = parseFloat(item.total_case_weight) || 0;
   const packUnit = item.pack_unit || '';
   const packStatus = item.pack_parse_status;
-  const isWeightBased = packStatus === 'parsed' && tcw > 0 && (packUnit === 'LB' || packUnit === 'OZ');
+  const hasWeightPack = packStatus === 'parsed' && tcw > 0 && (packUnit === 'LB' || packUnit === 'OZ');
   const lbFactor = packUnit === 'OZ' ? 0.0625 : 1.0;
   const caseWtLb = tcw * lbFactor;
+  let pricingMode = 'unknown';
 
-  // Gate 1: Math
-  if (isWeightBased && qty > 0 && up > 0 && total > 0) {
-    // Weight-based: Total = Qty × Case WT × $/LB
-    const expected = Math.round(qty * caseWtLb * up * 100) / 100;
+  // Gate 1: Math — try SIMPLE first, weight-based only as fallback
+  if (qty > 0 && up > 0 && total > 0) {
+    const simpleExpected = Math.round(qty * up * 100) / 100;
     const tolerance = Math.max(0.02, 0.01 * total);
-    if (Math.abs(expected - total) <= tolerance) { validCalc = true; score += 40; }
-    else {
-      // Fallback: check simple qty × price (price might be per case)
-      const simpleExpected = Math.round(qty * up * 100) / 100;
-      if (Math.abs(simpleExpected - total) <= tolerance) { validCalc = true; score += 35; }
-      else { hardFail = true; errors.push(`Math mismatch: ${qty}×${caseWtLb.toFixed(1)}LB×$${up.toFixed(2)}/LB=$${expected.toFixed(2)} ≠ $${total.toFixed(2)}`); }
+    if (Math.abs(simpleExpected - total) <= tolerance) {
+      validCalc = true; score += 40; pricingMode = 'case_price';
+    } else if (hasWeightPack) {
+      const weightExpected = Math.round(qty * caseWtLb * up * 100) / 100;
+      if (Math.abs(weightExpected - total) <= tolerance) {
+        validCalc = true; score += 40; pricingMode = 'weight_based';
+      } else {
+        hardFail = true; errors.push(`Math mismatch: neither ${qty}×$${up.toFixed(2)}=$${simpleExpected.toFixed(2)} nor ${qty}×${caseWtLb.toFixed(1)}LB×$${up.toFixed(2)}=$${weightExpected.toFixed(2)} matches $${total.toFixed(2)}`);
+      }
+    } else {
+      hardFail = true; errors.push(`Math mismatch: ${qty}×$${up.toFixed(2)}=$${simpleExpected.toFixed(2)} ≠ $${total.toFixed(2)}`);
     }
-  } else if (qty > 0 && up > 0 && total > 0) {
-    const expected = Math.round(qty * up * 100) / 100;
-    const tolerance = Math.max(0.02, 0.01 * total);
-    if (Math.abs(expected - total) <= tolerance) { validCalc = true; score += 40; }
-    else { hardFail = true; errors.push(`Math mismatch: ${qty}×$${up.toFixed(2)}=$${expected.toFixed(2)} ≠ $${total.toFixed(2)}`); }
   } else if (total > 0 && (qty === 0 || up === 0)) { hardFail = true; errors.push('total exists but qty or price missing'); }
-  else if (qty > 0 && up > 0 && total === 0) { hardFail = true; errors.push('total is missing'); }
+  else if (qty > 0 && up > 0 && total === 0) { hardFail = true; errors.push('total is missing'); pricingMode = 'case_price'; }
   else { hardFail = true; errors.push('missing core numeric fields'); }
 
   // Gate 2: Required fields
@@ -99,10 +99,7 @@ function revalidateItem(item) {
 
   let reason;
   if (level === 'trusted') reason = 'All checks passed';
-  else if (!validCalc && qty > 0 && up > 0 && total > 0) {
-    if (isWeightBased) reason = `Math mismatch (qty × ${tcw}LB × $/LB ≠ total)`;
-    else reason = 'Math mismatch (qty × price ≠ total)';
-  }
+  else if (!validCalc && qty > 0 && up > 0 && total > 0) reason = 'Math mismatch (qty × price ≠ total)';
   else if (!name) reason = 'Missing item name';
   else if (packRaw && packStatus === 'failed') reason = 'Pack size could not be parsed';
   else if (missing.length) reason = `Missing fields: ${missing.join(', ')}`;
@@ -114,8 +111,7 @@ function revalidateItem(item) {
   if (needsReview && !suggestedFix && !item._suggestionDismissed) {
     const sf = {};
     const sfReasons = [];
-    if (isWeightBased) {
-      // Weight-based suggestions
+    if (pricingMode === 'weight_based' && caseWtLb > 0) {
       if (!validCalc && qty > 0 && up > 0 && total > 0) {
         const expected = Math.round(qty * caseWtLb * up * 100) / 100;
         sf.total = expected;
@@ -124,12 +120,8 @@ function revalidateItem(item) {
         const computed = Math.round(qty * caseWtLb * up * 100) / 100;
         sf.total = computed;
         sfReasons.push(`Compute total: ${qty} × ${caseWtLb.toFixed(1)}LB × $${up.toFixed(2)}/LB = $${computed.toFixed(2)}`);
-      } else if (total > 0 && qty > 0 && caseWtLb > 0 && up === 0) {
-        sf.unit_price = Math.round(total / (qty * caseWtLb) * 100) / 100;
-        sfReasons.push(`Compute $/LB: $${total.toFixed(2)} ÷ (${qty} × ${caseWtLb.toFixed(1)}LB) = $${sf.unit_price.toFixed(2)}/LB`);
       }
     } else {
-      // Simple math suggestions
       if (!validCalc && qty > 0 && up > 0 && total > 0) {
         const expected = Math.round(qty * up * 100) / 100;
         sf.total = expected;

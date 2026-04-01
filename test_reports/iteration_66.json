@@ -1,0 +1,85 @@
+{
+  "summary": "Tested vendor-specific invoice pricing mode detection logic. All 9 backend tests passed (1 skipped - no Performance Foodservice invoices found). Frontend verification confirmed $/LB values are correctly derived based on pricing_mode.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard charts",
+        "issues": ["Console warning: chart width/height -1 - minor rendering issue on initial load"]
+      },
+      {
+        "screen": "Dialog components",
+        "issues": ["Console warning: Missing Description or aria-describedby for DialogContent - accessibility improvement needed"]
+      }
+    ]
+  },
+  "test_results": {
+    "backend_pricing_mode_detection": {
+      "case_price_detection_simple_math_passes": "PASS - qty=3, price=$45.95, total=$137.85, pack=1.25LB → pricing_mode=case_price, $/LB=$36.76 (not $45.95)",
+      "weight_based_detection_simple_math_fails": "PASS - qty=5, price=$2.50, total=$375.00, pack=1x30LB → pricing_mode=weight_based, $/LB=$2.50 (IS the price)",
+      "non_weight_items_no_price_per_lb": "PASS - GAL/EA/CT packs → pricing_mode=case_price, $/LB=None",
+      "case_price_derived_correctly": "PASS - CasePrice/CaseWT derivation: $60.84/2.5LB = $24.34/LB",
+      "pricing_mode_field_present_on_all_items": "PASS - All items have pricing_mode field (case_price/weight_based/unknown)",
+      "put_recomputes_pricing_mode_and_nplb": "PASS - PUT /api/purchases recomputes pricing_mode and $/LB correctly"
+    },
+    "backend_pack_size_parsing": {
+      "parse_25_lb_format": "PASS - '25 LB' → total_case_weight=25.0, unit=LB",
+      "parse_various_pack_formats": "PASS - All formats parsed correctly: 10/4 LB, 6/5 LB, 1x30 LB, 2/17.5 LB, BAG 50 LB, 50LB, 10#"
+    },
+    "backend_weight_math_test_invoice": {
+      "wm_001_items_trusted": "PASS - WM-001 items are trusted with correct pricing_mode"
+    },
+    "frontend_verification": {
+      "wm_001_detail_view": "PASS - Weight Math Test invoice shows correct $/LB values: SALMON=$3.50/LB (weight_based), SHRIMP=$8.99/LB (weight_based), OLIVE OIL=— (non-weight)",
+      "performance_food_group_detail_view": "PASS - Performance Food Group invoice shows derived $/LB: CHICKEN=$2.15/LB ($86/40LB), TOMATO=$0.99/LB ($24.75/25LB), BEEF=$4.13/LB ($165/40LB), SALMON=$12.55/LB ($125.50/10LB)",
+      "add_form_total_computation": "PASS - Form computes total correctly: 3 × $45.95 = $137.85"
+    }
+  },
+  "features_verified": [
+    "1. CASE_PRICE detection: Qty×Price=Total (simple math passes) → pricing_mode=case_price",
+    "2. WEIGHT_BASED detection: Simple math fails, weight math works → pricing_mode=weight_based",
+    "3. $/LB derivation for case_price: CasePrice/CaseWT (NOT the case price itself)",
+    "4. $/LB derivation for weight_based: Price IS $/LB directly",
+    "5. Non-weight items (GAL, EA, CT): pricing_mode=case_price, $/LB=None",
+    "6. pricing_mode field present on all items from POST /api/purchases",
+    "7. PUT /api/purchases recomputes pricing_mode and $/LB correctly",
+    "8. parse_pack_size handles '25 LB' → total_case_weight=25.0",
+    "9. Frontend detail view shows correct $/LB values based on pricing_mode",
+    "10. Frontend edit dialog validates case-price items (Qty×Price=Total)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_pricing_mode_detection.py",
+    "/app/test_reports/pytest/pytest_pricing_mode.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "validate_and_score_item() correctly tries simple math FIRST (case_price), weight math only as fallback (weight_based)",
+    "enrich_item_with_pack_size() correctly defers $/LB computation to validate_and_score_item()",
+    "$/LB is correctly computed: case_price → CasePrice/CaseWT, weight_based → Price directly",
+    "Frontend revalidateItem() mirrors backend logic: tries simple math first, sets pricingMode accordingly"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_pricing_mode_detection.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9 passed, 1 skipped)",
+    "frontend": "100% (all features verified)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Created test purchases with TEST_PRICING_MODE and TEST_PACK_PARSE prefixes (auto-cleaned after tests)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Pricing mode detection logic fully tested. Key behavior: simple math (Qty×Price=Total) is tried FIRST. If it passes, pricing_mode=case_price and $/LB=CasePrice/CaseWT. Only when simple fails AND weight math (Qty×CaseWT×Price=Total) passes, pricing_mode=weight_based and $/LB=Price. Test invoices: WM-001 (weight-based items), Performance Food Group (case-price items with derived $/LB).",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}
