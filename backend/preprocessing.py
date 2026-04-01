@@ -461,6 +461,16 @@ def parse_pack_size(raw: str) -> dict:
         if m:
             ppc, wpp, unit = 1, float(m.group(1)), "LB"
 
+    # Pattern 4b: "NxN" / "NxNUNIT" / "NxN UNIT" (e.g., "1x30", "1x30LB", "12x1 LB")
+    if ppc is None:
+        m = re.match(r"^(\d+)\s*[xX×]\s*(\d+\.?\d*)\s*([A-Z#]+\.?)?$", upper)
+        if m:
+            candidate_ppc = int(m.group(1))
+            candidate_wpp = float(m.group(2))
+            candidate_unit = _canonicalize_unit(m.group(3)) if m.group(3) else "LB"
+            if candidate_ppc > 0 and candidate_wpp > 0 and candidate_unit in KNOWN_UNITS:
+                ppc, wpp, unit = candidate_ppc, candidate_wpp, candidate_unit
+
     # Pattern 5: "N/N#" (e.g., "6/7#" = 6 packs of 7 LB)
     if ppc is None:
         m = re.match(r"^(\d+)\s*/\s*(\d+\.?\d*)#$", upper)
@@ -561,14 +571,12 @@ def enrich_item_with_pack_size(item: dict) -> dict:
         item["pack_unit"] = None
         item["total_case_weight"] = None
 
-    # --- Normalized $/LB: STRICT RULES ---
-    # ONLY compute if ALL conditions are met:
-    #   1. pack_parse_status == "parsed"
-    #   2. packs_per_case > 0
-    #   3. weight_per_pack > 0
-    #   4. unit is LB or OZ (NORMALIZABLE_UNITS)
-    #   5. unit_price > 0
-    #   6. total_case_weight > 0
+    # --- Normalized $/LB: Weight-based invoice math ---
+    # For weight-based items (LB, OZ):
+    #   unit_price on the invoice IS the price per LB
+    #   Line Total = Qty × Case WT × $/LB
+    #   So: $/LB = unit_price (directly)
+    #   OR: $/LB = Total / (Qty × Case WT)  when unit_price is missing
 
     unit_price = float(item.get("unit_price", 0) or 0)
     ppc = parsed.get("packs_per_case") or 0
@@ -581,17 +589,25 @@ def enrich_item_with_pack_size(item: dict) -> dict:
         and ppc > 0
         and wpp > 0
         and unit in NORMALIZABLE_UNITS
-        and unit_price > 0
         and tcw > 0
     )
 
     if can_normalize:
         lb_factor = TO_LB.get(unit, 0)
         if lb_factor > 0:
-            total_lb = tcw * lb_factor
-            item["normalized_price_per_lb"] = round(unit_price / total_lb, 4)
+            if unit_price > 0:
+                # unit_price IS $/LB for weight-based items
+                item["normalized_price_per_lb"] = round(unit_price, 4)
+            else:
+                # Try to compute from total
+                qty = float(item.get("quantity", 0) or 0)
+                total = float(item.get("total", 0) or 0)
+                total_lb = tcw * lb_factor
+                if qty > 0 and total > 0 and total_lb > 0:
+                    item["normalized_price_per_lb"] = round(total / (qty * total_lb), 4)
+                else:
+                    item["normalized_price_per_lb"] = None
         else:
-            # Should not happen given NORMALIZABLE_UNITS check, but safety
             item["normalized_price_per_lb"] = None
     else:
         item["normalized_price_per_lb"] = None
@@ -901,23 +917,52 @@ def _generate_suggested_fix(item: dict) -> dict | None:
     raw_name = (item.get("raw_name") or "").strip()
     pack_raw = (item.get("pack_size_raw") or item.get("pack_size") or "").strip()
     pack_status = item.get("pack_parse_status") or "not_applicable"
+    tcw = float(item.get("total_case_weight") or 0)
+    pack_unit = item.get("pack_unit") or ""
+    is_weight_based = pack_status == "parsed" and tcw > 0 and pack_unit in ("LB", "OZ")
 
-    # --- 1. Math mismatch → suggest corrected total ---
-    if qty > 0 and up > 0 and total > 0:
-        expected = round(qty * up, 2)
-        tolerance = max(0.02, 0.01 * total)
-        if abs(expected - total) > tolerance:
-            suggestion["total"] = expected
-            reasons.append(f"Recalculate total: {qty} × ${up:.2f} = ${expected:.2f}")
-    elif qty > 0 and up > 0 and total == 0:
-        suggestion["total"] = round(qty * up, 2)
-        reasons.append(f"Compute total: {qty} × ${up:.2f} = ${suggestion['total']:.2f}")
-    elif total > 0 and qty > 0 and up == 0:
-        suggestion["unit_price"] = round(total / qty, 2)
-        reasons.append(f"Compute price: ${total:.2f} ÷ {qty} = ${suggestion['unit_price']:.2f}")
-    elif total > 0 and up > 0 and qty == 0:
-        suggestion["quantity"] = round(total / up, 2)
-        reasons.append(f"Compute quantity: ${total:.2f} ÷ ${up:.2f} = {suggestion['quantity']}")
+    # --- 1. Math mismatch / missing fields → suggest corrected values ---
+    if is_weight_based:
+        # Weight-based: Total = Qty × Case WT × $/LB
+        lb_factor = 1.0 if pack_unit == "LB" else 0.0625
+        case_wt_lb = tcw * lb_factor
+        if qty > 0 and up > 0 and total > 0:
+            expected = round(qty * case_wt_lb * up, 2)
+            tolerance = max(0.02, 0.01 * total)
+            # Also check simple math
+            simple_expected = round(qty * up, 2)
+            if abs(expected - total) > tolerance and abs(simple_expected - total) > tolerance:
+                suggestion["total"] = expected
+                reasons.append(f"Recalculate total: {qty} × {case_wt_lb:.1f}LB × ${up:.2f}/LB = ${expected:.2f}")
+        elif qty > 0 and up > 0 and total == 0:
+            computed = round(qty * case_wt_lb * up, 2)
+            suggestion["total"] = computed
+            reasons.append(f"Compute total: {qty} × {case_wt_lb:.1f}LB × ${up:.2f}/LB = ${computed:.2f}")
+        elif total > 0 and qty > 0 and case_wt_lb > 0 and up == 0:
+            computed = round(total / (qty * case_wt_lb), 2)
+            suggestion["unit_price"] = computed
+            reasons.append(f"Compute $/LB: ${total:.2f} ÷ ({qty} × {case_wt_lb:.1f}LB) = ${computed:.2f}/LB")
+        elif total > 0 and up > 0 and case_wt_lb > 0 and qty == 0:
+            computed = round(total / (case_wt_lb * up), 2)
+            suggestion["quantity"] = computed
+            reasons.append(f"Compute qty: ${total:.2f} ÷ ({case_wt_lb:.1f}LB × ${up:.2f}/LB) = {computed}")
+    else:
+        # Non-weight: Total = Qty × Price
+        if qty > 0 and up > 0 and total > 0:
+            expected = round(qty * up, 2)
+            tolerance = max(0.02, 0.01 * total)
+            if abs(expected - total) > tolerance:
+                suggestion["total"] = expected
+                reasons.append(f"Recalculate total: {qty} × ${up:.2f} = ${expected:.2f}")
+        elif qty > 0 and up > 0 and total == 0:
+            suggestion["total"] = round(qty * up, 2)
+            reasons.append(f"Compute total: {qty} × ${up:.2f} = ${suggestion['total']:.2f}")
+        elif total > 0 and qty > 0 and up == 0:
+            suggestion["unit_price"] = round(total / qty, 2)
+            reasons.append(f"Compute price: ${total:.2f} ÷ {qty} = ${suggestion['unit_price']:.2f}")
+        elif total > 0 and up > 0 and qty == 0:
+            suggestion["quantity"] = round(total / up, 2)
+            reasons.append(f"Compute quantity: ${total:.2f} ÷ ${up:.2f} = {suggestion['quantity']}")
 
     # --- 2. Pack parse failure → try to recover from raw text ---
     if pack_status == "failed" and pack_raw:
@@ -989,9 +1034,38 @@ def validate_and_score_item(item: dict) -> dict:
     pack_status = item.get("pack_parse_status") or "not_applicable"
     pack_size_raw = item.get("pack_size_raw") or item.get("pack_size") or ""
 
-    # ===== HARD GATE 1: Math validation (qty × price ≈ total) =====
+    # ===== HARD GATE 1: Math validation =====
+    # For weight-based items (pack parsed to LB/OZ):
+    #   Line Total = Qty × Case WT × $/LB
+    # For non-weight items:
+    #   Line Total = Qty × Unit Price
     valid_calc = False
-    if qty > 0 and up > 0 and total > 0:
+    pack_status = item.get("pack_parse_status") or "not_applicable"
+    pack_size_raw = item.get("pack_size_raw") or item.get("pack_size") or ""
+    tcw = float(item.get("total_case_weight") or 0)
+    pack_unit = item.get("pack_unit") or ""
+    is_weight_based = pack_status == "parsed" and tcw > 0 and pack_unit in ("LB", "OZ")
+
+    if is_weight_based and qty > 0 and up > 0 and total > 0:
+        # Weight-based: Total = Qty × Case WT × $/LB
+        lb_factor = 1.0 if pack_unit == "LB" else 0.0625  # OZ to LB
+        case_wt_lb = tcw * lb_factor
+        expected = round(qty * case_wt_lb * up, 2)
+        tolerance = max(0.02, 0.01 * total)
+        if abs(expected - total) <= tolerance:
+            valid_calc = True
+            score += 40
+        else:
+            # Also check simple Qty × Price as fallback (price might be per case)
+            simple_expected = round(qty * up, 2)
+            if abs(simple_expected - total) <= tolerance:
+                valid_calc = True
+                score += 35  # Slightly lower — ambiguous pricing
+            else:
+                hard_fail = True
+                errors.append(f"MATH MISMATCH: qty({qty})×caseWT({case_wt_lb:.1f}LB)×$/LB(${up:.2f})=${expected:.2f} ≠ total(${total:.2f})")
+    elif qty > 0 and up > 0 and total > 0:
+        # Non-weight: Total = Qty × Price
         expected = round(qty * up, 2)
         tolerance = max(0.02, 0.01 * total)
         if abs(expected - total) <= tolerance:
@@ -1032,11 +1106,9 @@ def validate_and_score_item(item: dict) -> dict:
         if pack_status == "parsed":
             score += 20
         elif pack_status == "failed":
-            # Pack size present but unparseable → cannot be trusted for price normalization
             hard_fail = True
             errors.append(f"pack_size parse failed: \"{pack_size_raw}\"")
     else:
-        # No pack_size → fine, many items don't have one
         score += 15
 
     # ===== CHECK 4: Item name quality =====
@@ -1083,7 +1155,10 @@ def validate_and_score_item(item: dict) -> dict:
     if level == "trusted":
         item["confidence_reason"] = "All checks passed"
     elif not valid_calc and qty > 0 and up > 0 and total > 0:
-        item["confidence_reason"] = "Math mismatch (qty × price ≠ total)"
+        if is_weight_based:
+            item["confidence_reason"] = f"Math mismatch (qty × {tcw:.0f}LB × $/LB ≠ total)"
+        else:
+            item["confidence_reason"] = "Math mismatch (qty × price ≠ total)"
     elif not raw_name:
         item["confidence_reason"] = "Missing item name"
     elif has_pack and pack_status == "failed":
@@ -1172,12 +1247,22 @@ def compute_review_status(items: list) -> str:
                 qty = float(item.get("quantity") or 0)
                 up = float(item.get("unit_price") or 0)
                 total = float(item.get("total") or 0)
+                tcw_val = float(item.get("total_case_weight") or 0)
+                p_unit = item.get("pack_unit") or ""
                 if not name:
                     needs_review = True
                 elif qty > 0 and up > 0 and total > 0:
-                    expected = round(qty * up, 2)
-                    tolerance = max(0.02, 0.01 * total)
-                    needs_review = abs(expected - total) > tolerance
+                    # Try weight-based first, then simple
+                    if tcw_val > 0 and p_unit in ("LB", "OZ"):
+                        lb_f = 1.0 if p_unit == "LB" else 0.0625
+                        wb_expected = round(qty * tcw_val * lb_f * up, 2)
+                        tol = max(0.02, 0.01 * total)
+                        simple_expected = round(qty * up, 2)
+                        needs_review = abs(wb_expected - total) > tol and abs(simple_expected - total) > tol
+                    else:
+                        expected = round(qty * up, 2)
+                        tolerance = max(0.02, 0.01 * total)
+                        needs_review = abs(expected - total) > tolerance
                 elif qty <= 0 or up <= 0 or total <= 0:
                     needs_review = True
                 else:
@@ -1201,9 +1286,17 @@ def compute_review_status(items: list) -> str:
             qty = float(item.get("quantity") or 0)
             up = float(item.get("unit_price") or 0)
             total = float(item.get("total") or 0)
+            tcw_val = float(item.get("total_case_weight") or 0)
+            p_unit = item.get("pack_unit") or ""
             if qty > 0 and up > 0 and total > 0:
-                expected = round(qty * up, 2)
-                if abs(expected - total) > max(0.02, 0.01 * total):
+                tol = max(0.02, 0.01 * total)
+                simple = round(qty * up, 2)
+                if tcw_val > 0 and p_unit in ("LB", "OZ"):
+                    lb_f = 1.0 if p_unit == "LB" else 0.0625
+                    wb = round(qty * tcw_val * lb_f * up, 2)
+                    if abs(wb - total) > tol and abs(simple - total) > tol:
+                        is_hard = True
+                elif abs(simple - total) > tol:
                     is_hard = True
         if is_hard:
             has_error = True

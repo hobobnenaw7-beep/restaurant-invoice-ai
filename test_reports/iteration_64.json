@@ -1,0 +1,119 @@
+{
+  "summary": "Tested weight-based invoice calculation fix. All 23 backend tests passed (100%). Frontend UI verified: WM-001 invoice shows correct Case WT and $/LB columns, all 3 items are Confirmed/Trusted with correct weight-based math.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "pack_size_parsing": {
+      "test_1x30_parses_to_30LB": "PASS - 1x30 -> 30LB (default unit)",
+      "test_1x30LB_parses_to_30LB": "PASS - 1x30LB -> 30LB",
+      "test_12x1LB_parses_to_12LB": "PASS - 12x1LB -> 12LB (12 packs × 1 LB)",
+      "test_1x10LB_parses_to_10LB": "PASS - 1x10LB -> 10LB",
+      "test_uppercase_X_separator": "PASS - 1X30 -> 30LB (uppercase X)",
+      "test_1x30_space_LB": "PASS - 1x30 LB -> 30LB (with space)",
+      "test_2x5LB_parses_to_10LB": "PASS - 2x5LB -> 10LB"
+    },
+    "weight_based_validation": {
+      "test_weight_based_trusted_1x30LB": "PASS - 1×30LB×$3.50=$105.00 is TRUSTED",
+      "test_weight_based_trusted_1x10LB": "PASS - 3×10LB×$8.99=$269.70 is TRUSTED",
+      "test_previously_false_mismatch_now_trusted": "PASS - 5×30LB×$2.50=$375.00 is TRUSTED (was false mismatch)",
+      "test_non_weight_item_simple_math": "PASS - Non-weight item (GAL) uses simple math",
+      "test_non_weight_item_EA": "PASS - Non-weight item (EA) uses simple math"
+    },
+    "case_weight_auto_fill": {
+      "test_case_wt_from_1x30LB": "PASS - 1x30LB -> total_case_weight=30.0",
+      "test_case_wt_from_12x1LB": "PASS - 12x1LB -> total_case_weight=12.0",
+      "test_case_wt_from_2x5LB": "PASS - 2x5LB -> total_case_weight=10.0"
+    },
+    "price_per_lb_calculation": {
+      "test_price_per_lb_equals_unit_price": "PASS - $/LB = unit_price directly ($3.50)",
+      "test_price_per_lb_computed_from_total": "PASS - $/LB computed from total: $300 ÷ (2 × 30LB) = $5.00/LB"
+    },
+    "weight_based_suggestions": {
+      "test_suggestion_uses_weight_based_math": "PASS - Wrong total suggests Qty×CaseWT×$/LB",
+      "test_suggestion_computes_price_per_lb": "PASS - Missing price suggests $/LB"
+    },
+    "review_status": {
+      "test_weight_based_items_clean_status": "PASS - Correct math -> review_status=clean",
+      "test_weight_based_items_error_status": "PASS - Wrong math -> review_status=error"
+    },
+    "api_tests": {
+      "test_post_purchase_weight_based_clean": "PASS - POST /api/purchases returns review_status=clean",
+      "test_get_existing_weight_math_test_invoice": "PASS - WM-001 invoice found with review_status=clean"
+    },
+    "frontend_tests": {
+      "login_and_navigation": "PASS - Successfully logged in and navigated to Expenses",
+      "wm001_invoice_search": "PASS - Weight Math Test (WM-001) invoice found",
+      "detail_view_columns": "PASS - Detail view shows Case WT and $/LB columns",
+      "edit_dialog_line_items": "PASS - Edit dialog shows 3 items with correct weight data",
+      "salmon_fillet_item": "PASS - Qty=1, Pack=1x30LB, Price=$3.50, Total=$105.00, Case WT=30 LB, $/LB=$3.50, Status=Confirmed",
+      "shrimp_item": "PASS - Qty=3, Pack=1x10LB, Price=$8.99, Total=$269.70, Case WT=10 LB, $/LB=$8.99, Status=Confirmed",
+      "olive_oil_item": "PASS - Qty=4, Pack=1 GAL, Price=$18.75, Total=$75.00, Case WT=1 GAL, $/LB=— (non-weight), Status=Confirmed"
+    }
+  },
+  "features_verified": [
+    "1. parse_pack_size handles NxN formats: '1x30' -> 30LB, '1x30LB' -> 30LB, '12x1LB' -> 12LB, '1x10LB' -> 10LB, '1X30' -> 30LB",
+    "2. Weight-based validation: item with pack 1x30LB, qty=1, price=$3.50, total=$105.00 is TRUSTED (1×30×3.50=105)",
+    "3. Weight-based validation: item with pack 1x10LB, qty=3, price=$8.99, total=$269.70 is TRUSTED",
+    "4. Previously false mismatch: qty=5, pack=1x30, price=$2.50, total=$375.00 is now TRUSTED (5×30×2.50=375)",
+    "5. Non-weight items still use simple math: qty=4, price=$18.75, total=$75.00 is TRUSTED",
+    "6. Case WT auto-fills from pack parse: 1x30LB -> total_case_weight=30.0",
+    "7. $/LB = unit_price directly for weight-based items (not unit_price / case_weight)",
+    "8. $/LB auto-computed from total when unit_price missing: total=300, qty=2, pack=1x30LB -> $/LB=5.00",
+    "9. Suggestion uses weight-based math: wrong total with pack=1x30LB suggests Qty×30LB×$/LB",
+    "10. POST /api/purchases with weight-based items returns review_status=clean when math passes",
+    "11. Frontend: weight-based items show Case WT and $/LB columns filled in detail view",
+    "12. Frontend: editing a weight-based item with correct math shows Trusted/Confirmed status"
+  ],
+  "test_data_used": {
+    "weight_math_test_invoice": {
+      "invoice_number": "WM-001",
+      "vendor": "Weight Math Test",
+      "items": [
+        {"name": "SALMON FILLET", "qty": 1, "pack": "1x30LB", "price": 3.50, "total": 105.00, "case_wt": "30 LB", "price_lb": "$3.50", "status": "Confirmed"},
+        {"name": "SHRIMP 31-35", "qty": 3, "pack": "1x10LB", "price": 8.99, "total": 269.70, "case_wt": "10 LB", "price_lb": "$8.99", "status": "Confirmed"},
+        {"name": "OLIVE OIL", "qty": 4, "pack": "1 GAL", "price": 18.75, "total": 75.00, "case_wt": "1 GAL", "price_lb": "—", "status": "Confirmed"}
+      ],
+      "total": 449.70,
+      "review_status": "clean"
+    }
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_weight_based_calculations.py",
+    "/app/test_reports/pytest/pytest_weight_based_calculations.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Pattern 4b in parse_pack_size correctly handles NxN formats with regex: ^(\\d+)\\s*[xX×]\\s*(\\d+\\.?\\d*)\\s*([A-Z#]+\\.?)?$",
+    "is_weight_based flag correctly gates weight-based validation: pack_status == 'parsed' and tcw > 0 and pack_unit in ('LB', 'OZ')",
+    "Weight-based math: Line Total = Qty × Case WT × $/LB (not Qty × Price)",
+    "$/LB = unit_price directly for weight-based items (line 599-600 in preprocessing.py)",
+    "Fallback to simple math (score 35 vs 40) when weight-based math fails but simple math passes",
+    "Frontend revalidateItem correctly implements weight-based Gate 1 math (lines 55-65 in ExpensesPage.js)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_weight_based_calculations.py"
+  ],
+  "success_rate": {
+    "backend": "100% (23/23 tests passed)",
+    "frontend": "100% (all UI tests passed)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Used existing test purchase: Weight Math Test (WM-001)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Weight-based invoice calculation fix fully tested. Key formula: Line Total = Qty × (packs_per_case × weight_per_pack × lb_factor) × unit_price. For LB, lb_factor=1.0. For OZ, lb_factor=0.0625. Non-weight items (GAL, EA, CT, etc.) use simple Qty × Price. Test file: /app/backend/tests/test_weight_based_calculations.py. WM-001 invoice has 3 items demonstrating weight-based (SALMON, SHRIMP) and non-weight (OLIVE OIL) calculations.",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}
