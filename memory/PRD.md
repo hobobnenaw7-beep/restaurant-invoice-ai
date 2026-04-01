@@ -1,17 +1,16 @@
 # Restaurant Accountant AI — Product Requirements Document
 
 ## Original Problem Statement
-Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-powered OCR invoice extraction. Features modular backend architecture, normalization layer, correction memory system, review lifecycle, hard invoice robustness, and guided correction suggestions.
+Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-powered OCR invoice extraction. Features modular backend architecture, normalization layer, correction memory system, review lifecycle, hard invoice robustness, guided correction suggestions, and weight-based invoice math.
 
 ## Core Requirements
 - OCR extraction pipeline (GPT-5.2 via Emergent LLM Key)
-- Strict trust/validation logic for extracted items
+- Weight-based invoice math: Line Total = Qty × Pack Weight (LB) × $/LB
+- Simple math fallback for non-weight items: Line Total = Qty × Unit Price
 - Conservative normalization (preserve meaningful product distinctions)
 - Correction Memory: auto-apply learned user edits per supplier
-- Review lifecycle: needs_review, review_reason, confidence_level persist across saves
+- Review lifecycle with guided correction suggestions
 - Invoice-level review_status: clean | warning | error
-- Hard invoice handling: robust extraction for messy/low-quality inputs
-- Guided Correction Suggestions: rule-based fix proposals per flagged item
 
 ## Architecture
 - Backend: FastAPI modular (core/, routes/, services/)
@@ -25,22 +24,21 @@ Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-pow
 - [x] Normalization Layer
 - [x] Correction Memory System V1
 - [x] "Save Now, Review Later" Data Persistence
-- [x] Quick Review UI (item-level review indicators)
+- [x] Quick Review UI
 - [x] Invoice Sorting Fix (date-based, created_at fallback)
 - [x] Invoice-level review_status (clean/warning/error)
 - [x] Hard Invoice Robustness Layer
-- [x] Bug Fix: compute_review_status resilient to old items
-- [x] Guided Correction Suggestions V1 (2026-03-31)
-  - Math mismatch → suggest corrected total (qty × price)
-  - Missing total/price/qty → suggest computed value
-  - Pack parse failure → suggest normalized format (1x30LB → 1/30 LB)
-  - Correction memory → surface learned corrections
-  - Missing name → suggest from normalization data
-  - UI: blue "Suggested fix" box with Apply/Dismiss buttons
-  - Apply writes suggested values and revalidates item
-  - Dismiss hides suggestion without changing data
-  - Edit Manually / Ignore buttons for manual workflow
-  - Old items get client-side suggestions via revalidateItem on edit open
+- [x] Guided Correction Suggestions V1
+- [x] Weight-Based Invoice Math Fix (2026-03-31)
+  - parse_pack_size handles NxN formats: 1x30, 1x30LB, 12x1LB, 1X30, etc.
+  - Validation: Qty × CaseWT × $/LB = Total (for weight-based items)
+  - Fallback: Qty × Price for non-weight items (GAL, EA, CT, etc.)
+  - Case WT auto-fills from parsed pack weight
+  - $/LB = unit_price directly (not unit_price ÷ case_weight)
+  - $/LB auto-computed from total when price missing
+  - Suggestions use weight-based formula
+  - False mismatches eliminated (AFS invoice: error → clean)
+  - All 107 purchases re-backfilled with corrected math
 
 ## Known Issues
 - P0: Old pytest suite failures (test_profit_calculation.py etc.) — deferred by user
