@@ -237,6 +237,64 @@ function RawMaterialsTab({ api }) {
   const [parsingMethod, setParsingMethod] = useState(null);
   const [showConfirmSave, setShowConfirmSave] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
+  const [fixAllPreview, setFixAllPreview] = useState(null);
+
+
+  // ---- Fix All Issues helpers ----
+  const collectSafeFixes = () => {
+    const fixes = [];
+    form.items.forEach((item, idx) => {
+      if (item._reviewed || item._suggestionDismissed || !item.suggested_fix) return;
+      const sf = item.suggested_fix;
+      const type = sf.type || '';
+      // Only safe fix types: math recalc, pack normalization, correction memory
+      if (type === 'math' || type === 'pack' || type === 'correction') {
+        const labels = [];
+        if (sf.fields.total != null) labels.push('recalculate total');
+        if (sf.fields.unit_price != null) labels.push('compute $/LB');
+        if (sf.fields.quantity != null) labels.push('compute quantity');
+        if (sf.fields.pack_size != null) labels.push('normalize pack format');
+        if (sf.fields.raw_name != null) labels.push('apply learned correction');
+        fixes.push({ idx, type, fields: sf.fields, reasons: sf.reasons, labels });
+      }
+    });
+    return fixes;
+  };
+
+  const previewFixAll = () => {
+    const fixes = collectSafeFixes();
+    if (fixes.length === 0) return;
+    // Build summary
+    const summary = { total: fixes.length, math: 0, pack: 0, correction: 0, details: [] };
+    fixes.forEach(f => {
+      if (f.type === 'math') summary.math++;
+      else if (f.type === 'pack') summary.pack++;
+      else if (f.type === 'correction') summary.correction++;
+      summary.details.push({ idx: f.idx, name: form.items[f.idx].raw_name || '(unnamed)', labels: f.labels, reasons: f.reasons });
+    });
+    setFixAllPreview(summary);
+  };
+
+  const applyFixAll = () => {
+    const fixes = collectSafeFixes();
+    setForm(f => {
+      const items = [...f.items];
+      fixes.forEach(({ idx, fields }) => {
+        const updated = { ...items[idx] };
+        if (fields.total != null) updated.total = fields.total;
+        if (fields.unit_price != null) updated.unit_price = fields.unit_price;
+        if (fields.quantity != null) updated.quantity = fields.quantity;
+        if (fields.raw_name != null) updated.raw_name = fields.raw_name;
+        if (fields.pack_size != null) updated.pack_size = fields.pack_size;
+        updated.suggested_fix = null;
+        updated._suggestionDismissed = false;
+        items[idx] = revalidateItem(updated);
+      });
+      const sub = Math.round(items.reduce((s, x) => s + (parseFloat(x.total) || 0), 0) * 100) / 100;
+      return { ...f, items, subtotal: sub, total: Math.round((sub + (f.tax || 0)) * 100) / 100 };
+    });
+    setFixAllPreview(null);
+  };
 
   const load = useCallback(async (showSkeleton = false) => {
     if (showSkeleton) setLoading(true);
@@ -650,6 +708,15 @@ function RawMaterialsTab({ api }) {
                 >
                   {reviewMode ? 'Show All Items' : 'Focus Review'}
                 </button>
+                {collectSafeFixes().length > 0 && (
+                  <button
+                    onClick={previewFixAll}
+                    className="text-[10px] font-semibold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                    data-testid="fix-all-issues-btn"
+                  >
+                    Fix All Issues ({collectSafeFixes().length})
+                  </button>
+                )}
               </div>
             );
           })()}
@@ -813,6 +880,40 @@ function RawMaterialsTab({ api }) {
       <DuplicateWarningDialog open={showWarning} onClose={cancelSave} onConfirm={confirmSave} duplicates={duplicates} saving={saving} />
       <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message={deleteConfirm.message} />
       <ConfirmSaveDialog open={showConfirmSave} onClose={() => setShowConfirmSave(false)} onConfirm={executeSave} vendor={form.supplier_name} date={form.invoice_date} total={form.total} saving={saving} />
+
+      {/* Fix All Issues Confirmation Modal */}
+      <Dialog open={!!fixAllPreview} onOpenChange={() => setFixAllPreview(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="font-heading text-lg">Fix All Issues</DialogTitle></DialogHeader>
+          {fixAllPreview && (
+            <div className="space-y-4" data-testid="fix-all-preview">
+              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
+                <p className="text-sm font-semibold text-blue-900">{fixAllPreview.total} safe fix{fixAllPreview.total !== 1 ? 'es' : ''} found</p>
+                <div className="mt-1.5 space-y-0.5">
+                  {fixAllPreview.math > 0 && <p className="text-xs text-blue-700">{fixAllPreview.math} total{fixAllPreview.math !== 1 ? 's' : ''} will be recalculated</p>}
+                  {fixAllPreview.pack > 0 && <p className="text-xs text-blue-700">{fixAllPreview.pack} pack format{fixAllPreview.pack !== 1 ? 's' : ''} will be normalized</p>}
+                  {fixAllPreview.correction > 0 && <p className="text-xs text-blue-700">{fixAllPreview.correction} learned correction{fixAllPreview.correction !== 1 ? 's' : ''} will be applied</p>}
+                </div>
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-2">
+                {fixAllPreview.details.map((d, di) => (
+                  <div key={di} className="flex items-start gap-2 text-xs p-2 rounded bg-slate-50 border border-slate-200" data-testid={`fix-preview-${di}`}>
+                    <span className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 text-[9px] font-bold text-blue-700">{di + 1}</span>
+                    <div>
+                      <p className="font-semibold text-slate-800">{d.name || '(unnamed item)'}</p>
+                      {d.reasons.map((r, ri) => <p key={ri} className="text-slate-500 text-[10px]">{r}</p>)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <Button variant="outline" size="sm" onClick={() => setFixAllPreview(null)} data-testid="fix-all-cancel">Cancel</Button>
+                <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white" onClick={applyFixAll} data-testid="fix-all-apply">Apply All</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
