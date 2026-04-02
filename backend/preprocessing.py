@@ -123,8 +123,8 @@ def _detect_orientation_tesseract(img: Image.Image):
 
         logger.info(f"Tesseract OSD: rotation={detected_rotation}°, conf={confidence:.1f}")
 
-        # Only apply if confidence is reasonable
-        if confidence < 1.0:
+        # Only apply if confidence is reasonable (OSD confidence < 3 is unreliable)
+        if confidence < 3.0:
             return None
 
         # Tesseract returns the rotation needed to correct
@@ -259,31 +259,44 @@ def _enhance_image(img: Image.Image) -> Image.Image:
     """
     Multi-step enhancement: auto-contrast, noise reduction, sharpening,
     background cleanup. Adaptive — only applies heavy processing when needed.
+
+    Key principle: DO NOT degrade clean images. Only enhance when measurably
+    needed. Text-heavy images (invoices) have high Laplacian variance from
+    edges, which is NOT noise — so we measure noise only in background regions.
     """
     try:
-        # 1. Auto-contrast — equalises faded/dark scans
-        img = ImageOps.autocontrast(img, cutoff=0.5)
+        arr_gray = np.array(img.convert("L"))
+        mean_brightness = float(np.mean(arr_gray))
+        std_brightness = float(np.std(arr_gray))
 
-        # 2. Background noise reduction
-        img = _clean_background(img)
+        # 1. Background cleanup — only for gray/dark backgrounds
+        if mean_brightness < 220:
+            img = _clean_background(img)
 
-        # 3. Noise reduction — only apply median if image is actually noisy
-        arr = np.array(img.convert("L")).astype(np.float64)
-        # Estimate noise: high-frequency energy via Laplacian variance
-        from PIL import ImageFilter as IF
-        laplacian = np.array(img.convert("L").filter(IF.Kernel((3,3), [-1,-1,-1,-1,8,-1,-1,-1,-1], scale=1, offset=128)))
-        noise_level = float(np.std(laplacian))
-        if noise_level > 35:
-            # Noisy image — apply median filter
+        # 2. Auto-contrast — only for genuinely low-contrast images
+        #    Clean white-bg images (mean > 230) with std 30-55 don't need it
+        if std_brightness < 30 or (std_brightness < 55 and mean_brightness < 230):
+            img = ImageOps.autocontrast(img, cutoff=0.5)
+            logger.info(f"AutoContrast applied (std was {std_brightness:.0f}, mean was {mean_brightness:.0f})")
+
+        # 3. Noise reduction — measure noise in BACKGROUND regions only
+        #    (text edges are NOT noise; previous approach falsely triggered)
+        #    Threshold 40+ ensures only genuinely noisy images get filtered
+        noise_level = _estimate_background_noise(img)
+        if noise_level > 40:
             img = img.filter(ImageFilter.MedianFilter(size=3))
-            logger.info(f"Noise reduction applied (noise_level={noise_level:.0f})")
+            logger.info(f"Noise reduction applied (bg_noise={noise_level:.0f})")
 
-        # 4. Sharpening — light for clean images, stronger for processed ones
-        sharp_factor = 1.5 if noise_level > 35 else 1.15
+        # 4. Sharpening — light for clean images, stronger for noisy
+        sharp_factor = 1.3 if noise_level > 40 else 1.1
         img = ImageEnhance.Sharpness(img).enhance(sharp_factor)
 
-        # 5. Contrast normalization
-        img = _normalize_contrast(img)
+        # 5. Contrast normalization — only for genuinely faded images
+        #    Don't boost clean white-bg images; high contrast boost damages small text
+        arr_after = np.array(img.convert("L"))
+        mean_after = float(np.mean(arr_after))
+        if mean_after < 230:
+            img = _normalize_contrast(img)
 
         return img
     except Exception as e:
@@ -291,32 +304,80 @@ def _enhance_image(img: Image.Image) -> Image.Image:
         return img
 
 
+def _estimate_background_noise(img: Image.Image) -> float:
+    """
+    Estimate noise level in background regions (non-text areas).
+    Samples multiple background patches and measures their local variance.
+    Returns a noise score — higher means noisier background.
+    """
+    try:
+        arr = np.array(img.convert("L")).astype(np.float64)
+        h, w = arr.shape
+
+        # Sample patches from edges/corners (likely background, not text)
+        patch_size = min(30, h // 6, w // 6)
+        if patch_size < 5:
+            return 0.0
+
+        patches = []
+        for y, x in [(0, 0), (0, w - patch_size), (h - patch_size, 0),
+                      (h - patch_size, w - patch_size),
+                      (h // 2, 0), (h // 2, w - patch_size)]:
+            patch = arr[y:y + patch_size, x:x + patch_size]
+            # Only use patches that look like background (high mean = light)
+            if patch.mean() > 180:
+                patches.append(float(np.std(patch)))
+
+        if not patches:
+            return 0.0
+
+        return sum(patches) / len(patches)
+    except Exception:
+        return 0.0
+
+
 def _clean_background(img: Image.Image) -> Image.Image:
     """
     Clean gray/noisy backgrounds while preserving text.
-    Uses adaptive thresholding concept: if the overall background is gray,
-    shift it toward white.
+    Uses adaptive approach: if background is gray, apply local contrast
+    enhancement to make text stand out against the background.
     """
     try:
         arr = np.array(img.convert("L"))
+        h, w = arr.shape
 
         # Calculate background brightness (sample corners + center edges)
-        h, w = arr.shape
+        patch = min(30, h // 4, w // 4)
         regions = [
-            arr[0:min(20,h), 0:min(20,w)],           # top-left
-            arr[0:min(20,h), max(0,w-20):w],          # top-right
-            arr[max(0,h-20):h, 0:min(20,w)],          # bottom-left
-            arr[max(0,h-20):h, max(0,w-20):w],        # bottom-right
+            arr[0:patch, 0:patch],
+            arr[0:patch, max(0, w - patch):w],
+            arr[max(0, h - patch):h, 0:patch],
+            arr[max(0, h - patch):h, max(0, w - patch):w],
         ]
         bg_mean = float(np.mean([r.mean() for r in regions if r.size > 0]))
 
-        # If background is grayish (< 230), brighten it
-        if bg_mean < 230:
-            shift = min(int(240 - bg_mean), 60)  # cap shift at 60
+        if bg_mean < 200:
+            # Dark/gray background — need stronger processing
+            # Use a gamma correction to lift dark backgrounds while preserving text
+            rgb_arr = np.array(img).astype(np.float64)
+            # Compute per-pixel lightness (max channel)
+            lightness = rgb_arr.max(axis=2)
+            # Build a mask: pixels brighter than text threshold get lifted
+            text_threshold = bg_mean * 0.6  # text is darker than background
+            bg_mask = (lightness > text_threshold).astype(np.float64)
+            # Shift background pixels toward white
+            target = 245.0
+            shift = (target - bg_mean) * bg_mask
+            rgb_arr = np.clip(rgb_arr + shift[:, :, np.newaxis] * 0.8, 0, 255)
+            img = Image.fromarray(rgb_arr.astype(np.uint8))
+            logger.info(f"Background cleanup: adaptive lift (bg was {bg_mean:.0f})")
+        elif bg_mean < 230:
+            # Slightly gray — gentle uniform shift
+            shift = min(int(240 - bg_mean), 30)
             rgb_arr = np.array(img).astype(np.int16)
             rgb_arr = np.clip(rgb_arr + shift, 0, 255).astype(np.uint8)
             img = Image.fromarray(rgb_arr)
-            logger.info(f"Background cleanup: shifted brightness +{shift} (bg was {bg_mean:.0f})")
+            logger.info(f"Background cleanup: shifted +{shift} (bg was {bg_mean:.0f})")
 
         return img
     except Exception:

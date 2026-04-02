@@ -36,7 +36,7 @@ def run_ocr(image_bytes: bytes) -> list[dict]:
     if img.mode != "RGB":
         img = img.convert("RGB")
 
-    data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT, config="--psm 6")
+    data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT, config="--psm 6 --dpi 300")
 
     words = []
     n = len(data["text"])
@@ -146,6 +146,7 @@ def detect_columns(rows: list[list[dict]], header_keywords: list[str] = None) ->
             "item", "description", "product", "qty", "quantity",
             "price", "unit", "total", "ext", "amount", "pack", "case",
             "each", "cost", "net", "uom", "size",
+            "ttem", "ltem", "aty", "qiy",  # OCR misreads
         ]
 
     # Find header row: the row that contains the most header keywords
@@ -166,6 +167,25 @@ def detect_columns(rows: list[list[dict]], header_keywords: list[str] = None) ->
     header_row = rows[best_idx]
     columns = _parse_header_columns(header_row)
 
+    # Ensure item_name column exists — if missing, create one at the left
+    has_item_name = any(c["field"] == "item_name" for c in columns)
+    if not has_item_name and columns:
+        first_col_left = min(c["left"] for c in columns)
+        if first_col_left > 20:
+            # There's space to the left of the first column → insert description
+            columns.insert(0, {
+                "name": "Description",
+                "left": 0,
+                "right": first_col_left - 10,
+                "field": "item_name",
+            })
+        else:
+            # The first "unknown" column is likely item_name
+            for c in columns:
+                if c["field"] == "unknown":
+                    c["field"] = "item_name"
+                    break
+
     return {
         "header_row_idx": best_idx,
         "columns": columns,
@@ -178,11 +198,14 @@ def _parse_header_columns(header_words: list[dict]) -> list[dict]:
     Parse header row words into column definitions.
     Groups adjacent header words into column names and detects field type.
     """
-    # Field type mapping
+    # Field type mapping (includes common OCR misreads)
     field_map = {
         "item": "item_name", "description": "item_name", "product": "item_name",
         "name": "item_name", "desc": "item_name",
+        "ttem": "item_name", "ltem": "item_name",  # OCR misreads of Item
         "qty": "quantity", "quantity": "quantity", "qnty": "quantity",
+        "aty": "quantity", "qiy": "quantity", "oty": "quantity",  # OCR misreads of Qty
+        "ordered": "quantity", "ship": "quantity", "shipped": "quantity",
         "pack": "pack_size", "size": "pack_size", "case": "pack_size",
         "uom": "pack_size", "um": "pack_size",
         "price": "unit_price", "unit": "unit_price", "each": "unit_price",
@@ -229,61 +252,109 @@ def _finalize_column(word_group: list[dict], field_map: dict) -> dict:
     return {"name": name, "left": left, "right": right, "field": field}
 
 
+def _is_pack_size_word(text: str) -> bool:
+    """Check if a word looks like a pack-size component (not qty/price/total)."""
+    t = text.strip()
+    # Pack patterns: "6/5", "4/10", "24/12OZ", "48/6"
+    if re.match(r'^\d+/\d+', t):
+        return True
+    # Unit words that appear in pack columns
+    if t.upper() in {"LB", "LBS", "OZ", "GAL", "CT", "EA", "DZ", "ML", "QT", "PT", "CS", "PK", "BX"}:
+        return True
+    return False
+
+
+def _is_price_like(text: str) -> bool:
+    """Check if a word looks like a price or quantity (pure number or $-prefixed)."""
+    t = text.strip().strip("'`\"\u2018\u2019\u201C\u201D")
+    return bool(re.match(r'^[\d$.,]+$', t)) and not _is_pack_size_word(text)
+
+
 def _infer_columns_from_data(rows: list[list[dict]]) -> dict:
     """
     When no header is found, infer columns from data alignment.
-    Assumes: description on left, numbers on right.
+    Uses right-edge alignment of numeric values (prices/totals are right-aligned)
+    and filters out pack-size words to avoid false column detection.
     """
-    # Find rows that look like data (contain at least one number)
+    # Find rows that look like data (contain numbers that aren't pack sizes)
     data_rows = []
     for i, row in enumerate(rows):
-        nums = [w for w in row if re.match(r'^[\d$.,]+$', w["text"])]
-        if len(nums) >= 2:
+        price_nums = [w for w in row if _is_price_like(w["text"])]
+        if len(price_nums) >= 2:
             data_rows.append((i, row))
 
     if not data_rows:
         return {"header_row_idx": -1, "columns": [], "data_start_idx": 0}
 
-    # Use the first data row to estimate column positions
     first_data_idx = data_rows[0][0]
 
-    # Collect all numeric word positions across data rows
-    num_positions = []
+    # Collect right-edge positions of numeric words across data rows
+    # (right-alignment is more stable than left-position for prices)
+    num_right_positions = []
     for _, row in data_rows:
         for w in row:
-            if re.match(r'^[\d$.,]+$', w["text"]):
-                num_positions.append(w["left"])
+            if _is_price_like(w["text"]):
+                num_right_positions.append(w["right"])
 
-    # Cluster numeric positions to find column boundaries
-    if num_positions:
-        num_positions.sort()
-        # Simple clustering: positions within 30px are same column
-        col_centers = []
-        current = [num_positions[0]]
-        for p in num_positions[1:]:
-            if p - current[-1] < 50:
-                current.append(p)
-            else:
-                col_centers.append(int(np.mean(current)))
-                current = [p]
-        col_centers.append(int(np.mean(current)))
+    if not num_right_positions:
+        return {"header_row_idx": -1, "columns": [], "data_start_idx": 0}
 
-        # Build columns: description = everything before first number column
-        columns = [{"name": "Description", "left": 0, "right": col_centers[0] - 20 if col_centers else 9999, "field": "item_name"}]
+    num_right_positions.sort()
 
-        field_names = ["quantity", "unit_price", "total"]
-        for j, center in enumerate(col_centers):
-            field = field_names[j] if j < len(field_names) else "unknown"
-            right = col_centers[j + 1] - 10 if j + 1 < len(col_centers) else 9999
-            columns.append({"name": f"Col{j+1}", "left": center - 30, "right": right, "field": field})
+    # Cluster by right-edge position (prices in same column align right)
+    col_rights = []
+    current = [num_right_positions[0]]
+    for p in num_right_positions[1:]:
+        if p - current[-1] < 60:
+            current.append(p)
+        else:
+            col_rights.append(int(np.mean(current)))
+            current = [p]
+    col_rights.append(int(np.mean(current)))
 
-        return {
-            "header_row_idx": -1,
-            "columns": columns,
-            "data_start_idx": max(0, first_data_idx - 1),
-        }
+    # Now find left boundaries for each numeric column
+    # by looking at the left-most numeric word that aligns to each right cluster
+    col_bounds = []
+    for cr in col_rights:
+        lefts = []
+        for _, row in data_rows:
+            for w in row:
+                if _is_price_like(w["text"]) and abs(w["right"] - cr) < 60:
+                    lefts.append(w["left"])
+        col_left = min(lefts) if lefts else cr - 80
+        col_bounds.append({"left": col_left, "right": cr})
 
-    return {"header_row_idx": -1, "columns": [], "data_start_idx": 0}
+    # Determine column order by x-position and assign fields
+    # Rightmost = total, then unit_price, then quantity
+    col_bounds.sort(key=lambda c: c["right"])
+    field_names_rtl = ["total", "unit_price", "quantity"]  # right-to-left assignment
+
+    columns = []
+    # Description column: everything left of the first numeric column
+    first_num_left = col_bounds[0]["left"] if col_bounds else 9999
+    columns.append({
+        "name": "Description", "left": 0,
+        "right": first_num_left - 15, "field": "item_name",
+    })
+
+    for j, cb in enumerate(reversed(col_bounds)):
+        field_idx = j
+        field = field_names_rtl[field_idx] if field_idx < len(field_names_rtl) else "unknown"
+        columns.append({
+            "name": f"Col{len(col_bounds) - j}",
+            "left": cb["left"] - 15,
+            "right": cb["right"] + 15,
+            "field": field,
+        })
+
+    # Sort columns left to right for consistent processing
+    columns.sort(key=lambda c: c["left"])
+
+    return {
+        "header_row_idx": -1,
+        "columns": columns,
+        "data_start_idx": max(0, first_data_idx),
+    }
 
 
 # ── 4. Line Item Extraction ──
@@ -320,34 +391,64 @@ def extract_line_items(
 
 
 def _map_words_to_columns(row: list[dict], columns: list[dict]) -> dict:
-    """Map words in a row to their respective columns."""
+    """
+    Map words in a row to their respective columns.
+    Uses strict boundary matching: a word is assigned to the column whose
+    boundaries contain its center. Only falls back to nearest-center if
+    no column boundary matches.
+    """
     result = {"item_name": "", "quantity": 0, "unit_price": 0, "total_price": 0, "pack_size": ""}
+    if not columns:
+        return result
 
-    # Assign each word to the nearest column
+    # Build expanded column boundaries for matching
+    # Expand each column boundary slightly, but don't overlap with neighbors
+    expanded = []
+    for i, col in enumerate(columns):
+        pad_left = 40
+        pad_right = 40
+        # Don't overlap with neighboring columns
+        if i > 0:
+            gap = col["left"] - columns[i - 1]["right"]
+            pad_left = min(pad_left, gap // 2)
+        if i < len(columns) - 1:
+            gap = columns[i + 1]["left"] - col["right"]
+            pad_right = min(pad_right, gap // 2)
+        expanded.append((col["left"] - pad_left, col["right"] + pad_right))
+
     col_assignments = defaultdict(list)
     for w in row:
         w_center = w["left"] + w["width"] // 2
+
+        # Phase 1: Strict boundary match
+        bounded_col = None
+        bounded_dist = float("inf")
+        for i, col in enumerate(columns):
+            el, er = expanded[i]
+            if el <= w_center <= er:
+                col_center = (col["left"] + col["right"]) // 2
+                dist = abs(w_center - col_center)
+                if dist < bounded_dist:
+                    bounded_dist = dist
+                    bounded_col = col
+
+        if bounded_col:
+            col_assignments[bounded_col["field"]].append(w["text"])
+            continue
+
+        # Phase 2: Fallback — nearest column center (only if no boundary match)
         best_col = None
         best_dist = float("inf")
-
         for col in columns:
             col_center = (col["left"] + col["right"]) // 2
-            # Check if word center falls within or near column bounds
-            if col["left"] - 30 <= w_center <= col["right"] + 30:
-                dist = abs(w_center - col_center)
-                if dist < best_dist:
-                    best_dist = dist
-                    best_col = col
-            else:
-                dist = abs(w_center - col_center)
-                if dist < best_dist:
-                    best_dist = dist
-                    best_col = col
-
+            dist = abs(w_center - col_center)
+            if dist < best_dist:
+                best_dist = dist
+                best_col = col
         if best_col:
             col_assignments[best_col["field"]].append(w["text"])
 
-    # Build result
+    # Build result from assignments
     if "item_name" in col_assignments:
         result["item_name"] = " ".join(col_assignments["item_name"])
     if "quantity" in col_assignments:
@@ -363,10 +464,17 @@ def _map_words_to_columns(row: list[dict], columns: list[dict]) -> dict:
     for field, words in col_assignments.items():
         if field == "unknown":
             val = _parse_number(" ".join(words))
-            if val > 0 and result["total_price"] == 0:
-                result["total_price"] = val
-            elif val > 0 and result["unit_price"] == 0:
-                result["unit_price"] = val
+            if val > 0:
+                # Heuristic: small integers (1-999) with no decimal → likely quantity
+                is_integer = val == int(val) and val < 1000
+                if is_integer and result["quantity"] == 0:
+                    result["quantity"] = val
+                elif result["total_price"] == 0:
+                    result["total_price"] = val
+                elif result["unit_price"] == 0:
+                    result["unit_price"] = val
+                elif result["quantity"] == 0:
+                    result["quantity"] = val
 
     return result
 
@@ -375,6 +483,7 @@ def _extract_items_simple(rows: list[list[dict]], start: int = 0) -> list[dict]:
     """
     Fallback: extract items without column info.
     Assumes format: description ... qty price total (numbers on the right).
+    Filters pack-size patterns (e.g., "6/5", "LB") from numeric extraction.
     """
     items = []
     for row in rows[start:]:
@@ -382,16 +491,19 @@ def _extract_items_simple(rows: list[list[dict]], start: int = 0) -> list[dict]:
         if _is_separator_or_summary(text):
             continue
 
-        # Split into text words and numeric words
+        # Split into text words, pack words, and numeric words
         text_parts = []
         numbers = []
         for w in row:
-            if re.match(r'^[\d$.,]+$', w["text"].replace(",", "")):
-                val = _parse_number(w["text"])
+            wt = w["text"].strip()
+            if _is_pack_size_word(wt):
+                text_parts.append(wt)  # Pack sizes go into description
+            elif re.match(r'^[\d$.,]+$', wt.replace(",", "").strip("'`\"\u2018\u2019\u201C\u201D")):
+                val = _parse_number(wt)
                 if val > 0:
                     numbers.append(val)
             else:
-                text_parts.append(w["text"])
+                text_parts.append(wt)
 
         name = " ".join(text_parts).strip()
         if not name or len(numbers) < 2:
@@ -423,12 +535,34 @@ def _extract_items_simple(rows: list[list[dict]], start: int = 0) -> list[dict]:
 # ── 5. Helper functions ──
 
 def _parse_number(text: str) -> float:
-    """Parse a numeric string, handling $ and , characters."""
+    """Parse a numeric string, handling $, commas, and common OCR artifacts."""
+    # Strip common OCR artifacts (ASCII and Unicode quotes, spaces)
     cleaned = text.replace("$", "").replace(",", "").strip()
+    # Remove ASCII and Unicode quote chars
+    cleaned = cleaned.strip("'`\"\u2018\u2019\u201C\u201D")
+    # OCR substitutions for common digit confusions
+    cleaned = _ocr_digit_fix(cleaned)
     try:
         return float(cleaned)
     except ValueError:
         return 0.0
+
+
+def _ocr_digit_fix(text: str) -> str:
+    """Fix common OCR digit misreads in text expected to be numeric.
+    Applied after $ and , stripping, so the input should be mostly digits."""
+    if not text:
+        return text
+    # Common OCR digit confusions
+    mapping = {'l': '1', 'I': '1', 'O': '0', 'o': '0', 'S': '5', 'B': '8'}
+    result = []
+    has_digit = any(c.isdigit() or c == '.' for c in text)
+    for ch in text:
+        if ch in mapping and (has_digit or len(text) <= 3):
+            result.append(mapping[ch])
+        else:
+            result.append(ch)
+    return ''.join(result)
 
 
 def _is_separator_or_summary(text: str) -> bool:
@@ -445,17 +579,22 @@ def _is_separator_or_summary(text: str) -> bool:
     header_hits = sum(1 for hw in header_words if hw in t)
     if header_hits >= 2:
         return False
-    # Summary lines — only if the row starts with or is dominated by a summary word
-    summary_patterns = [
-        r'\bsubtotal\b', r'\bsub\s*total\b', r'\btax\b', r'\bbalance\b',
-        r'\bamount\s*due\b', r'\bthank\s*you\b', r'\bterms:', r'\bnet\s*\d+\b',
-        r'\bpage\s+\d', r'\binvoice\s+total\b',
+    # Summary lines — only if the row STARTS with a summary keyword
+    # (data rows may contain words like "total" in product names)
+    summary_start_patterns = [
+        r'^\s*subtotal\b', r'^\s*sub\s*total\b', r'^\s*tax\b', r'^\s*balance\b',
+        r'^\s*amount\s*due\b', r'^\s*thank\s*you\b', r'^\s*terms:',
+        r'^\s*net\s*\d+\b', r'^\s*page\s+\d', r'^\s*invoice\s+total\b',
     ]
-    for sp in summary_patterns:
+    for sp in summary_start_patterns:
         if re.search(sp, t):
             return True
-    # A row that is ONLY "total: $X" (no item data)
+    # A row that is ONLY "total: $X" (no item data) — short row
     if re.match(r'^total[:\s]+\$?[\d,.]+ *$', t):
+        return True
+    # Very short rows that are just a keyword + number
+    words = t.split()
+    if len(words) <= 3 and any(kw in t for kw in ["total", "subtotal", "tax", "balance"]):
         return True
     return False
 
@@ -571,9 +710,14 @@ def _parse_pfg(rows: list[list[dict]]) -> list[dict]:
 
 def _parse_usfoods(rows: list[list[dict]]) -> list[dict]:
     """US Foods invoices: similar to Sysco columnar layout."""
-    header_kw = ["item", "description", "qty", "pack", "size", "price", "total", "ext"]
+    header_kw = ["item", "description", "qty", "pack", "size", "price", "total", "ext",
+                 "product", "extended", "ttem", "ltem", "aty"]
     col_info = detect_columns(rows, header_kw)
-    return extract_line_items(rows, col_info)
+    items = extract_line_items(rows, col_info)
+    if items:
+        return items
+    # Fallback: header may be white-on-dark and unreadable
+    return _extract_items_simple(rows)
 
 
 # ── 8. Result builders ──

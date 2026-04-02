@@ -1,61 +1,87 @@
-# Restaurant Accountant AI — Product Requirements Document
+# Restaurant Accounting & Invoice Management System
 
 ## Original Problem Statement
-Full-stack React + FastAPI/MongoDB restaurant accounting application with AI-powered OCR invoice extraction.
+Build a robust, rule-based Invoice Review and Correction Pipeline with phased approach:
+- Save Now, Review Later workflow
+- Normalization Layer
+- Correction Memory System V1
+- Image preprocessing (deskew, rotation)
+- Document classification
+- Layout-based OCR parsing
 
-## Core Requirements
-- OCR extraction pipeline (GPT-5.2 via Emergent LLM Key)
-- Image preprocessing: orientation fix, deskew, enhancement, standardization
-- Document type classification: simple_receipt, structured_invoice, vendor_specific, multi_page_pdf
-- Layout parser: Tesseract OCR → row detection → column detection → structured line items
-- Dual pricing mode detection: CASE_PRICE vs WEIGHT_BASED
-- Conservative normalization (preserve meaningful product distinctions)
-- Correction Memory with full audit UI + correction hints
-- Review lifecycle with guided correction suggestions + Fix All Issues
-- Issue type classification: math, pack, name, suspicious, missing, review
+**User Mandate**: Strict phased rollout with deterministic rule-based logic only. No AI/LLM for suggestions or layout fixing.
 
-## Architecture
-- Backend: FastAPI modular (core/, routes/, services/)
-- Frontend: React + TailwindCSS + Shadcn UI
-- Database: MongoDB
-- LLM: OpenAI GPT-5.2 via emergentintegrations
-- Image: Tesseract 5.3.0 (OSD + OCR), OpenCV, Pillow, NumPy
+## Tech Stack
+- Frontend: React, TailwindCSS, Shadcn UI
+- Backend: FastAPI, Python, MongoDB
+- OCR: Tesseract (pytesseract), OpenCV (cv2)
+- LLM: OpenAI GPT-5.2 via Emergent LLM Key (receipt extraction only)
 
-## Completed Features
-- [x] Clean Backend V2 Migration
-- [x] Normalization Layer + Correction Memory V1
-- [x] "Save Now, Review Later" + Quick Review UI
-- [x] Invoice Sorting, Invoice-level review_status
-- [x] Hard Invoice Robustness Layer
-- [x] Guided Correction Suggestions V1 + Fix All Issues
-- [x] Pricing Mode Detection & $/LB Fix
-- [x] Correction Layer Phase 1: Capture + Visibility
-- [x] Correction Layer Phase 2: Correction Hints
-- [x] Correction Memory UI — Full audit/management page
-- [x] Image Preprocessing Phase 1: Orientation + Deskew + Enhancement
-- [x] Document Type Classification Phase 2
-- [x] Parser-Specific Layout Handling Phase 3 (2026-04-02)
-  - Tesseract OCR with word-level bounding boxes (run_ocr)
-  - Row detection: y-coordinate clustering (detect_rows)
-  - Column detection: header keyword scoring + data alignment inference (detect_columns)
-  - Vendor parsers: Sysco (fallback for dark headers), PFG (weight-based), US Foods
-  - Fallback: _extract_items_simple (splits text/numbers by position)
-  - Smart separator filter: preserves header rows with multiple column keywords
-  - Integrated into upload pipeline (stores result, returns in API response)
-  - Tested on 4 formats: seafood receipt, Sysco, PFG, messy layout (26/26 tests passed)
+## Completed Phases
 
-## Known Issues (Parked)
-- Old pytest suite failures — deferred by user
-- bcrypt.__about__ warning in backend startup logs
+### Phase 1: Correction Layer Capture + Visibility (DONE)
+- Issue tags in UI, correction data capture
 
-## Upcoming Tasks
-- Integrate loose match keys into vendor comparison
+### Phase 2: Correction Hints UI (DONE)
+- Learned memory surfaced as safe manual suggestions
 
-## Future/Backlog
-- AI Chat Assistant Page Polish
-- OCR/Image Upload support for Salaries tab
-- Client-side pack size preview
+### Correction Memory Audit UI (DONE)
+- New page for users to view/edit/delete learned corrections
 
-## Test Credentials
+### Phase 1 - Image Preprocessing (DONE)
+- OpenCV/Tesseract auto-rotation, deskew, contrast enhancement
+
+### Phase 2 - Document Type Classification (DONE)
+- Rule-based density/line counting to route invoices
+
+### Phase 3 - Parser-Specific Layout Handling (DONE)
+- Tesseract-based bounding box extraction and column inference
+
+### Phase 3.5 - Real-World Stress Testing (DONE)
+- 15-invoice stress test baseline: 17.6% accuracy (16/91 items)
+
+### Phase 4 - Layout Parser Stabilization (DONE - Current)
+- **Accuracy: 17.6% → 86% (4.9× improvement)**
+- Fixes applied:
+  1. Preprocessing: Raised OSD confidence threshold (3.0), fixed false rotations
+  2. Preprocessing: Raised median filter noise threshold (40), prevent clean image degradation
+  3. Preprocessing: Adaptive bg cleanup for gray backgrounds
+  4. Preprocessing: Skip autocontrast/contrast-norm on clean white-bg images
+  5. Layout parser: Fixed `_map_words_to_columns` boundary matching (strict bounds → fallback)
+  6. Layout parser: Rewritten `_infer_columns_from_data` with right-edge alignment
+  7. Layout parser: Pack-size word filtering (`_is_pack_size_word`)
+  8. Layout parser: Unicode smart-quote handling in `_parse_number` and `_is_price_like`
+  9. Layout parser: OCR digit confusion fix (`_ocr_digit_fix`)
+  10. Layout parser: OCR misread header keywords (aty→quantity, ttem→item_name)
+  11. Layout parser: Fallback item_name column when header detection misses description
+  12. Layout parser: Added `--dpi 300` to Tesseract config
+  13. Layout parser: Less aggressive `_is_separator_or_summary` filtering
+
+## Remaining Known Issues
+- **inv08 (10pt font)**: OCR reads ".09" instead of ".00" — Tesseract limitation on very small text
+- **inv04 (1 item)**: Cross-row value leakage near dark header band — OCR artifact
+- **inv15 (noisy)**: Random noise causes occasional value errors — inherent quality limitation
+- **bcrypt** attribute error in backend logs (P2, parked)
+- **pytest** suite failures (P2, blocked by user instruction)
+
+## Key API Endpoints
+- `POST /api/upload/extract`: Full pipeline (Preprocess → Classify → Layout Parse → LLM)
+- `GET /api/correction-hints`: Fetch learned corrections
+- `GET/PUT/DELETE /api/correction-memory`: CRUD for audit page
+
+## Database Schema
+- `purchases`: document_type, page_count, layout_parse_results
+- `correction_memory`: usage_count, last_used_at, enabled
+
+## Credentials
 - Email: demo@test.com
 - Password: testpassword
+
+## Upcoming Tasks
+- Phase 5: Optimize parser for remaining edge cases (if user approves)
+- Integrate loose match keys into vendor comparison (P1)
+
+## Future/Backlog
+- AI Chat Assistant Page Polish (P2)
+- OCR/Image Upload for Salaries tab (P2)
+- Client-side pack size preview (P2)
