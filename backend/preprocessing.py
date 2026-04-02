@@ -1,6 +1,6 @@
 """
 Image preprocessing and multi-page classification for invoice extraction.
-Phase 1: lightweight, safe, plugs into existing pipeline.
+Phase 1: Orientation fix, deskew, enhancement, standardization.
 """
 import base64
 import io
@@ -20,8 +20,14 @@ logger = logging.getLogger(__name__)
 
 def preprocess_image(image_bytes: bytes) -> bytes:
     """
-    Lightweight preprocessing to improve OCR accuracy.
-    Returns processed PNG bytes.  Falls back to original on ANY error.
+    Full preprocessing pipeline for invoice images.
+    Steps:
+      1. EXIF auto-rotate (camera orientation metadata)
+      2. Orientation detection & correction (90/180/270° via Tesseract OSD)
+      3. Deskew (straighten slight angle skew)
+      4. Enhancement (contrast, noise, sharpness)
+      5. Standardization (consistent brightness/contrast)
+    Returns processed PNG bytes. Falls back to original on ANY error.
     """
     try:
         img = Image.open(io.BytesIO(image_bytes))
@@ -29,27 +35,21 @@ def preprocess_image(image_bytes: bytes) -> bytes:
         # 1. Auto-rotate from EXIF (fixes phone-camera orientation)
         img = ImageOps.exif_transpose(img)
 
-        # 2. Convert to RGB (strips alpha, normalises palette images)
+        # 2. Convert to RGB
         if img.mode != "RGB":
             img = img.convert("RGB")
 
-        # 3. Simple deskew (projection-profile on grayscale)
-        img = _deskew(img)
+        # 3. Detect and fix 90/180/270° rotation
+        img = _fix_orientation(img)
 
-        # 4. Auto-contrast – equalises faded/dark scans
-        img = ImageOps.autocontrast(img, cutoff=0.5)
+        # 4. Deskew — straighten slight tilt
+        img = _deskew(img)
 
         # 5. Crop empty margins
         img = _crop_margins(img)
 
-        # 6. Light sharpening (slightly blurry scans)
-        img = ImageEnhance.Sharpness(img).enhance(1.3)
-
-        # 7. Slight contrast bump
-        img = ImageEnhance.Contrast(img).enhance(1.1)
-
-        # 8. Noise reduction – gentle median keeps edges
-        img = img.filter(ImageFilter.MedianFilter(size=3))
+        # 6. Enhancement pipeline
+        img = _enhance_image(img)
 
         buf = io.BytesIO()
         img.save(buf, format="PNG", optimize=True)
@@ -64,17 +64,135 @@ def preprocess_image(image_bytes: bytes) -> bytes:
         return image_bytes
 
 
+# ---------------------------------------------------------------------------
+# 1a. Orientation Detection (90 / 180 / 270)
+# ---------------------------------------------------------------------------
+
+def _fix_orientation(img: Image.Image) -> Image.Image:
+    """
+    Detect if image is rotated 90°, 180°, or 270° using Tesseract OSD.
+    Falls back to projection-profile heuristic if OSD fails.
+    """
+    # Try Tesseract OSD first (most reliable)
+    rotation = _detect_orientation_tesseract(img)
+    if rotation is not None and rotation != 0:
+        logger.info(f"Orientation fix: rotating {rotation}° (tesseract OSD)")
+        return img.rotate(rotation, resample=Image.BICUBIC, expand=True,
+                          fillcolor=(255, 255, 255))
+    if rotation is not None:
+        return img  # OSD said 0° — no rotation needed
+
+    # Fallback: projection-profile heuristic
+    rotation = _detect_orientation_heuristic(img)
+    if rotation != 0:
+        logger.info(f"Orientation fix: rotating {rotation}° (heuristic)")
+        return img.rotate(rotation, resample=Image.BICUBIC, expand=True,
+                          fillcolor=(255, 255, 255))
+
+    return img
+
+
+def _detect_orientation_tesseract(img: Image.Image):
+    """
+    Use Tesseract OSD to detect rotation angle.
+    Returns rotation needed to fix (0, 90, 180, 270), or None on failure.
+    """
+    try:
+        import pytesseract
+
+        # OSD needs a reasonably sized image
+        w, h = img.size
+        if max(w, h) < 200:
+            return None
+
+        # Work on grayscale for OSD; upscale small images
+        gray = img.convert("L")
+        if max(w, h) < 600:
+            scale = 600 / max(w, h)
+            gray = gray.resize(
+                (int(w * scale), int(h * scale)), Image.BILINEAR
+            )
+
+        osd = pytesseract.image_to_osd(
+            gray,
+            output_type=pytesseract.Output.DICT,
+            config="--dpi 300",
+        )
+        detected_rotation = int(osd.get("rotate", 0))
+        confidence = float(osd.get("orientation_conf", 0))
+
+        logger.info(f"Tesseract OSD: rotation={detected_rotation}°, conf={confidence:.1f}")
+
+        # Only apply if confidence is reasonable
+        if confidence < 1.0:
+            return None
+
+        # Tesseract returns the rotation needed to correct
+        return detected_rotation
+    except Exception as e:
+        logger.debug(f"Tesseract OSD failed (non-fatal): {e}")
+        return None
+
+
+def _detect_orientation_heuristic(img: Image.Image) -> int:
+    """
+    Heuristic orientation detection using projection profiles.
+    Tests 0° and 90° — picks the one where horizontal text lines
+    produce sharper projection peaks. Uses aspect ratio as tiebreaker.
+    Returns 0 or 90.
+    """
+    try:
+        # Work on small grayscale thumbnail
+        thumb = img.convert("L")
+        scale = 400 / max(thumb.size)
+        if scale < 1:
+            thumb = thumb.resize(
+                (int(thumb.size[0] * scale), int(thumb.size[1] * scale)),
+                Image.BILINEAR,
+            )
+        arr = np.array(thumb)
+        binary = (arr < (arr.mean() - 20)).astype(np.float32)
+
+        # Horizontal projection profile (text lines → sharp peaks)
+        h_profile = binary.sum(axis=1)
+        h_score = float(np.var(h_profile)) if len(h_profile) > 1 else 0
+
+        # Vertical projection profile (text lines if rotated 90°)
+        v_profile = binary.sum(axis=0)
+        v_score = float(np.var(v_profile)) if len(v_profile) > 1 else 0
+
+        # Normalize by dimension count to compare fairly
+        h_norm = h_score / max(len(h_profile), 1)
+        v_norm = v_score / max(len(v_profile), 1)
+
+        # Aspect ratio hint: invoices are typically portrait (taller than wide)
+        w, h = img.size
+        is_landscape = w > h * 1.2
+
+        # If text variance strongly suggests rotation, rotate
+        if v_norm > h_norm * 1.5:
+            return 90
+        # If ambiguous but landscape, try rotation
+        if is_landscape and v_norm > h_norm * 0.8:
+            return 90
+        return 0
+    except Exception:
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# 1b. Deskew (small angle straightening)
+# ---------------------------------------------------------------------------
+
 def _deskew(img: Image.Image, max_angle: float = 5.0) -> Image.Image:
     """
     Estimate and correct small skew angles (±5°) using horizontal
-    projection-profile variance.  Fast: tests 21 angles in ~50 ms
-    on a typical receipt image.
+    projection-profile variance. Tests 21 angles.
     """
     try:
         # Work on a small grayscale thumbnail for speed
         thumb = img.convert("L").resize((400, int(400 * img.height / img.width)))
         arr = np.array(thumb)
-        # Binarise (Otsu-like simple threshold)
         threshold = int(arr.mean()) - 20
         binary = (arr < max(threshold, 80)).astype(np.float32)
 
@@ -128,6 +246,94 @@ def _crop_margins(img: Image.Image, min_crop_pct: float = 0.05) -> Image.Image:
         orig_area = w * h
         if crop_area < orig_area * (1.0 - min_crop_pct):
             return img.crop((x0, y0, x1, y1))
+        return img
+    except Exception:
+        return img
+
+
+# ---------------------------------------------------------------------------
+# 1c. Image Enhancement
+# ---------------------------------------------------------------------------
+
+def _enhance_image(img: Image.Image) -> Image.Image:
+    """
+    Multi-step enhancement: auto-contrast, noise reduction, sharpening,
+    background cleanup. Safe — only improves readability.
+    """
+    try:
+        # 1. Auto-contrast — equalises faded/dark scans
+        img = ImageOps.autocontrast(img, cutoff=0.5)
+
+        # 2. Background noise reduction
+        #    Detect if image has gray background/patterns and clean them
+        img = _clean_background(img)
+
+        # 3. Noise reduction — gentle median keeps edges
+        img = img.filter(ImageFilter.MedianFilter(size=3))
+
+        # 4. Sharpening — recover text edges after noise reduction
+        img = ImageEnhance.Sharpness(img).enhance(1.4)
+
+        # 5. Contrast normalization — target consistent contrast level
+        img = _normalize_contrast(img)
+
+        return img
+    except Exception as e:
+        logger.warning(f"Enhancement failed, skipping: {e}")
+        return img
+
+
+def _clean_background(img: Image.Image) -> Image.Image:
+    """
+    Clean gray/noisy backgrounds while preserving text.
+    Uses adaptive thresholding concept: if the overall background is gray,
+    shift it toward white.
+    """
+    try:
+        arr = np.array(img.convert("L"))
+
+        # Calculate background brightness (sample corners + center edges)
+        h, w = arr.shape
+        regions = [
+            arr[0:min(20,h), 0:min(20,w)],           # top-left
+            arr[0:min(20,h), max(0,w-20):w],          # top-right
+            arr[max(0,h-20):h, 0:min(20,w)],          # bottom-left
+            arr[max(0,h-20):h, max(0,w-20):w],        # bottom-right
+        ]
+        bg_mean = float(np.mean([r.mean() for r in regions if r.size > 0]))
+
+        # If background is grayish (< 230), brighten it
+        if bg_mean < 230:
+            shift = min(int(240 - bg_mean), 60)  # cap shift at 60
+            rgb_arr = np.array(img).astype(np.int16)
+            rgb_arr = np.clip(rgb_arr + shift, 0, 255).astype(np.uint8)
+            img = Image.fromarray(rgb_arr)
+            logger.info(f"Background cleanup: shifted brightness +{shift} (bg was {bg_mean:.0f})")
+
+        return img
+    except Exception:
+        return img
+
+
+def _normalize_contrast(img: Image.Image) -> Image.Image:
+    """
+    Normalize contrast to a consistent level.
+    Only boosts if image is low-contrast.
+    """
+    try:
+        arr = np.array(img.convert("L"))
+        std = float(np.std(arr))
+
+        # Target std dev around 60-70 for good text contrast
+        if std < 40:
+            # Low contrast — boost
+            factor = min(70.0 / max(std, 10), 1.8)
+            img = ImageEnhance.Contrast(img).enhance(factor)
+            logger.info(f"Contrast normalized: std={std:.0f}, factor={factor:.2f}")
+        elif std > 90:
+            # Too high contrast — slight reduction
+            img = ImageEnhance.Contrast(img).enhance(0.9)
+
         return img
     except Exception:
         return img
