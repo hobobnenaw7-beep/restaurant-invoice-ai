@@ -1,0 +1,122 @@
+{
+  "summary": "Tested Phase 3: Parser-Specific Layout Handling. All 26 tests passed. Layout parser correctly extracts line items from invoice images using Tesseract OCR with spatial analysis. Row detection groups words by y-coordinate clustering. Column detection finds boundaries from header keywords. Vendor-specific parsers (Sysco, PFG, US Foods) work correctly with fallback to simple extraction when header is unreadable. API integration includes layout_parse in response and stores summary in database.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "run_ocr": {
+      "extracts_words_with_bboxes": "PASS - run_ocr() extracts words with text, left, top, width, height, conf fields",
+      "handles_empty_image": "PASS - run_ocr() returns empty list for blank images"
+    },
+    "detect_rows": {
+      "groups_by_y_coordinate": "PASS - detect_rows() groups words into rows by y-coordinate clustering",
+      "sorts_left_to_right": "PASS - Words within each row sorted left-to-right",
+      "handles_empty_input": "PASS - detect_rows([]) returns []"
+    },
+    "detect_columns": {
+      "standard_header_keywords": "PASS - Detects columns when header has Description, Qty, Price, Total",
+      "infers_from_data": "PASS - Infers columns from data alignment when no header present",
+      "returns_correct_structure": "PASS - Returns header_row_idx, columns, data_start_idx"
+    },
+    "is_separator_or_summary": {
+      "filters_subtotal_tax_total": "PASS - Filters 'Subtotal:', 'Tax:', 'Total:', 'Balance Due:', etc.",
+      "filters_separator_lines": "PASS - Filters '----', '====', etc.",
+      "does_not_filter_headers": "PASS - Does NOT filter rows with multiple column keywords (Description Qty Price Total)",
+      "does_not_filter_data_rows": "PASS - Does NOT filter normal data rows (Chicken Breast 5 10.00 50.00)"
+    },
+    "parse_invoice_layout": {
+      "returns_correct_structure": "PASS - Returns items, row_count, column_count, header_detected, parser_used, raw_rows",
+      "handles_empty_image": "PASS - Returns empty result with parser_used='none (no_ocr_words)'"
+    },
+    "receipt_parser": {
+      "extracts_items": "PASS - simple_receipt document_type uses receipt_parser, extracts items"
+    },
+    "vendor_parsers": {
+      "sysco_dark_header": "PASS - Sysco parser extracts items even with dark header (falls back to simple extraction)",
+      "pfg_weight_based": "PASS - PFG parser extracts items from weight-based invoice",
+      "usfoods": "PASS - US Foods parser extracts items correctly"
+    },
+    "fallback_parser": {
+      "structured_fallback": "PASS - Falls back to _extract_items_simple when column detection fails"
+    },
+    "messy_layout": {
+      "handles_uneven_spacing": "PASS - Handles uneven spacing correctly"
+    },
+    "api_integration": {
+      "layout_parse_in_response": "PASS - POST /api/upload/extract includes layout_parse with parser_used, items, row_count, column_count, header_detected",
+      "layout_parse_stored_in_db": "PASS - layout_parse summary stored in uploaded_receipts collection"
+    },
+    "multiple_formats": {
+      "format_1_columnar_header": "PASS - Standard columnar invoice with header",
+      "format_2_simple_receipt": "PASS - Simple receipt format",
+      "format_3_no_header_inferred": "PASS - Invoice without header (columns inferred)"
+    },
+    "no_column_mixing": {
+      "columns_distinct": "PASS - Columns have distinct boundaries with no significant overlap"
+    },
+    "helper_functions": {
+      "row_text": "PASS - Reconstructs text from row words preserving spacing",
+      "parse_number": "PASS - Handles $, commas, and invalid input correctly",
+      "extract_line_items": "PASS - Maps row cells to columns correctly"
+    }
+  },
+  "features_verified": [
+    "1. run_ocr() extracts words with bounding boxes from an image",
+    "2. detect_rows() groups words into correct rows by y-coordinate clustering",
+    "3. detect_columns() finds column boundaries from header keywords",
+    "4. Column detection works when header row has standard keywords (Description, Qty, Price, Total)",
+    "5. _is_separator_or_summary() correctly filters subtotal/tax/total rows but NOT header rows",
+    "6. _is_separator_or_summary() does NOT filter rows containing multiple column keywords",
+    "7. parse_invoice_layout() returns correct structure: items, row_count, column_count, header_detected, parser_used, raw_rows",
+    "8. Receipt parser (simple_receipt) extracts all items from informal receipt",
+    "9. Vendor Sysco parser correctly extracts items from columnar invoice with dark header background (uses fallback)",
+    "10. Vendor PFG parser correctly extracts items from weight-based invoice",
+    "11. Vendor US Foods parser correctly extracts items",
+    "12. Structured parser falls back to _extract_items_simple when column detection fails",
+    "13. Messy layout parser handles uneven spacing correctly",
+    "14. Layout parser gracefully handles images with no text (returns empty result)",
+    "15. Layout parse result is included in POST /api/upload/extract response",
+    "16. Layout parse summary is stored in uploaded_receipts collection",
+    "17. Works on at least 3 different invoice formats (columnar with header, simple receipt, no header inferred)",
+    "18. No mixing between columns - each field maps to correct column"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_layout_parser.py",
+    "/app/test_reports/pytest/pytest_layout_parser.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "layout_parser.py is well-structured with clear separation: OCR (run_ocr), row detection (detect_rows), column detection (detect_columns), item extraction (extract_line_items), vendor parsers (_parse_sysco, _parse_pfg, _parse_usfoods)",
+    "Row detection uses y-coordinate clustering with tolerance_ratio * median_height for grouping",
+    "Column detection scores rows by header keyword matches (score >= 2 required), falls back to _infer_columns_from_data",
+    "_is_separator_or_summary() correctly preserves header rows by checking for multiple column keywords (header_hits >= 2)",
+    "Vendor parsers have appropriate fallback: Sysco falls back to _extract_items_simple when header is unreadable (white-on-dark)",
+    "upload.py correctly integrates layout parsing at lines 414-431, stores summary in receipt_doc (lines 442-448), includes full result in response (lines 630-636)",
+    "Error handling is graceful - layout parsing failure is non-fatal (logged as warning)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_layout_parser.py"
+  ],
+  "success_rate": {
+    "backend": "100% (26/26 passed)",
+    "frontend": "N/A (backend-only testing)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "Created synthetic invoice images using PIL with LiberationMono fonts for testing (no database seed data needed)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 3 Layout Parser fully tested. Key functions: run_ocr() uses Tesseract with --psm 6 to get word-level bounding boxes. detect_rows() clusters words by y-coordinate (tolerance = 0.4 * median_height). detect_columns() finds header row by keyword scoring (score >= 2), falls back to _infer_columns_from_data. Vendor parsers: _parse_sysco (falls back to simple extraction for dark headers), _parse_pfg (weight-based), _parse_usfoods. _is_separator_or_summary() filters summary rows but preserves headers (header_hits >= 2). API response includes layout_parse with parser_used, items, row_count, column_count, header_detected. Test images created with PIL using LiberationMono fonts at /usr/share/fonts/truetype/liberation/.",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}

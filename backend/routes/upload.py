@@ -410,6 +410,26 @@ Rules:
             logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
 
         receipt_id = str(uuid.uuid4())
+
+        # ── Layout parsing (Phase 3) — runs in parallel with LLM ──
+        layout_parse_result = None
+        try:
+            from services.layout_parser import parse_invoice_layout
+            if document_type == "purchase_invoice" and images_b64:
+                layout_parse_result = parse_invoice_layout(
+                    b64_image=images_b64[0],
+                    document_type=doc_classification.get("document_type", "structured_invoice"),
+                    vendor_name=detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
+                )
+                logger.info(
+                    f"Layout parser: {layout_parse_result['parser_used']}, "
+                    f"{len(layout_parse_result['items'])} items, "
+                    f"{layout_parse_result['row_count']} rows, "
+                    f"header={'yes' if layout_parse_result['header_detected'] else 'no'}"
+                )
+        except Exception as e:
+            logger.warning(f"Layout parsing failed (non-fatal): {e}")
+
         receipt_doc = {
             "id": receipt_id,
             "restaurant_id": rid,
@@ -419,6 +439,13 @@ Rules:
             "page_types": page_types,
             "document_classification": doc_classification,
             "parser_route": parser_route,
+            "layout_parse": {
+                "parser_used": layout_parse_result["parser_used"],
+                "item_count": len(layout_parse_result["items"]),
+                "row_count": layout_parse_result["row_count"],
+                "column_count": layout_parse_result["column_count"],
+                "header_detected": layout_parse_result["header_detected"],
+            } if layout_parse_result else None,
             "raw_ocr_text": response[:5000],
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
             "vendor_id": vendor_pattern.get("vendor_id") if vendor_pattern else None,
@@ -600,6 +627,13 @@ Rules:
             "page_types": page_types,
             "document_classification": doc_classification,
             "parser_route": parser_route,
+            "layout_parse": {
+                "parser_used": layout_parse_result["parser_used"],
+                "items": layout_parse_result["items"],
+                "row_count": layout_parse_result["row_count"],
+                "column_count": layout_parse_result["column_count"],
+                "header_detected": layout_parse_result["header_detected"],
+            } if layout_parse_result else None,
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
             "message": f"Data extracted using {parsing_method} parsing" + (" (vendor pattern matched)" if parsing_method == "vendor" else "") + (f" -- pages classified as {page_types}" if page_types else ""),
         }
