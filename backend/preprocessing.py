@@ -258,23 +258,31 @@ def _crop_margins(img: Image.Image, min_crop_pct: float = 0.05) -> Image.Image:
 def _enhance_image(img: Image.Image) -> Image.Image:
     """
     Multi-step enhancement: auto-contrast, noise reduction, sharpening,
-    background cleanup. Safe — only improves readability.
+    background cleanup. Adaptive — only applies heavy processing when needed.
     """
     try:
         # 1. Auto-contrast — equalises faded/dark scans
         img = ImageOps.autocontrast(img, cutoff=0.5)
 
         # 2. Background noise reduction
-        #    Detect if image has gray background/patterns and clean them
         img = _clean_background(img)
 
-        # 3. Noise reduction — gentle median keeps edges
-        img = img.filter(ImageFilter.MedianFilter(size=3))
+        # 3. Noise reduction — only apply median if image is actually noisy
+        arr = np.array(img.convert("L")).astype(np.float64)
+        # Estimate noise: high-frequency energy via Laplacian variance
+        from PIL import ImageFilter as IF
+        laplacian = np.array(img.convert("L").filter(IF.Kernel((3,3), [-1,-1,-1,-1,8,-1,-1,-1,-1], scale=1, offset=128)))
+        noise_level = float(np.std(laplacian))
+        if noise_level > 35:
+            # Noisy image — apply median filter
+            img = img.filter(ImageFilter.MedianFilter(size=3))
+            logger.info(f"Noise reduction applied (noise_level={noise_level:.0f})")
 
-        # 4. Sharpening — recover text edges after noise reduction
-        img = ImageEnhance.Sharpness(img).enhance(1.4)
+        # 4. Sharpening — light for clean images, stronger for processed ones
+        sharp_factor = 1.5 if noise_level > 35 else 1.15
+        img = ImageEnhance.Sharpness(img).enhance(sharp_factor)
 
-        # 5. Contrast normalization — target consistent contrast level
+        # 5. Contrast normalization
         img = _normalize_contrast(img)
 
         return img
