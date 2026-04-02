@@ -231,6 +231,29 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
 
         logger.info(f"Extract: {len(images_b64)} total image(s) to process")
 
+        # ── Document Classification (Phase 2) ──
+        from services.document_classifier import classify_document, get_parser_route
+
+        file_format = "pdf" if any(
+            ("pdf" in (f.content_type or "").lower() or (f.filename or "").lower().endswith(".pdf"))
+            for f in (all_files if hasattr(all_files[0], 'content_type') else [])
+        ) else "image"
+        # Determine file format from stored metadata
+        if first_fname.endswith(".pdf") or "pdf" in first_mime.lower():
+            file_format = "pdf"
+
+        # Classification happens before vendor detection (vendor info added later)
+        doc_classification = classify_document(
+            images_b64=images_b64,
+            file_format=file_format,
+            page_count=len(images_b64),
+        )
+        parser_route = get_parser_route(doc_classification)
+        logger.info(
+            f"Classification: {doc_classification['document_type']} "
+            f"({doc_classification['confidence_reason']}), route={parser_route}"
+        )
+
         from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
         vendor_hint = ""
@@ -271,6 +294,18 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
                     vendor_hint = "\n\nVENDOR-SPECIFIC HINTS (from previous receipts):\n" + "\n".join(f"- {h}" for h in hint_parts)
 
         parsing_method = "vendor" if vendor_pattern else "general"
+
+        # Update classification with vendor info now that we know it
+        if vendor_pattern and detected_vendor.upper() != "UNKNOWN":
+            doc_classification = classify_document(
+                images_b64=images_b64,
+                file_format=file_format,
+                page_count=len(images_b64),
+                vendor_name=detected_vendor,
+                has_vendor_pattern=True,
+            )
+            parser_route = get_parser_route(doc_classification)
+            logger.info(f"Classification updated with vendor: {doc_classification['document_type']}")
 
         page_types = None
         if len(images_b64) > 1 and document_type == "purchase_invoice":
@@ -382,6 +417,8 @@ Rules:
             "file_type": first_mime,
             "file_count": len(all_files),
             "page_types": page_types,
+            "document_classification": doc_classification,
+            "parser_route": parser_route,
             "raw_ocr_text": response[:5000],
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
             "vendor_id": vendor_pattern.get("vendor_id") if vendor_pattern else None,
@@ -561,6 +598,8 @@ Rules:
             "receipt_id": receipt_id,
             "parsing_method": parsing_method,
             "page_types": page_types,
+            "document_classification": doc_classification,
+            "parser_route": parser_route,
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
             "message": f"Data extracted using {parsing_method} parsing" + (" (vendor pattern matched)" if parsing_method == "vendor" else "") + (f" -- pages classified as {page_types}" if page_types else ""),
         }
