@@ -1,6 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from typing import List
-import uuid, re, json, base64, io
+import uuid
+import re
+import json
+import base64
+import io
 from datetime import datetime, timezone
 
 from core.database import db, UPLOADS_DIR, LLM_KEY, logger
@@ -33,7 +37,8 @@ def _normalize_date(raw: str) -> str:
 @router.post("/upload/parse-excel")
 async def parse_excel(file: UploadFile = File(...), document_type: str = Form("purchase_invoice"), user=Depends(get_user)):
     """Parse Excel/CSV files and extract purchase or sales data."""
-    import openpyxl, csv as csv_mod
+    import openpyxl
+    import csv as csv_mod
     try:
         content = await file.read()
         fname = (file.filename or "").lower()
@@ -445,6 +450,7 @@ Rules:
                 "row_count": layout_parse_result["row_count"],
                 "column_count": layout_parse_result["column_count"],
                 "header_detected": layout_parse_result["header_detected"],
+                "validation_summary": layout_parse_result.get("validation_summary"),
             } if layout_parse_result else None,
             "raw_ocr_text": response[:5000],
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
@@ -633,6 +639,7 @@ Rules:
                 "row_count": layout_parse_result["row_count"],
                 "column_count": layout_parse_result["column_count"],
                 "header_detected": layout_parse_result["header_detected"],
+                "validation_summary": layout_parse_result.get("validation_summary"),
             } if layout_parse_result else None,
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
             "message": f"Data extracted using {parsing_method} parsing" + (" (vendor pattern matched)" if parsing_method == "vendor" else "") + (f" -- pages classified as {page_types}" if page_types else ""),

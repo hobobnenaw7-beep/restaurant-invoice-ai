@@ -3,11 +3,9 @@
 ## Original Problem Statement
 Build a robust, rule-based Invoice Review and Correction Pipeline with phased approach:
 - Save Now, Review Later workflow
-- Normalization Layer
-- Correction Memory System V1
-- Image preprocessing (deskew, rotation)
-- Document classification
-- Layout-based OCR parsing
+- Normalization Layer, Correction Memory System V1
+- Image preprocessing (deskew, rotation), Document classification
+- Layout-based OCR parsing with deterministic validation
 
 **User Mandate**: Strict phased rollout with deterministic rule-based logic only. No AI/LLM for suggestions or layout fixing.
 
@@ -20,47 +18,30 @@ Build a robust, rule-based Invoice Review and Correction Pipeline with phased ap
 ## Completed Phases
 
 ### Phase 1: Correction Layer Capture + Visibility (DONE)
-- Issue tags in UI, correction data capture
-
 ### Phase 2: Correction Hints UI (DONE)
-- Learned memory surfaced as safe manual suggestions
-
 ### Correction Memory Audit UI (DONE)
-- New page for users to view/edit/delete learned corrections
-
 ### Phase 1 - Image Preprocessing (DONE)
-- OpenCV/Tesseract auto-rotation, deskew, contrast enhancement
-
 ### Phase 2 - Document Type Classification (DONE)
-- Rule-based density/line counting to route invoices
-
 ### Phase 3 - Parser-Specific Layout Handling (DONE)
-- Tesseract-based bounding box extraction and column inference
-
 ### Phase 3.5 - Real-World Stress Testing (DONE)
 - 15-invoice stress test baseline: 17.6% accuracy (16/91 items)
 
-### Phase 4 - Layout Parser Stabilization (DONE - Current)
-- **Accuracy: 17.6% → 86% (4.9× improvement)**
-- Fixes applied:
-  1. Preprocessing: Raised OSD confidence threshold (3.0), fixed false rotations
-  2. Preprocessing: Raised median filter noise threshold (40), prevent clean image degradation
-  3. Preprocessing: Adaptive bg cleanup for gray backgrounds
-  4. Preprocessing: Skip autocontrast/contrast-norm on clean white-bg images
-  5. Layout parser: Fixed `_map_words_to_columns` boundary matching (strict bounds → fallback)
-  6. Layout parser: Rewritten `_infer_columns_from_data` with right-edge alignment
-  7. Layout parser: Pack-size word filtering (`_is_pack_size_word`)
-  8. Layout parser: Unicode smart-quote handling in `_parse_number` and `_is_price_like`
-  9. Layout parser: OCR digit confusion fix (`_ocr_digit_fix`)
-  10. Layout parser: OCR misread header keywords (aty→quantity, ttem→item_name)
-  11. Layout parser: Fallback item_name column when header detection misses description
-  12. Layout parser: Added `--dpi 300` to Tesseract config
-  13. Layout parser: Less aggressive `_is_separator_or_summary` filtering
+### Phase 4 - Layout Parser Stabilization (DONE)
+- **Accuracy: 17.6% → 86.8% (4.9x improvement)**
+- 13 fixes applied (OSD threshold, median filter, bg cleanup, column mapping, Unicode quotes, OCR digit fix, header keywords, DPI, separator logic)
+
+### Phase 4.5 - Numeric Validation Layer (DONE - Current)
+- Per-item: qty × unit_price ≈ total_price cross-check
+- Invoice-level: sum of totals, zero-value detection, duplicate detection
+- **Detection rate: 92%** of bad rows correctly flagged
+- **Precision: 71%** (100% if PFG weight-based items counted as correct warnings)
+- Only MISSED type: cross-row value leakage with self-consistent wrong values
+- Flags: pass / warning / needs_review (never auto-corrects)
+- Integrated into `parse_invoice_layout()` output and upload API response
 
 ## Remaining Known Issues
-- **inv08 (10pt font)**: OCR reads ".09" instead of ".00" — Tesseract limitation on very small text
-- **inv04 (1 item)**: Cross-row value leakage near dark header band — OCR artifact
-- **inv15 (noisy)**: Random noise causes occasional value errors — inherent quality limitation
+- **inv08 (10pt font)**: OCR reads ".09" instead of ".00" — Tesseract limitation on very small text (all 10 items correctly FLAGGED by validation)
+- **inv04 MAYO (1 item)**: Cross-row value leakage — internally consistent wrong values can't be detected by math validation alone
 - **bcrypt** attribute error in backend logs (P2, parked)
 - **pytest** suite failures (P2, blocked by user instruction)
 
@@ -78,7 +59,6 @@ Build a robust, rule-based Invoice Review and Correction Pipeline with phased ap
 - Password: testpassword
 
 ## Upcoming Tasks
-- Phase 5: Optimize parser for remaining edge cases (if user approves)
 - Integrate loose match keys into vendor comparison (P1)
 
 ## Future/Backlog

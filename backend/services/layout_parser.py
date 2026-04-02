@@ -720,9 +720,153 @@ def _parse_usfoods(rows: list[list[dict]]) -> list[dict]:
     return _extract_items_simple(rows)
 
 
-# ── 8. Result builders ──
+# ── 8. Numeric Validation ──
+
+def validate_line_item(item: dict) -> dict:
+    """
+    Validate a single parsed line item. Returns a validation dict with:
+    - status: "pass", "warning", or "needs_review"
+    - issues: list of specific problem descriptions
+    - computed_total: qty × unit_price (for comparison)
+    - total_diff: absolute difference between computed and parsed total
+    - total_diff_pct: percentage difference
+    """
+    qty = float(item.get("quantity", 0) or 0)
+    price = float(item.get("unit_price", 0) or 0)
+    total = float(item.get("total_price", 0) or 0)
+    name = (item.get("item_name", "") or "").strip()
+
+    issues = []
+    status = "pass"
+
+    # Check for missing critical fields
+    if not name:
+        issues.append("missing_item_name")
+    if qty == 0:
+        issues.append("missing_quantity")
+    if price == 0 and total == 0:
+        issues.append("missing_price_and_total")
+    elif price == 0 and qty > 0 and total > 0:
+        issues.append("missing_unit_price")
+    elif total == 0 and qty > 0 and price > 0:
+        issues.append("missing_total")
+
+    # Cross-check: qty × unit_price ≈ total_price
+    computed_total = round(qty * price, 2) if qty > 0 and price > 0 else 0
+    total_diff = abs(computed_total - total) if computed_total > 0 and total > 0 else 0
+    total_diff_pct = (total_diff / total * 100) if total > 0 else 0
+
+    if computed_total > 0 and total > 0:
+        if total_diff <= 0.02:
+            pass  # Perfect or rounding match
+        elif total_diff <= 0.50 or total_diff_pct <= 2.0:
+            issues.append(f"math_close: qty({qty})×price({price})={computed_total} vs total({total}), diff=${total_diff:.2f}")
+            status = "warning"
+        else:
+            issues.append(f"math_mismatch: qty({qty})×price({price})={computed_total} vs total({total}), diff=${total_diff:.2f} ({total_diff_pct:.1f}%)")
+            status = "needs_review"
+
+    # Reasonableness checks
+    if qty > 0 and qty != int(qty) and qty < 1:
+        issues.append(f"fractional_qty: {qty}")
+    if price > 0 and total > 0 and total < price:
+        issues.append(f"total_less_than_price: total({total}) < price({price})")
+        if status != "needs_review":
+            status = "warning"
+
+    # Determine final status from issues
+    if not issues:
+        status = "pass"
+    elif status == "pass" and issues:
+        status = "warning"
+
+    return {
+        "status": status,
+        "issues": issues,
+        "computed_total": computed_total,
+        "total_diff": round(total_diff, 2),
+        "total_diff_pct": round(total_diff_pct, 1),
+    }
+
+
+def validate_invoice(items: list[dict]) -> dict:
+    """
+    Invoice-level validation across all parsed line items.
+    Returns a validation summary with flagged items and aggregate checks.
+    """
+    total_items = len(items)
+    valid_count = 0
+    warning_count = 0
+    review_count = 0
+    flagged_indices = []
+    invoice_issues = []
+
+    items_sum = 0.0
+    for i, item in enumerate(items):
+        validation = validate_line_item(item)
+        item["validation"] = validation
+
+        if validation["status"] == "pass":
+            valid_count += 1
+        elif validation["status"] == "warning":
+            warning_count += 1
+            flagged_indices.append(i)
+        else:
+            review_count += 1
+            flagged_indices.append(i)
+
+        items_sum += float(item.get("total_price", 0) or 0)
+
+    items_sum = round(items_sum, 2)
+
+    # Check for duplicate items (same name, similar values)
+    seen_names = {}
+    for i, item in enumerate(items):
+        name = (item.get("item_name", "") or "").strip().upper()
+        if not name:
+            continue
+        if name in seen_names:
+            prev_i = seen_names[name]
+            prev = items[prev_i]
+            if (float(prev.get("total_price", 0)) == float(item.get("total_price", 0))
+                    and float(prev.get("quantity", 0)) == float(item.get("quantity", 0))):
+                invoice_issues.append(f"possible_duplicate: items[{prev_i}] and items[{i}] ('{name}')")
+                if i not in flagged_indices:
+                    flagged_indices.append(i)
+        seen_names[name] = i
+
+    # Check for all-zero items
+    zero_total_count = sum(1 for it in items if float(it.get("total_price", 0) or 0) == 0)
+    if zero_total_count > 0 and total_items > 0:
+        invoice_issues.append(f"zero_totals: {zero_total_count}/{total_items} items have $0 total")
+
+    # Check for missing quantities
+    zero_qty_count = sum(1 for it in items if float(it.get("quantity", 0) or 0) == 0)
+    if zero_qty_count > 0 and total_items > 0:
+        invoice_issues.append(f"zero_quantities: {zero_qty_count}/{total_items} items have qty=0")
+
+    return {
+        "total_items": total_items,
+        "valid_items": valid_count,
+        "warning_items": warning_count,
+        "needs_review_items": review_count,
+        "flagged_indices": sorted(set(flagged_indices)),
+        "items_sum": items_sum,
+        "invoice_issues": invoice_issues,
+        "overall_status": (
+            "pass" if review_count == 0 and warning_count == 0 and not invoice_issues
+            else "needs_review" if review_count > 0
+            else "warning"
+        ),
+    }
+
+
+# ── 9. Result builders ──
 
 def _build_result(items, rows, raw_rows, parser_used, col_info=None):
+    # Run validation on all items
+    validation_summary = validate_invoice(items)
+
     return {
         "items": items,
         "row_count": len(rows),
@@ -730,6 +874,7 @@ def _build_result(items, rows, raw_rows, parser_used, col_info=None):
         "header_detected": (col_info or {}).get("header_row_idx", -1) >= 0,
         "parser_used": parser_used,
         "raw_rows": raw_rows,
+        "validation_summary": validation_summary,
     }
 
 
@@ -741,4 +886,14 @@ def _empty_result(reason):
         "header_detected": False,
         "parser_used": f"none ({reason})",
         "raw_rows": [],
+        "validation_summary": {
+            "total_items": 0,
+            "valid_items": 0,
+            "warning_items": 0,
+            "needs_review_items": 0,
+            "flagged_indices": [],
+            "items_sum": 0,
+            "invoice_issues": [],
+            "overall_status": "pass",
+        },
     }
