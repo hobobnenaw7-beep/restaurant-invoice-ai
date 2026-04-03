@@ -637,7 +637,7 @@ def parse_invoice_layout(
         if vendor_name:
             items, parser_used = _parse_vendor_specific(rows, vendor_name)
             if items:
-                return _build_result(items, rows, raw_rows, parser_used)
+                return _build_result(items, rows, raw_rows, parser_used, vendor=vendor_name)
 
         if document_type == "simple_receipt":
             items = _parse_receipt(rows)
@@ -863,9 +863,13 @@ def validate_invoice(items: list[dict]) -> dict:
 
 # ── 9. Result builders ──
 
-def _build_result(items, rows, raw_rows, parser_used, col_info=None):
-    # Run validation on all items
+def _build_result(items, rows, raw_rows, parser_used, col_info=None, vendor=None):
+    # Run numeric validation on all items
     validation_summary = validate_invoice(items)
+
+    # Run semantic validation (Phase 4)
+    from services.semantic_validator import run_semantic_validation
+    semantic_summary = run_semantic_validation(items, vendor=vendor)
 
     return {
         "items": items,
@@ -875,6 +879,7 @@ def _build_result(items, rows, raw_rows, parser_used, col_info=None):
         "parser_used": parser_used,
         "raw_rows": raw_rows,
         "validation_summary": validation_summary,
+        "semantic_summary": semantic_summary,
     }
 
 
@@ -895,5 +900,12 @@ def _empty_result(reason):
             "items_sum": 0,
             "invoice_issues": [],
             "overall_status": "pass",
+        },
+        "semantic_summary": {
+            "semantic_issues_total": 0,
+            "suspicious_count": 0,
+            "needs_review_count": 0,
+            "flagged_indices": [],
+            "checks_run": [],
         },
     }
