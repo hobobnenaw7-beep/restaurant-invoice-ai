@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
-import uuid, re
+import uuid
+import re
 from datetime import datetime, timezone
 
 from core.database import db, logger
@@ -259,6 +260,144 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
     await db.purchases.update_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
     await audit_log(user, "UPDATE", "Expense", pid, f'{user["name"]} updated expense ({old.get("supplier_name", "")})', old_value=old_vals, new_value=update_data)
     return await db.purchases.find_one({"id": pid}, {"_id": 0})
+
+
+@router.patch("/purchases/{pid}/items/{item_index}")
+async def patch_purchase_item(pid: str, item_index: int, updates: dict, user=Depends(get_user)):
+    """
+    Phase 6: Inline edit a single line item with audit trail and revalidation.
+    - Stores previous/new values + timestamp in edit_history
+    - Re-runs client-compatible validation on the updated item
+    - Returns the updated item with validation delta (better/worse/same)
+    """
+    from preprocessing import enrich_item_with_pack_size, validate_and_score_item, sanitize_extracted_item
+    from services.normalization import normalize_item
+
+    purchase = await db.purchases.find_one(
+        {"id": pid, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
+    )
+    if not purchase:
+        raise HTTPException(404, "Purchase not found")
+
+    items = purchase.get("items", [])
+    if item_index < 0 or item_index >= len(items):
+        raise HTTPException(400, f"Item index {item_index} out of range (0-{len(items)-1})")
+
+    old_item = dict(items[item_index])
+
+    # Allowed editable fields
+    editable = {"raw_name", "quantity", "unit_price", "total", "pack_size"}
+    changes = {}
+    for field in editable:
+        if field in updates and updates[field] is not None:
+            old_val = old_item.get(field)
+            new_val = updates[field]
+            # Coerce numeric fields
+            if field in ("quantity", "unit_price", "total"):
+                new_val = float(new_val) if new_val else 0
+                old_val = float(old_val or 0)
+                if abs(old_val - new_val) > 0.001:
+                    changes[field] = {"previous": old_val, "new": new_val}
+            else:
+                old_val = str(old_val or "")
+                new_val = str(new_val or "")
+                if old_val != new_val:
+                    changes[field] = {"previous": old_val, "new": new_val}
+
+    if not changes:
+        return {"item": old_item, "validation_delta": "unchanged", "changes": {}}
+
+    # Apply changes
+    updated_item = dict(old_item)
+    for field, vals in changes.items():
+        updated_item[field] = vals["new"]
+
+    # Store old validation state for delta comparison
+    old_needs_review = old_item.get("needs_review", False)
+    old_confidence = old_item.get("confidence_level", "")
+    old_errors = old_item.get("validation_errors", [])
+
+    # Re-run validation pipeline on the updated item
+    sanitize_extracted_item(updated_item)
+    enrich_item_with_pack_size(updated_item)
+    normalize_item(updated_item)
+    validate_and_score_item(updated_item)
+
+    new_needs_review = updated_item.get("needs_review", False)
+    new_confidence = updated_item.get("confidence_level", "")
+    new_errors = updated_item.get("validation_errors", [])
+
+    # Compute validation delta
+    if old_needs_review and not new_needs_review:
+        validation_delta = "improved"
+    elif not old_needs_review and new_needs_review:
+        validation_delta = "degraded"
+    elif len(new_errors) < len(old_errors):
+        validation_delta = "improved"
+    elif len(new_errors) > len(old_errors):
+        validation_delta = "degraded"
+    else:
+        validation_delta = "unchanged"
+
+    # Build edit history entry
+    edit_entry = {
+        "item_index": item_index,
+        "changes": changes,
+        "validation_delta": validation_delta,
+        "old_status": {"needs_review": old_needs_review, "confidence_level": old_confidence, "error_count": len(old_errors)},
+        "new_status": {"needs_review": new_needs_review, "confidence_level": new_confidence, "error_count": len(new_errors)},
+        "edited_by": user.get("name", user["id"]),
+        "edited_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Update the item in the array and append to edit_history
+    items[item_index] = updated_item
+
+    # Recompute review_status for the whole purchase
+    from preprocessing import compute_review_status
+    review_status = compute_review_status(items)
+
+    # Recalculate subtotal/total
+    subtotal = round(sum(float(it.get("total", 0) or 0) for it in items), 2)
+    tax = float(purchase.get("tax", 0) or 0)
+    total = round(subtotal + tax, 2)
+
+    await db.purchases.update_one(
+        {"id": pid, "restaurant_id": user["restaurant_id"]},
+        {
+            "$set": {
+                "items": items,
+                "review_status": review_status,
+                "subtotal": subtotal,
+                "total": total,
+            },
+            "$push": {"edit_history": edit_entry},
+        },
+    )
+
+    return {
+        "item": {k: v for k, v in updated_item.items() if k != "_id"},
+        "item_index": item_index,
+        "validation_delta": validation_delta,
+        "changes": changes,
+        "edit_entry": edit_entry,
+        "purchase_totals": {"subtotal": subtotal, "tax": tax, "total": total},
+        "review_status": review_status,
+    }
+
+
+@router.get("/purchases/{pid}/edit-history")
+async def get_edit_history(pid: str, user=Depends(get_user)):
+    """Phase 6: Return the edit audit trail for a purchase."""
+    purchase = await db.purchases.find_one(
+        {"id": pid, "restaurant_id": user["restaurant_id"]},
+        {"_id": 0, "edit_history": 1, "id": 1},
+    )
+    if not purchase:
+        raise HTTPException(404, "Purchase not found")
+    return {"id": pid, "edit_history": purchase.get("edit_history", [])}
+
+
 
 
 @router.delete("/purchases/{pid}")

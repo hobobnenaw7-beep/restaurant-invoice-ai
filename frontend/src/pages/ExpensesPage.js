@@ -24,6 +24,7 @@ import {
 import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/DuplicateCheck';
 import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
 import { ConfirmSaveDialog } from '@/components/ConfirmSaveDialog';
+import InvoiceReviewDialog from '@/components/InvoiceReviewDialog';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
@@ -229,6 +230,7 @@ function RawMaterialsTab({ api }) {
   const [dateTo, setDateTo] = useState('');
   const [sortBy, setSortBy] = useState('invoice_date');
   const [sortOrder, setSortOrder] = useState('desc');
+  const [validationFilter, setValidationFilter] = useState('all');
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -529,6 +531,16 @@ function RawMaterialsTab({ api }) {
         <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" /><Input className="pl-9 h-9 text-sm" placeholder="Search vendor or invoice..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="search-raw-materials" /></div>
         <Input type="date" className="w-36 h-9 text-xs" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
         <Input type="date" className="w-36 h-9 text-xs" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        <Select value={validationFilter} onValueChange={setValidationFilter}>
+          <SelectTrigger className="h-9 w-40 text-xs" data-testid="validation-filter">
+            <SelectValue placeholder="All Statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all" className="text-xs">All Statuses</SelectItem>
+            <SelectItem value="needs_review" className="text-xs">Needs Review</SelectItem>
+            <SelectItem value="clean" className="text-xs">All Verified</SelectItem>
+          </SelectContent>
+        </Select>
         <Button onClick={openAdd} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs" data-testid="add-raw-material-btn"><Plus className="w-3.5 h-3.5 mr-1.5" /> Add</Button>
       </div>
 
@@ -553,7 +565,13 @@ function RawMaterialsTab({ api }) {
                   <Button onClick={openAdd} variant="outline" size="sm" className="text-xs"><Plus className="w-3 h-3 mr-1" /> Add</Button>
                 </div>
               </TableCell></TableRow>
-            ) : items.map((p, i) => {
+            ) : items.filter(p => {
+              if (validationFilter === 'all') return true;
+              const hasReview = (p.items || []).some(it => it.needs_review);
+              if (validationFilter === 'needs_review') return hasReview;
+              if (validationFilter === 'clean') return !hasReview;
+              return true;
+            }).map((p, i) => {
               const rs = p.review_status;
               const rowBg = rs === 'error' ? 'bg-red-50/50' : rs === 'warning' ? 'bg-amber-50/40' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40';
               const borderLeft = rs === 'error' ? 'border-l-2 border-l-red-400' : rs === 'warning' ? 'border-l-2 border-l-amber-400' : '';
@@ -608,69 +626,14 @@ function RawMaterialsTab({ api }) {
         </div>
       </Card>
 
-      {/* View Detail */}
-      <Dialog open={!!selected} onOpenChange={(v) => { if (!v) setSelected(null); }}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-heading text-lg">Purchase Details</DialogTitle></DialogHeader>
-          {selected && <div className="space-y-5">
-            <div className="grid grid-cols-3 gap-4">{[['Vendor', selected.supplier_name], ['Invoice #', selected.invoice_number], ['Date', selected.invoice_date]].map(([l, v]) => <div key={l}><p className="text-[10px] font-bold text-slate-400 uppercase">{l}</p><p className="text-sm font-semibold text-navy-900 mt-0.5">{v}</p></div>)}</div>
-            {/* Review summary banner in detail view */}
-            {(() => {
-              const reviewItems = (selected.items || []).filter(it => it.needs_review);
-              if (reviewItems.length === 0) return null;
-              return (
-                <div className="flex items-center gap-2.5 p-2.5 rounded-lg bg-amber-50 border border-amber-200" data-testid="detail-review-banner">
-                  <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                  <p className="text-xs text-amber-800">
-                    <span className="font-semibold">{reviewItems.length} item{reviewItems.length !== 1 ? 's' : ''}</span> flagged for review — edit this invoice to resolve
-                  </p>
-                </div>
-              );
-            })()}
-            <Separator />
-            <Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase w-8">Status</TableHead>
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase">Item</TableHead>
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Qty</TableHead>
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase">Pack Size</TableHead>
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Price</TableHead>
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Total</TableHead>
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">Case Wt</TableHead>
-              <TableHead className="text-[10px] font-bold text-slate-500 uppercase text-right">$/LB</TableHead>
-            </TableRow></TableHeader><TableBody>
-              {(selected.items || []).map((it, i) => {
-                const flagged = it.needs_review;
-                return (
-                <TableRow key={i} className={`${flagged ? 'bg-amber-50/60' : i % 2 === 0 ? '' : 'bg-slate-50/40'}`} data-testid={`detail-item-row-${i}`}>
-                  <TableCell className="text-center">
-                    {flagged ? (
-                      <span className="inline-flex w-5 h-5 rounded-full bg-amber-100 items-center justify-center" title={it.review_reason || 'Needs review'} data-testid={`detail-review-dot-${i}`}>
-                        <AlertTriangle className="w-3 h-3 text-amber-600" />
-                      </span>
-                    ) : it.confidence_level ? (
-                      <span className="inline-flex w-5 h-5 rounded-full bg-emerald-100 items-center justify-center" title="Verified" data-testid={`detail-ok-dot-${i}`}>
-                        <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                      </span>
-                    ) : <span className="text-slate-300">—</span>}
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-sm font-medium">{it.raw_name}</div>
-                    {flagged && it.review_reason && <div className="text-[10px] text-amber-600 mt-0.5" data-testid={`detail-review-reason-${i}`}>{it.review_reason}</div>}
-                  </TableCell>
-                  <TableCell className="text-sm text-right tabular-nums">{it.quantity}</TableCell>
-                  <TableCell className="text-sm text-slate-500">{it.pack_size_raw || it.pack_size || '—'}</TableCell>
-                  <TableCell className="text-sm text-right tabular-nums">{fmt(it.unit_price)}</TableCell>
-                  <TableCell className="text-sm text-right font-semibold tabular-nums">{fmt(it.total)}</TableCell>
-                  <TableCell className="text-sm text-right tabular-nums">{it.pack_parse_status === 'parsed' && it.total_case_weight != null ? `${it.total_case_weight} ${it.pack_unit || ''}`.trim() : '—'}</TableCell>
-                  <TableCell className="text-sm text-right tabular-nums">{it.normalized_price_per_lb != null && it.normalized_price_per_lb > 0 ? <span className="text-teal-700 font-semibold">{fmt(it.normalized_price_per_lb)}</span> : <span className="text-slate-300">—</span>}</TableCell>
-                </TableRow>
-                );
-              })}
-            </TableBody></Table>
-            <div className="flex justify-end"><div className="text-right space-y-1 min-w-[200px]"><div className="flex justify-between text-sm"><span className="text-slate-500">Subtotal</span><span className="tabular-nums">{fmt(selected.subtotal)}</span></div><div className="flex justify-between text-sm"><span className="text-slate-500">Tax</span><span className="tabular-nums">{fmt(selected.tax)}</span></div><Separator className="my-1" /><div className="flex justify-between text-base font-bold"><span>Total</span><span className="tabular-nums">{fmt(selected.total)}</span></div></div></div>
-          </div>}
-        </DialogContent>
-      </Dialog>
+      {/* View Detail — Phase 6 Review + Correction Dialog */}
+      <InvoiceReviewDialog
+        purchase={selected}
+        open={!!selected}
+        onClose={() => setSelected(null)}
+        api={api}
+        onUpdate={() => load(false)}
+      />
 
       {/* Add Dialog — prevent close during save */}
       <Dialog open={showAdd} onOpenChange={(v) => { if (!saving && !extracting) setShowAdd(v); }}>
