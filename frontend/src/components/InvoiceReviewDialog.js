@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -69,6 +69,8 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, api, onUp
   const [showHistory, setShowHistory] = useState(false);
   const [totals, setTotals] = useState({ subtotal: 0, tax: 0, total: 0 });
   const [lastDelta, setLastDelta] = useState(null);
+  const sessionStart = useRef(null);
+  const editsInSession = useRef(0);
 
   useEffect(() => {
     if (purchase) {
@@ -78,6 +80,14 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, api, onUp
       setLastDelta(null);
     }
   }, [purchase]);
+
+  // Track session start time
+  useEffect(() => {
+    if (open && purchase?.id) {
+      sessionStart.current = Date.now();
+      editsInSession.current = 0;
+    }
+  }, [open, purchase?.id]);
 
   const loadHistory = useCallback(async () => {
     if (!purchase?.id) return;
@@ -92,6 +102,29 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, api, onUp
   }, [open, purchase?.id, loadHistory]);
 
   if (!purchase) return null;
+
+  const logMetrics = async () => {
+    if (!sessionStart.current || !purchase?.id) return;
+    const seconds = (Date.now() - sessionStart.current) / 1000;
+    if (seconds < 2) return; // Skip accidental opens
+    try {
+      await api.post('/metrics/review-session', {
+        purchase_id: purchase.id,
+        supplier_name: purchase.supplier_name || '',
+        time_spent_seconds: seconds,
+        edits_count: editsInSession.current,
+        flagged_rows_count: (purchase.items || []).filter(it => it.needs_review).length,
+        total_rows: (purchase.items || []).length,
+      });
+    } catch { /* silent */ }
+    sessionStart.current = null;
+  };
+
+  const handleClose = () => {
+    logMetrics();
+    cancelEdit();
+    onClose();
+  };
 
   const reviewItems = items.filter(it => it.needs_review);
   const passItems = items.filter(it => !it.needs_review && it.confidence_level === 'trusted');
@@ -129,6 +162,7 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, api, onUp
       setLastDelta({ idx, delta: data.validation_delta });
       setEditingRow(null);
       setEditValues({});
+      editsInSession.current += 1;
       loadHistory();
       if (onUpdate) onUpdate(data);
       const deltaMsg = data.validation_delta === 'improved' ? ' — validation improved!' :
@@ -156,7 +190,7 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, api, onUp
   };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) { cancelEdit(); onClose(); } }}>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col" data-testid="invoice-review-dialog">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="font-heading text-lg flex items-center gap-2">
