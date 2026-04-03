@@ -28,61 +28,54 @@ Build a robust, rule-based Invoice Review and Correction Pipeline with phased ap
 
 ### Phase 4 - Layout Parser Stabilization (DONE)
 - **Accuracy: 17.6% → 86.8% (4.9x improvement)**
-- 13 fixes applied (OSD threshold, median filter, bg cleanup, column mapping, Unicode quotes, OCR digit fix, header keywords, DPI, separator logic)
+- 13 fixes applied
 
 ### Phase 4.5 - Numeric Validation Layer (DONE)
 - Per-item: qty × unit_price ≈ total_price cross-check
 - Invoice-level: sum of totals, zero-value detection, duplicate detection
-- **Detection rate: 92%** of bad rows correctly flagged
-- **Precision: 71%** (100% if PFG weight-based items counted as correct warnings)
 - Flags: pass / warning / needs_review (never auto-corrects)
 
 ### Phase 5 - Semantic and Consistency Intelligence (DONE)
-- **5 deterministic checks**, never auto-corrects, only flags:
-  1. **Name Quality**: truncated (≤3 chars), single-word, generic ("MISC", "PACKER"), service rows ("DELIVERY CHARGE", "FUEL SURCHARGE")
-  2. **Column Bleed**: price embedded in name ($35.00), pack size in name (4/10 LB), trailing numbers
-  3. **Cross-Row Leakage**: duplicate qty+price+total between neighbors (the MAYO problem — previously undetectable)
-  4. **Structural Consistency**: outlier rows (short name, missing qty/price vs peers, total outlier vs median)
-  5. **Vendor Patterns**: distributor missing pack_size (Sysco/US Foods), unreasonable quantities, PFG weight indicators
-- **Severity levels**: `pass` / `suspicious` / `needs_review`
-- **Real-world validation**: 5/7 problem invoices ALL caught, 3/3 controls clean
-- **Deduplication logic**: suppresses `distributor_missing_pack_size` when `pack_size_in_name` already flagged, or when ALL items are missing pack (parser issue)
+- 5 deterministic checks: Name Quality, Column Bleed, Cross-Row Leakage, Structural Consistency, Vendor Patterns
+- Severity levels: pass / suspicious / needs_review
+- Real-world validation: 5/7 problem invoices ALL caught, 3/3 controls clean
 
 ### Phase 6 - Layout Parser Hardening (DONE)
-- **3 parser-level fixes** (semantic validator untouched):
-  1. **`_extract_items_simple` (fallback parser)**: Pack-size words now separated into `pack_size` field instead of merging into `item_name`
-  2. **`_infer_columns_from_data` (header-less inference)**: Added spatial clustering of pack-size words to detect dedicated `pack_size` columns and narrow `item_name` boundary
-  3. **Low-yield fallback detection**: When column-based extraction returns < 40% of available data rows, tries `_extract_items_simple` and uses whichever produces more items. Applied to default structured parser, Sysco, and US Foods vendor parsers
-- **Additional improvements**: Post-processing in `_map_words_to_columns` extracts pack patterns from `item_name` into `pack_size`; unknown columns with pack-size words routed to `pack_size`; vendor parsers use 3-tier fallback (header → inferred → simple)
-- **Results**:
-  - INV08 (US Foods control): 3 false positives → **0 flags** (pack_size correctly separated)
-  - INV04 (no-header): **1/4 → 4/4 items parsed** (low-yield fallback triggered)
-  - All controls: **3/3 CONTROL_PASS**
-  - All tests: **13/13 unit + 8/8 integration + 10/10 real-world**, zero regressions
+- Pack-size column extraction in fallback parsers
+- Header-less column inference with spatial clustering
+- Low-yield fallback detection (< 40% threshold)
+- INV04: 1/4 → 4/4 items parsed, INV08: 3 false positives → 0
+
+### Phase 7 - Review + Correction Layer (DONE) — April 2026
+- **Display Layer**: Per-item status indicators, issue badges, validation summary banner, field-level highlighting of problematic fields
+- **Correction Layer**: Inline editing (raw_name, qty, price, total, pack_size), Fix button on flagged rows, immediate revalidation with validation delta (improved/degraded/unchanged)
+- **Data Integrity**: Full audit trail (previous value, new value, timestamp, user), post-edit validation integrity showing if edit made row better or worse
+- **List Filtering**: Purchases list filterable by validation status (All / Needs Review / All Verified)
+- **Backend**: `PATCH /api/purchases/{id}/items/{index}` with revalidation + audit, `GET /api/purchases/{id}/edit-history`
+- **Testing**: 17/17 backend + 17/17 frontend tests passed
 
 ## Known Limitations (correctly classified)
 
-### Parser/Layout — FIXED
-- **INV04 low-yield fallback**: Column-based parser stuck on garbled OCR values, didn't fall back to simple extraction. **Fixed** by low-yield detection (< 40% threshold).
-
 ### OCR Quality — Known, Correctly Handled
-- **INV04 garbled values**: OCR corrupts numeric values on 13pt generated images ($35.00→"$35 99", $105.00→"Sigs ag"). Math validation correctly flags these as `needs_review`. Real uploaded invoices with better print quality would produce better OCR.
-- **10pt font precision**: OCR reads ".09" instead of ".00" on very small text. Correctly flagged by numeric validation.
+- OCR corrupts numeric values on 13pt generated images — math validation correctly flags as needs_review
+- 10pt font precision: OCR reads ".09" instead of ".00" — correctly flagged
 
 ### Vendor Model — Intentional
-- **PFG missing pack_size (INV01)**: PFG uses weight-based pricing, not standard distributor pack columns. Semantic validator intentionally does not check PFG for missing packs.
+- PFG missing pack_size: PFG uses weight-based pricing, semantic validator intentionally skips
 
 ## Other Known Issues
 - **bcrypt** attribute error in backend logs (P2, parked)
 - **pytest** suite failures (P2, blocked by user instruction)
 
 ## Key API Endpoints
-- `POST /api/upload/extract`: Full pipeline (Preprocess → Classify → Layout Parse [Numeric + Semantic Validation] → LLM)
+- `POST /api/upload/extract`: Full pipeline (Preprocess → Classify → Layout Parse → Validation → LLM)
+- `PATCH /api/purchases/{id}/items/{index}`: Inline edit with revalidation + audit trail
+- `GET /api/purchases/{id}/edit-history`: Edit audit trail
 - `GET /api/correction-hints`: Fetch learned corrections
 - `GET/PUT/DELETE /api/correction-memory`: CRUD for audit page
 
 ## Database Schema
-- `purchases`: document_type, page_count, layout_parse_results (includes validation_summary + semantic_summary)
+- `purchases`: document_type, page_count, items (with validation_errors, needs_review, confidence_level), edit_history[], review_status, layout_parse_results
 - `correction_memory`: usage_count, last_used_at, enabled
 
 ## Credentials
@@ -90,7 +83,7 @@ Build a robust, rule-based Invoice Review and Correction Pipeline with phased ap
 - Password: testpassword
 
 ## Upcoming Tasks
-- Phase 7 proposal pending user approval — scope TBD
+- Phase 8 proposal pending user approval — scope TBD
 - Integrate loose match keys into vendor comparison (P1, blocked until phase defined)
 
 ## Future/Backlog
