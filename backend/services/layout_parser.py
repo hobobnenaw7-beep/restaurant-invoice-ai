@@ -24,6 +24,12 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+# Regex for pack-size patterns in item names (e.g., "4/10 LB", "48/6 OZ", "2/5 GAL")
+PACK_PATTERN = re.compile(
+    r'\d+/\d+\s*(?:LB|LBS|OZ|GAL|CT|EA|DZ|ML|QT|PT|CS|PK|BX)\b',
+    re.IGNORECASE
+)
+
 
 # ── 1. Tesseract OCR with position data ──
 
@@ -273,8 +279,8 @@ def _is_price_like(text: str) -> bool:
 def _infer_columns_from_data(rows: list[list[dict]]) -> dict:
     """
     When no header is found, infer columns from data alignment.
-    Uses right-edge alignment of numeric values (prices/totals are right-aligned)
-    and filters out pack-size words to avoid false column detection.
+    Uses right-edge alignment of numeric values (prices/totals are right-aligned),
+    filters out pack-size words, and detects pack-size columns by spatial clustering.
     """
     # Find rows that look like data (contain numbers that aren't pack sizes)
     data_rows = []
@@ -330,12 +336,51 @@ def _infer_columns_from_data(rows: list[list[dict]]) -> dict:
     field_names_rtl = ["total", "unit_price", "quantity"]  # right-to-left assignment
 
     columns = []
-    # Description column: everything left of the first numeric column
     first_num_left = col_bounds[0]["left"] if col_bounds else 9999
+
+    # Detect pack-size column by clustering pack-size words spatially
+    pack_positions = []
+    for _, row in data_rows:
+        for w in row:
+            if _is_pack_size_word(w["text"]):
+                pack_positions.append(w)
+
+    pack_col = None
+    if pack_positions:
+        # Cluster pack word left-positions to find the pack column region
+        pack_lefts = sorted(p["left"] for p in pack_positions)
+        pack_clusters = []
+        curr_cluster = [pack_lefts[0]]
+        for pl in pack_lefts[1:]:
+            if pl - curr_cluster[-1] < 80:
+                curr_cluster.append(pl)
+            else:
+                pack_clusters.append(curr_cluster)
+                curr_cluster = [pl]
+        pack_clusters.append(curr_cluster)
+
+        # Use the largest cluster as the pack column
+        biggest = max(pack_clusters, key=len)
+        if len(biggest) >= max(2, len(data_rows) * 0.3):
+            pack_left = min(biggest) - 15
+            pack_right = max(p["right"] for p in pack_positions if p["left"] >= min(biggest) - 10) + 15
+            # Only create pack column if it's between description and numeric columns
+            if pack_left < first_num_left:
+                pack_col = {
+                    "name": "Pack", "left": pack_left,
+                    "right": pack_right, "field": "pack_size",
+                }
+
+    # Description column: left of pack column (if found) or first numeric column
+    desc_right = (pack_col["left"] - 5) if pack_col else (first_num_left - 15)
     columns.append({
         "name": "Description", "left": 0,
-        "right": first_num_left - 15, "field": "item_name",
+        "right": desc_right, "field": "item_name",
     })
+
+    # Insert pack column if detected
+    if pack_col:
+        columns.append(pack_col)
 
     for j, cb in enumerate(reversed(col_bounds)):
         field_idx = j
@@ -460,9 +505,14 @@ def _map_words_to_columns(row: list[dict], columns: list[dict]) -> dict:
     if "pack_size" in col_assignments:
         result["pack_size"] = " ".join(col_assignments["pack_size"])
 
-    # Handle unknown columns — try to assign as numbers
+    # Handle unknown columns — try to assign as numbers or pack sizes
     for field, words in col_assignments.items():
         if field == "unknown":
+            # Check if all words are pack-size words
+            all_pack = all(_is_pack_size_word(w) for w in words)
+            if all_pack and not result["pack_size"]:
+                result["pack_size"] = " ".join(words)
+                continue
             val = _parse_number(" ".join(words))
             if val > 0:
                 # Heuristic: small integers (1-999) with no decimal → likely quantity
@@ -476,14 +526,24 @@ def _map_words_to_columns(row: list[dict], columns: list[dict]) -> dict:
                 elif result["quantity"] == 0:
                     result["quantity"] = val
 
+    # Post-process: extract pack-size patterns from item_name into pack_size
+    if result["item_name"] and not result["pack_size"]:
+        name = result["item_name"]
+        pack_match = PACK_PATTERN.search(name)
+        if pack_match:
+            pack_str = pack_match.group()
+            cleaned = name[:pack_match.start()].strip() + " " + name[pack_match.end():].strip()
+            result["item_name"] = cleaned.strip()
+            result["pack_size"] = pack_str
+
     return result
 
 
 def _extract_items_simple(rows: list[list[dict]], start: int = 0) -> list[dict]:
     """
     Fallback: extract items without column info.
-    Assumes format: description ... qty price total (numbers on the right).
-    Filters pack-size patterns (e.g., "6/5", "LB") from numeric extraction.
+    Assumes format: description ... [pack] qty price total (numbers on the right).
+    Separates pack-size patterns (e.g., "6/5 LB") into pack_size field.
     """
     items = []
     for row in rows[start:]:
@@ -493,11 +553,12 @@ def _extract_items_simple(rows: list[list[dict]], start: int = 0) -> list[dict]:
 
         # Split into text words, pack words, and numeric words
         text_parts = []
+        pack_parts = []
         numbers = []
         for w in row:
             wt = w["text"].strip()
             if _is_pack_size_word(wt):
-                text_parts.append(wt)  # Pack sizes go into description
+                pack_parts.append(wt)
             elif re.match(r'^[\d$.,]+$', wt.replace(",", "").strip("'`\"\u2018\u2019\u201C\u201D")):
                 val = _parse_number(wt)
                 if val > 0:
@@ -509,8 +570,10 @@ def _extract_items_simple(rows: list[list[dict]], start: int = 0) -> list[dict]:
         if not name or len(numbers) < 2:
             continue
 
+        pack_size = " ".join(pack_parts).strip()
+
         # Assign numbers: usually qty, price, total (right to left: total, price, qty)
-        item = {"item_name": name, "quantity": 0, "unit_price": 0, "total_price": 0, "pack_size": ""}
+        item = {"item_name": name, "quantity": 0, "unit_price": 0, "total_price": 0, "pack_size": pack_size}
 
         if len(numbers) >= 3:
             item["quantity"] = numbers[-3]
@@ -687,14 +750,21 @@ def _parse_vendor_specific(rows: list[list[dict]], vendor_name: str) -> tuple:
 def _parse_sysco(rows: list[list[dict]]) -> list[dict]:
     """
     Sysco invoices: ITEM#, DESCRIPTION, PACK SIZE, QTY, PRICE, EXT PRICE
-    Header may be white-on-dark (unreadable by OCR). Falls back to simple extraction.
+    Header may be white-on-dark (unreadable by OCR).
+    Falls back to pack-aware column inference, then simple extraction.
     """
     header_kw = ["item", "description", "pack", "qty", "price", "total", "ext", "net"]
     col_info = detect_columns(rows, header_kw)
     items = extract_line_items(rows, col_info)
     if items:
         return items
-    # Fallback: white-on-dark header may not be readable
+    # Fallback: white-on-dark header — try inferred columns (includes pack detection)
+    col_info = _infer_columns_from_data(rows)
+    if col_info.get("columns"):
+        items = extract_line_items(rows, col_info)
+        if items:
+            return items
+    # Final fallback: simple extraction with pack separation
     return _extract_items_simple(rows)
 
 
@@ -709,14 +779,21 @@ def _parse_pfg(rows: list[list[dict]]) -> list[dict]:
 
 
 def _parse_usfoods(rows: list[list[dict]]) -> list[dict]:
-    """US Foods invoices: similar to Sysco columnar layout."""
+    """US Foods invoices: similar to Sysco columnar layout.
+    Falls back to pack-aware column inference, then simple extraction."""
     header_kw = ["item", "description", "qty", "pack", "size", "price", "total", "ext",
                  "product", "extended", "ttem", "ltem", "aty"]
     col_info = detect_columns(rows, header_kw)
     items = extract_line_items(rows, col_info)
     if items:
         return items
-    # Fallback: header may be white-on-dark and unreadable
+    # Fallback: try inferred columns (includes pack detection)
+    col_info = _infer_columns_from_data(rows)
+    if col_info.get("columns"):
+        items = extract_line_items(rows, col_info)
+        if items:
+            return items
+    # Final fallback: simple extraction with pack separation
     return _extract_items_simple(rows)
 
 
