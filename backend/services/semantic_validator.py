@@ -236,6 +236,15 @@ def check_vendor_patterns(items: list[dict], vendor: str | None) -> dict[int, li
 
     vendor_lower = (vendor or "").lower()
 
+    # Pre-compute pack_size fill rate for distributor check
+    # If most items are missing pack, it's likely a parser/column issue, not real missing data
+    is_distributor = ("sysco" in vendor_lower or "us foods" in vendor_lower or "usfoods" in vendor_lower)
+    if is_distributor and items:
+        pack_filled = sum(1 for it in items if (it.get("pack_size") or "").strip())
+        pack_fill_rate = pack_filled / len(items)
+    else:
+        pack_fill_rate = 1.0  # Irrelevant for non-distributors
+
     for i, item in enumerate(items):
         issues = []
         name = (item.get("item_name") or "").strip().upper()
@@ -244,10 +253,11 @@ def check_vendor_patterns(items: list[dict], vendor: str | None) -> dict[int, li
         price = float(item.get("unit_price", 0) or 0)
         total = float(item.get("total_price", 0) or 0)
 
-        if "sysco" in vendor_lower or "us foods" in vendor_lower or "usfoods" in vendor_lower:
-            # Major distributors: expect pack sizes for most items
-            # Only flag if there's NO pack info anywhere (not in pack_size field OR item_name)
-            if not pack and qty > 0 and total > 0:
+        if is_distributor:
+            # Only flag missing pack_size when SOME items DO have pack_size
+            # (pack_fill_rate > 0 means the column was successfully mapped for at least some rows).
+            # If ALL items are missing pack, it's a parser/OCR column-mapping issue.
+            if not pack and qty > 0 and total > 0 and pack_fill_rate > 0:
                 # Check if pack info is embedded in item name
                 has_pack_in_name = bool(re.search(r'\d+/\d+\s*(LB|OZ|CT|EA|GAL|ML|QT|CS|PK|DZ|BX)\b', name, re.IGNORECASE))
                 if not has_pack_in_name:
@@ -322,6 +332,14 @@ def run_semantic_validation(items: list[dict], vendor: str | None = None) -> dic
         items[idx].setdefault("semantic_flags", []).extend(flags)
     if vendor:
         checks_run.append(f"vendor_patterns:{vendor}")
+
+    # 4.5 Deduplicate: suppress distributor_missing_pack_size when pack_size_in_name
+    # is already flagged (pack info exists, just in wrong column — not truly missing)
+    for item in items:
+        sf = item.get("semantic_flags", [])
+        has_pack_in_name = any("pack_size_in_name" in f for f in sf)
+        if has_pack_in_name:
+            item["semantic_flags"] = [f for f in sf if "distributor_missing_pack_size" not in f]
 
     # 5. Compute per-item semantic status
     flagged_indices = []
