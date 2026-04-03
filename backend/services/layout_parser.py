@@ -709,10 +709,25 @@ def parse_invoice_layout(
         # Default: structured invoice parser
         col_info = detect_columns(rows)
         items = extract_line_items(rows, col_info)
-        if not items:
-            # Column detection may have failed — fall back to simple extraction
-            items = _extract_items_simple(rows)
-            parser_used = "structured_fallback"
+
+        # Check yield: if column-based extraction is unreasonably low vs data rows,
+        # try simple extraction — column mapping may have garbled values
+        data_start = col_info.get("data_start_idx", 0)
+        data_row_count = sum(
+            1 for r in rows[data_start:] if not _is_separator_or_summary(row_text(r))
+        )
+        low_yield = data_row_count >= 3 and len(items) < data_row_count * 0.4
+
+        if not items or low_yield:
+            fallback_items = _extract_items_simple(rows, data_start)
+            if len(fallback_items) > len(items):
+                items = fallback_items
+                parser_used = "structured_fallback"
+            elif items:
+                header = col_info.get("header_row_idx", -1) >= 0
+                parser_used = "structured_columnar" if header else "structured_inferred"
+            else:
+                parser_used = "structured_fallback"
         else:
             header = col_info.get("header_row_idx", -1) >= 0
             parser_used = "structured_columnar" if header else "structured_inferred"
@@ -747,25 +762,38 @@ def _parse_vendor_specific(rows: list[list[dict]], vendor_name: str) -> tuple:
 
 # ── 7. Vendor-Specific Parsers ──
 
+
+def _is_low_yield(items: list[dict], rows: list[list[dict]], col_info: dict) -> bool:
+    """Check if extraction yield is unreasonably low vs available data rows."""
+    data_start = col_info.get("data_start_idx", 0)
+    data_row_count = sum(
+        1 for r in rows[data_start:] if not _is_separator_or_summary(row_text(r))
+    )
+    return data_row_count >= 3 and len(items) < data_row_count * 0.4
+
 def _parse_sysco(rows: list[list[dict]]) -> list[dict]:
     """
     Sysco invoices: ITEM#, DESCRIPTION, PACK SIZE, QTY, PRICE, EXT PRICE
     Header may be white-on-dark (unreadable by OCR).
     Falls back to pack-aware column inference, then simple extraction.
+    Uses low-yield detection to avoid stuck on garbled column-mapped values.
     """
     header_kw = ["item", "description", "pack", "qty", "price", "total", "ext", "net"]
     col_info = detect_columns(rows, header_kw)
     items = extract_line_items(rows, col_info)
-    if items:
+    if items and not _is_low_yield(items, rows, col_info):
         return items
     # Fallback: white-on-dark header — try inferred columns (includes pack detection)
     col_info = _infer_columns_from_data(rows)
     if col_info.get("columns"):
-        items = extract_line_items(rows, col_info)
-        if items:
-            return items
+        items_inf = extract_line_items(rows, col_info)
+        if items_inf and not _is_low_yield(items_inf, rows, col_info):
+            return items_inf
+        if items_inf and (not items or len(items_inf) > len(items)):
+            items = items_inf
     # Final fallback: simple extraction with pack separation
-    return _extract_items_simple(rows)
+    fallback = _extract_items_simple(rows)
+    return fallback if len(fallback) > len(items or []) else (items or fallback)
 
 
 def _parse_pfg(rows: list[list[dict]]) -> list[dict]:
@@ -780,21 +808,25 @@ def _parse_pfg(rows: list[list[dict]]) -> list[dict]:
 
 def _parse_usfoods(rows: list[list[dict]]) -> list[dict]:
     """US Foods invoices: similar to Sysco columnar layout.
-    Falls back to pack-aware column inference, then simple extraction."""
+    Falls back to pack-aware column inference, then simple extraction.
+    Uses low-yield detection to avoid stuck on garbled column-mapped values."""
     header_kw = ["item", "description", "qty", "pack", "size", "price", "total", "ext",
                  "product", "extended", "ttem", "ltem", "aty"]
     col_info = detect_columns(rows, header_kw)
     items = extract_line_items(rows, col_info)
-    if items:
+    if items and not _is_low_yield(items, rows, col_info):
         return items
     # Fallback: try inferred columns (includes pack detection)
     col_info = _infer_columns_from_data(rows)
     if col_info.get("columns"):
-        items = extract_line_items(rows, col_info)
-        if items:
-            return items
+        items_inf = extract_line_items(rows, col_info)
+        if items_inf and not _is_low_yield(items_inf, rows, col_info):
+            return items_inf
+        if items_inf and (not items or len(items_inf) > len(items)):
+            items = items_inf
     # Final fallback: simple extraction with pack separation
-    return _extract_items_simple(rows)
+    fallback = _extract_items_simple(rows)
+    return fallback if len(fallback) > len(items or []) else (items or fallback)
 
 
 # ── 8. Numeric Validation ──
