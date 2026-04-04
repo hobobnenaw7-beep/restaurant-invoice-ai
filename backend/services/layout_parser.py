@@ -504,17 +504,43 @@ def _map_words_to_columns(row: list[dict], columns: list[dict]) -> dict:
     if "item_name" in col_assignments:
         result["item_name"] = " ".join(col_assignments["item_name"])
     if "quantity" in col_assignments:
-        # Multiple words in qty column: take the last (rightmost) value
-        # This handles ORD/SHIP spillover where both values land in qty column
+        # Multiple words in qty column: validate via qty × price ≈ total
+        # before selecting. This prevents ORD/SHIP spillover from picking the wrong value.
         qty_words = col_assignments["quantity"]
         qty_val = _parse_number(" ".join(qty_words))
         if qty_val == 0 and len(qty_words) > 1:
-            # Try each word individually, take the last parseable one
-            for qw in reversed(qty_words):
+            # Try each word individually, validate against total if available
+            total_val = _parse_number(" ".join(col_assignments.get("total", [])))
+            price_val = _parse_number(" ".join(col_assignments.get("unit_price", [])))
+            candidates = []
+            for qw in qty_words:
                 v = _parse_number(qw)
                 if v > 0:
-                    qty_val = v
-                    break
+                    candidates.append(v)
+            if candidates and total_val > 0 and price_val > 0:
+                # Pick the candidate where qty × price is closest to total
+                best_cand = None
+                best_diff = float("inf")
+                for c in candidates:
+                    diff = abs(c * price_val - total_val)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_cand = c
+                # Only trust the math-validated pick if it's reasonably close (<30% off)
+                # Otherwise fall back to rightmost (SHIP for PFG weight-based pricing)
+                if best_cand and total_val > 0:
+                    best_pct = best_diff / total_val * 100
+                    if best_pct < 30:
+                        qty_val = best_cand
+                    else:
+                        qty_val = candidates[-1]  # Rightmost = SHIP
+                elif best_cand:
+                    qty_val = best_cand
+                else:
+                    qty_val = candidates[-1]
+            elif candidates:
+                # No total/price to validate against — take the last (rightmost = SHIP)
+                qty_val = candidates[-1]
         result["quantity"] = qty_val
     if "unit_price" in col_assignments:
         result["unit_price"] = _parse_number(" ".join(col_assignments["unit_price"]))
@@ -784,6 +810,19 @@ def _parse_vendor_specific(rows: list[list[dict]], vendor_name: str) -> tuple:
 
 
 # ── 7. Vendor-Specific Parsers ──
+#
+# VENDOR RULES (locked):
+#   PFG / Performance Foodservice:
+#     - SHIP is the authoritative quantity (not ORD, not WEIGHT)
+#     - WEIGHT column values must never appear as quantity
+#     - $/LB is unit_price, EXT PRICE is total
+#     - Pack-size tokens (6/4 LB) must be separated, not confused with qty
+#   Sysco:
+#     - Standard 5-column (DESC, PACK, QTY, PRICE, TOTAL)
+#     - Dark headers: falls back to pack-aware inference → simple extraction
+#   US Foods:
+#     - Same as Sysco, with OCR-friendly keyword variants
+#
 
 
 def _is_low_yield(items: list[dict], rows: list[list[dict]], col_info: dict) -> bool:
