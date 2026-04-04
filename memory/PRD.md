@@ -14,7 +14,7 @@ Build a robust, rule-based Invoice Review and Correction Pipeline for restaurant
 
 | Vendor | Status | Input Format | Key Limitation |
 |--------|--------|-------------|----------------|
-| **Sysco** | **OPERATIONAL** (with guardrails) | Scanned PDF preferred | Occasional qty unreadable, group header contamination caught by guardrails |
+| **Sysco** | **CONTROLLED OPERATIONAL** (guarded mode) | Scanned PDF preferred | Subtotal mismatches, occasional unreadable qty, row misclassification — all gated by validation guardrails |
 | **PFG** | **LIMITED** (all items → needs_review) | Scanned PDF | $/LB and EXT PRICE columns cannot be separated — dedicated phase needed |
 | **US Foods** | **NOT STARTED** | — | Separate extraction/OCR problem, parked for future phase |
 
@@ -41,12 +41,14 @@ The hybrid approach (GPT reads → system enforces) is structurally sound:
 
 ## Guardrails Implemented
 
-### Sysco (Operational)
+### Sysco (Controlled Operational — Guarded Mode)
+Usable in real-world testing but NOT fully trusted. Validation gates all output.
 1. Group total / subtotal text in item name → needs_review (never becomes product)
 2. Missing or unreadable qty (qty=0 with total>0) → needs_review
 3. Math validation: qty × price ≠ total by >10% → needs_review
 4. Service row classification (fuel surcharge, delivery)
 5. Subtotal mismatch >5% → ALL items downgraded to review
+6. Any invoice with subtotal mismatch, unreadable fields, or misclassification → partial or full needs_review
 
 ### PFG (Limited Mode)
 1. ALL items → needs_review with explanation: "$/LB and EXT PRICE cannot be reliably separated"
