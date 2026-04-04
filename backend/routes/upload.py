@@ -88,6 +88,79 @@ def _validate_pfg_extraction(items: list) -> None:
 
 
 
+# Sysco group/subtotal keywords that must never become product rows
+_SYSCO_GROUP_KW = {"subtotal", "total", "group", "***", "---"}
+
+
+def _validate_sysco_extraction(items: list) -> None:
+    """
+    Sysco-specific post-extraction guardrails for LLM output.
+
+    Rules:
+    1. Unreadable qty or critical fields → needs_review
+    2. Group total / subtotal text in item name → exclude or needs_review
+    3. Service row classification
+    4. Math validation: qty × price must ≈ total
+    """
+    if not items:
+        return
+
+    for it in items:
+        name = (it.get("raw_name") or "").strip()
+        name_lower = name.lower()
+        name_words = set(name_lower.split())
+        qty = float(it.get("quantity", 0) or 0)
+        price = float(it.get("unit_price", 0) or 0)
+        total = float(it.get("total", 0) or 0)
+
+        # Guard 1: Group total / subtotal text leaked into product rows
+        has_group_text = any(kw in name_lower for kw in ["subtotal", "group total", "***"])
+        if has_group_text:
+            it["confidence_level"] = "review"
+            it["needs_review"] = True
+            it["review_reason"] = f"Row contains group/subtotal text: '{name}' — should not be a product"
+            it.setdefault("validation_errors", []).append(
+                f"sysco_group_text_in_product: '{name}'"
+            )
+            continue
+
+        # Guard 2: Unreadable/missing critical fields → needs_review
+        if qty == 0 and total > 0:
+            it["confidence_level"] = "review"
+            it["needs_review"] = True
+            it["review_reason"] = f"Missing or unreadable quantity (total=${total})"
+            it.setdefault("validation_errors", []).append(
+                "sysco_missing_qty: quantity could not be read"
+            )
+
+        if not name:
+            it["confidence_level"] = "review"
+            it["needs_review"] = True
+            it["review_reason"] = "Missing item name"
+            it.setdefault("validation_errors", []).append("sysco_missing_name")
+
+        # Guard 3: Service row classification
+        if name_words & _SERVICE_KW and len(name_words) <= 4:
+            it["row_type"] = "service"
+
+        # Guard 4: Math validation — strict for Sysco (case-based pricing)
+        if qty > 0 and price > 0 and total > 0:
+            computed = round(qty * price, 2)
+            diff = abs(computed - total)
+            pct = diff / total if total else 0
+            if pct > 0.02 and diff > 0.50:
+                it.setdefault("validation_errors", []).append(
+                    f"sysco_math_mismatch: {qty}×{price}={computed} vs total={total} (diff={pct:.1%})"
+                )
+                if pct > 0.10:
+                    it["confidence_level"] = "review"
+                    it["needs_review"] = True
+                    it["review_reason"] = f"Math mismatch: qty({qty}) × price(${price}) = ${computed}, but total is ${total}"
+
+        it["vendor_status"] = "operational"
+
+
+
 def _normalize_date(raw: str) -> str:
     """Try to parse various date formats and return YYYY-MM-DD."""
     if not raw or not raw.strip():
@@ -666,11 +739,26 @@ Rules:
 
                 extracted["items"] = processed_items
 
-                # ── PFG-specific post-extraction validation ──
-                # Detect common PFG extraction errors in LLM output
+                # ── Vendor-specific post-extraction validation ──
                 dv_lower = (detected_vendor or "").lower()
+
                 if "performance" in dv_lower or "pfg" in dv_lower:
+                    # PFG: LIMITED MODE — column separation not yet reliable
+                    # All items → needs_review until PFG Column Separation Phase
                     _validate_pfg_extraction(extracted["items"])
+                    for it in extracted.get("items", []):
+                        it["confidence_level"] = "review"
+                        it["needs_review"] = True
+                        if not it.get("review_reason"):
+                            it["review_reason"] = "PFG extraction limited: $/LB and EXT PRICE columns cannot be reliably separated. Manual review required."
+                        it.setdefault("validation_errors", []).append(
+                            "pfg_limited_mode: column separation not yet implemented"
+                        )
+                        it["vendor_status"] = "limited"
+
+                elif "sysco" in dv_lower:
+                    # Sysco: OPERATIONAL with strict guardrails
+                    _validate_sysco_extraction(extracted["items"])
 
                 items_sum = round(sum(float(it.get("total", 0) or 0) for it in extracted.get("items", [])), 2)
                 if not extracted.get("subtotal") and items_sum > 0:
