@@ -613,6 +613,7 @@ KNOWN_UNITS = {
     "GAL", "GALLON", "QT", "QUART", "L", "LITER", "ML", "PT", "PINT",
     "EA", "EACH", "CT", "COUNT", "PK", "PACK", "BX", "BOX",
     "CS", "CASE", "BG", "BAG", "DZ", "DOZEN",
+    "DIM",  # Dimension-based packs (e.g., 1508X8X3)
 }
 
 # Canonical unit mapping
@@ -745,6 +746,13 @@ def parse_pack_size(raw: str) -> dict:
             candidate_unit = _canonicalize_unit(m.group(3)) if m.group(3) else "LB"
             if candidate_ppc > 0 and candidate_wpp > 0 and candidate_unit in KNOWN_UNITS:
                 ppc, wpp, unit = candidate_ppc, candidate_wpp, candidate_unit
+
+    # Pattern 4c: "NxNxN" 3-segment dimensions (e.g., "1508X8X3" for napkins)
+    # Dimension packs: no weight/volume, just a descriptor. Store as-is.
+    if ppc is None:
+        m = re.match(r"^(\d+)\s*[xX×]\s*(\d+)\s*[xX×]\s*(\d+)\s*$", upper)
+        if m:
+            ppc, wpp, unit = 1, 1, "DIM"
 
     # Pattern 5: "N/N#" (e.g., "6/7#" = 6 packs of 7 LB)
     if ppc is None:
@@ -1118,12 +1126,19 @@ def _detect_suspicious_patterns(item: dict) -> list:
     total = float(item.get("total", 0) or 0)
     tcw = item.get("total_case_weight")
 
-    # Unrealistic pack sizes (case weight > 5000 LB or packs > 200)
+    # Unrealistic pack sizes — check case weight in LB equivalent
     ppc = item.get("packs_per_case")
     if ppc is not None and ppc > 200:
         flags.append(f"unrealistic packs_per_case: {ppc}")
-    if tcw is not None and tcw > 5000:
-        flags.append(f"unrealistic case weight: {tcw}")
+    if tcw is not None and tcw > 0:
+        pack_unit = (item.get("pack_unit") or "").upper()
+        # Convert to LB for comparison: 5000 LB is unrealistic, but 5000 GM (11 LB) is normal
+        unit_to_lb = {"LB": 1.0, "OZ": 0.0625, "G": 0.0022046, "GM": 0.0022046,
+                      "KG": 2.2046, "DIM": 0}
+        lb_factor = unit_to_lb.get(pack_unit, 1.0)
+        tcw_in_lb = tcw * lb_factor
+        if tcw_in_lb > 5000:
+            flags.append(f"unrealistic case weight: {tcw} {pack_unit} ({tcw_in_lb:.0f} LB)")
 
     # Defaulted/placeholder values
     if qty == 1 and up == 0 and total == 0:
@@ -1347,14 +1362,32 @@ def validate_and_score_item(item: dict) -> dict:
     else:
         errors.append(f"missing: {', '.join(missing)}")
 
-    # ===== HARD GATE 3: Pack size — if present, must parse or block trusted =====
+    # ===== Service row detection =====
+    # Service rows (fuel surcharge, delivery, etc.) bypass pack validation
+    SERVICE_KW = {"delivery", "fuel", "surcharge", "credit", "discount", "freight",
+                  "handling", "service", "charge", "fee", "adjustment", "return",
+                  "deposit", "rebate", "refund", "coupon", "promo", "minimum"}
+    name_lower = raw_name.lower()
+    name_words = set(name_lower.split())
+    is_service_row = bool(name_words & SERVICE_KW) and len(name_words) <= 4
+
+    # ===== HARD GATE 3: Pack size — context-aware =====
+    # Service rows: skip pack validation entirely
+    # Product rows: pack parse failure is NOT a hard fail when math passes
     has_pack = bool(pack_size_raw.strip())
-    if has_pack:
+    if is_service_row:
+        score += 15  # Service rows get baseline pack credit
+    elif has_pack:
         if pack_status == "parsed":
             score += 20
         elif pack_status == "failed":
-            hard_fail = True
-            errors.append(f"pack_size parse failed: \"{pack_size_raw}\"")
+            if valid_calc:
+                # Math passes → pack failure is informational, NOT hard fail
+                score += 10
+                errors.append(f"pack_size format unrecognized: \"{pack_size_raw}\" (math OK, informational)")
+            else:
+                hard_fail = True
+                errors.append(f"pack_size parse failed: \"{pack_size_raw}\"")
     else:
         score += 15
 
@@ -1405,7 +1438,7 @@ def validate_and_score_item(item: dict) -> dict:
         item["confidence_reason"] = "Math mismatch (qty × price ≠ total)"
     elif not raw_name:
         item["confidence_reason"] = "Missing item name"
-    elif has_pack and pack_status == "failed":
+    elif has_pack and pack_status == "failed" and not valid_calc:
         item["confidence_reason"] = "Pack size could not be parsed"
     elif sus_flags:
         item["confidence_reason"] = "Suspicious values detected"
@@ -1417,6 +1450,9 @@ def validate_and_score_item(item: dict) -> dict:
     # Explicit review markers for "save now, review later"
     item["needs_review"] = level != "trusted"
     item["review_reason"] = item["confidence_reason"] if level != "trusted" else None
+
+    # Row type classification
+    item["row_type"] = "service" if is_service_row else "product"
 
     # Generate lightweight correction suggestion for flagged items
     if level != "trusted":

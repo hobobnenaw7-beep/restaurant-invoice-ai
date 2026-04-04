@@ -319,3 +319,84 @@ class TestPFGEndToEnd:
         result = _pipeline(img, "Performance Food Group")
         assert result.get("parser_used") == "vendor_pfg", \
             f"Expected vendor_pfg parser, got {result.get('parser_used')}"
+
+
+
+# ═══════════════════════════════════════════════════════════
+# TESTS: Pack-token exclusion (OCR-split pack values)
+# ═══════════════════════════════════════════════════════════
+
+class TestPFGPackTokenExclusion:
+    """
+    When OCR splits pack values into standalone tokens (e.g., "1 25 LB"
+    instead of "1/25 LB"), the standalone numbers must go to pack_size,
+    NOT quantity. This tests the hard rule: pack zone covers the full gap
+    between description text and the first qty column.
+    """
+
+    def test_pack_1_25_lb_qty_not_1(self):
+        """Pack '1/25 LB' with OCR reading '1 25 LB' → qty must NOT be 1.
+        Correct qty comes from SHIP column, not pack fragments."""
+        # Use pack "1/25 LB" with SHIP=3
+        items = [
+            ("5510221", "SHRIMP 16/20 RAW", "1/25 LB", "5", "3", "75.00", "$6.40", "$480.00"),
+        ]
+        img = _draw_pfg(items)
+        result = _pipeline(img, "Performance Food Group")
+        parsed = result.get("items", [])
+        assert len(parsed) >= 1, f"Expected at least 1 item, got {len(parsed)}"
+        qty = parsed[0]["quantity"]
+        assert qty != 1, f"qty={qty} matches pack fragment '1' from '1/25 LB'. Pack leaked into qty!"
+        assert qty != 25, f"qty={qty} matches pack fragment '25' from '1/25 LB'. Pack leaked into qty!"
+
+    def test_pack_6_4_lb_qty_not_6(self):
+        """Pack '6/4 LB' → qty must NOT be 6 (the numerator of pack).
+        Correct qty comes from SHIP column."""
+        items = [
+            ("7234501", "BEEF TENDERLOIN CHOICE", "6/4 LB", "6", "1", "24.00", "$8.33", "$199.99"),
+        ]
+        img = _draw_pfg(items)
+        result = _pipeline(img, "Performance Food Group")
+        parsed = result.get("items", [])
+        assert len(parsed) >= 1, f"Expected at least 1 item, got {len(parsed)}"
+        qty = parsed[0]["quantity"]
+        assert qty != 6, f"qty={qty} matches pack '6' from '6/4 LB'. Pack leaked into qty!"
+        assert qty != 4, f"qty={qty} matches pack '4' from '6/4 LB'. Pack leaked into qty!"
+
+    def test_pack_4_10_lb_qty_not_4(self):
+        """Pack '4/10 LB' → qty must NOT be 4 or 10 from pack."""
+        items = [
+            ("8120034", "CHICKEN BREAST BNLS SKNLS", "4/10 LB", "4", "4", "40.00", "$2.15", "$86.00"),
+        ]
+        img = _draw_pfg(items)
+        result = _pipeline(img, "Performance Food Group")
+        parsed = result.get("items", [])
+        assert len(parsed) >= 1
+        qty = parsed[0]["quantity"]
+        # ORD=4 and SHIP=4 happen to be the same, but qty must come from SHIP column
+        assert abs(qty - 4) < 0.5, f"Expected qty=4 (SHIP), got {qty}"
+
+    def test_pack_1_50_lb_qty_not_1(self):
+        """Pack '1/50 LB' → qty must NOT be 1 (pack fragment)."""
+        items = [
+            ("6654320", "RICE JASMINE LONG GRAIN", "1/50 LB", "30", "25", "50.00", "$1.22", "$60.84"),
+        ]
+        img = _draw_pfg(items)
+        result = _pipeline(img, "Performance Food Group")
+        parsed = result.get("items", [])
+        assert len(parsed) >= 1
+        qty = parsed[0]["quantity"]
+        assert qty != 1, f"qty={qty} matches pack fragment '1' from '1/50 LB'. Pack leaked into qty!"
+        assert qty != 50, f"qty={qty} matches pack fragment '50' from '1/50 LB'. Pack leaked into qty!"
+        assert abs(qty - 25) < 0.5, f"Expected qty=25 (SHIP), got {qty}"
+
+    def test_ord_column_captured_as_unknown(self):
+        """ORD values must be captured by an explicit column, not leak into qty.
+        When ORD=6, SHIP=1, pack='6/4 LB': qty must be 1 (not 6)."""
+        img = _draw_pfg(PFG_PROBLEMATIC)
+        result = _pipeline(img, "Performance Food Group")
+        items = result.get("items", [])
+        assert len(items) >= 1
+        # Row 0: ORD=6, SHIP=1 → qty must be 1
+        assert abs(items[0]["quantity"] - 1) < 0.5, \
+            f"Row 0 qty should be 1 (SHIP), got {items[0]['quantity']}. ORD or pack leaked!"

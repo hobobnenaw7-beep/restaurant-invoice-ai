@@ -8,8 +8,11 @@ Detects row-level logical errors that pass numeric validation:
 - Service/surcharge rows misidentified as products
 - Structurally inconsistent rows vs neighbors
 - Vendor-specific pattern violations
+- Row classification (product vs service)
+- Trust level computation (math + fields + classification)
 
 Output: flags only, never auto-corrects.
+Trust level: trusted / info / warning / needs_review
 """
 
 import re
@@ -35,9 +38,140 @@ GENERIC_NAMES = {
 # Pack-size patterns that shouldn't appear inside item_name
 PACK_PATTERN = re.compile(r'\b\d+/\d+\s*(LB|OZ|CT|EA|GAL|ML|QT|CS|PK|DZ|BX)\b', re.IGNORECASE)
 
+# Expanded valid pack formats:
+# Weight: 6/4 LB, 2/5 OZ, 10 LB
+# Volume: 4 GAL, 2 QT
+# Count: 24 CT, 12 EA, 1 DZ
+# Dimensions: 1508X8X3, 12X10X5
+# Ratio: 6/4, 2/5, 48/6
+# Combined: 4/10 LB, 48/6 OZ
+VALID_PACK_PATTERNS = [
+    re.compile(r'^\d+/\d+\s*(LB|LBS|OZ|GAL|CT|EA|DZ|ML|QT|PT|CS|PK|BX)\b', re.IGNORECASE),  # 6/4 LB
+    re.compile(r'^\d+\s*(LB|LBS|OZ|GAL|CT|EA|DZ|ML|QT|PT|CS|PK|BX)\b', re.IGNORECASE),       # 10 LB
+    re.compile(r'^\d+[xX]\d+([xX]\d+)?\s*$'),                                                    # 1508X8X3
+    re.compile(r'^\d+/\d+\s*$'),                                                                  # 6/4
+    re.compile(r'^\d+\s*(GM|G|KG|MG|L|CL)\b', re.IGNORECASE),                                   # 10007 GM
+    re.compile(r'^\d+\s*#\s*$'),                                                                   # 25#
+]
+
 # Price-like patterns inside item names (column bleed)
 PRICE_IN_NAME = re.compile(r'\$\d+\.\d{2}\b')
 BARE_DECIMAL_IN_NAME = re.compile(r'\b\d{1,4}\.\d{2}\b')
+
+
+# ── 1b. Row Classification ──
+
+def classify_row_type(item: dict) -> str:
+    """
+    Classify a row as 'product' or 'service'.
+    Service rows: fuel surcharges, delivery fees, credits, adjustments, etc.
+    These bypass pack validation entirely.
+    """
+    name = (item.get("item_name") or "").strip().lower()
+    if not name:
+        return "product"
+
+    name_words = set(name.split())
+    service_hits = name_words & SERVICE_KEYWORDS
+
+    if service_hits:
+        pack = (item.get("pack_size") or "").strip()
+        qty = float(item.get("quantity", 0) or 0)
+        # Strong signal: service keyword + no pack + qty <= 1
+        if not pack and qty <= 1:
+            return "service"
+        # Service keyword dominates the name (e.g., "fuel surcharge", "delivery fee")
+        if len(service_hits) >= 1 and len(name_words) <= 4:
+            return "service"
+
+    return "product"
+
+
+def is_valid_pack_format(pack_str: str) -> bool:
+    """
+    Check if a pack string matches any known valid format.
+    Expanded to handle: weight, volume, count, dimensions, metric units.
+    Returns True if the pack is a recognized format (even if unusual).
+    """
+    if not pack_str or not pack_str.strip():
+        return False
+    p = pack_str.strip()
+    for pattern in VALID_PACK_PATTERNS:
+        if pattern.match(p):
+            return True
+    return False
+
+
+# ── 1c. Trust Level Computation ──
+
+def compute_trust_level(item: dict) -> str:
+    """
+    Compute unified trust level for an item based on:
+    - Math validation (financial correctness) — primary signal
+    - Critical field presence
+    - Row classification coherence
+    - Structural ambiguity
+
+    Levels:
+      trusted       — math passes + critical fields present + coherent classification
+      info          — semantic annotations present but don't affect financial correctness
+      warning       — ambiguous structure or unclear field source
+      needs_review  — math fails or critical fields missing
+    """
+    math_status = item.get("validation", {}).get("status", "pass")
+    semantic_flags = item.get("semantic_flags", [])
+    row_type = item.get("row_type", "product")
+    qty = float(item.get("quantity", 0) or 0)
+    price = float(item.get("unit_price", 0) or 0)
+    total = float(item.get("total_price", 0) or 0)
+    name = (item.get("item_name") or "").strip()
+
+    # Critical field check
+    has_name = bool(name)
+    has_financials = total > 0 or (qty > 0 and price > 0)
+    has_critical_fields = has_name and has_financials
+
+    # Service rows: trusted if they have a name and a total/amount
+    if row_type == "service":
+        if has_name and total > 0:
+            return "trusted"
+        elif has_name:
+            return "info"
+        else:
+            return "warning"
+
+    # Product rows: math is the primary trust signal
+    if math_status == "needs_review":
+        return "needs_review"
+
+    if not has_critical_fields:
+        return "warning"
+
+    # Structural ambiguity flags that indicate unclear field source
+    structural_ambiguity = [f for f in semantic_flags if any(
+        kw in f for kw in [
+            "values_duplicate_neighbor", "total_matches_neighbor",
+            "price_in_name", "missing_name", "truncated_name",
+        ]
+    )]
+
+    if structural_ambiguity:
+        return "warning"
+
+    # Math passes or is close — check for non-financial semantic annotations
+    if math_status == "pass":
+        if semantic_flags:
+            # Semantic flags exist but math is correct → informational only
+            return "trusted"
+        return "trusted"
+
+    if math_status == "warning":
+        # Close math (< 2% off) + no structural issues → still trusted
+        if not structural_ambiguity:
+            return "trusted"
+        return "warning"
+
+    return "warning"
 
 
 # ── 2. Row-level semantic checks ──
@@ -229,6 +363,8 @@ def check_vendor_patterns(items: list[dict], vendor: str | None) -> dict[int, li
     """
     Lightweight vendor-specific consistency checks.
     Uses known patterns for major distributors.
+    Skips pack validation for service rows.
+    Accepts expanded pack formats (dimensions, volume, metric).
     """
     flags_by_idx = {}
     if not vendor:
@@ -237,13 +373,12 @@ def check_vendor_patterns(items: list[dict], vendor: str | None) -> dict[int, li
     vendor_lower = (vendor or "").lower()
 
     # Pre-compute pack_size fill rate for distributor check
-    # If most items are missing pack, it's likely a parser/column issue, not real missing data
     is_distributor = ("sysco" in vendor_lower or "us foods" in vendor_lower or "usfoods" in vendor_lower)
     if is_distributor and items:
         pack_filled = sum(1 for it in items if (it.get("pack_size") or "").strip())
         pack_fill_rate = pack_filled / len(items)
     else:
-        pack_fill_rate = 1.0  # Irrelevant for non-distributors
+        pack_fill_rate = 1.0
 
     for i, item in enumerate(items):
         issues = []
@@ -252,29 +387,42 @@ def check_vendor_patterns(items: list[dict], vendor: str | None) -> dict[int, li
         qty = float(item.get("quantity", 0) or 0)
         price = float(item.get("unit_price", 0) or 0)
         total = float(item.get("total_price", 0) or 0)
+        row_type = item.get("row_type", "product")
 
         if is_distributor:
-            # Only flag missing pack_size when SOME items DO have pack_size
-            # (pack_fill_rate > 0 means the column was successfully mapped for at least some rows).
-            # If ALL items are missing pack, it's a parser/OCR column-mapping issue.
-            if not pack and qty > 0 and total > 0 and pack_fill_rate > 0:
-                # Check if pack info is embedded in item name
-                has_pack_in_name = bool(re.search(r'\d+/\d+\s*(LB|OZ|CT|EA|GAL|ML|QT|CS|PK|DZ|BX)\b', name, re.IGNORECASE))
-                if not has_pack_in_name:
-                    issues.append("distributor_missing_pack_size")
+            # Skip pack validation entirely for service rows
+            if row_type == "service":
+                pass  # No pack checks for service rows
+            else:
+                # Only flag missing pack when SOME items DO have pack
+                if not pack and qty > 0 and total > 0 and pack_fill_rate > 0:
+                    has_pack_in_name = bool(re.search(
+                        r'\d+/\d+\s*(LB|OZ|CT|EA|GAL|ML|QT|CS|PK|DZ|BX)\b',
+                        name, re.IGNORECASE
+                    ))
+                    if not has_pack_in_name:
+                        issues.append("distributor_missing_pack_size")
+
+                # Check if pack format is valid (expanded patterns)
+                if pack and not is_valid_pack_format(pack):
+                    # Only flag as informational (info level), not trust-degrading
+                    # when math validation passes
+                    math_ok = item.get("validation", {}).get("status", "") in ("pass", "warning")
+                    if math_ok:
+                        issues.append(f"pack_format_unusual: '{pack}' (math OK, informational)")
+                    else:
+                        issues.append(f"pack_parse_failed: '{pack}'")
 
             # Quantities should be reasonable (1-500 for cases)
             if qty > 500:
                 issues.append(f"unreasonable_qty_for_distributor: {qty}")
 
         if "pfg" in vendor_lower or "performance" in vendor_lower:
-            # PFG: weight-based pricing, expect weight indicators
             if total > 0 and price == 0 and "LB" not in name and "OZ" not in name:
                 if not any(w in name for w in ["LB", "OZ", "KG", "POUND"]):
                     issues.append("pfg_missing_weight_indicator")
 
         if "seafood" in vendor_lower or "fish" in vendor_lower:
-            # Seafood suppliers: items should be food products
             non_food = ["DELIVERY", "FUEL", "SERVICE", "BOX", "ICE"]
             for nf in non_food:
                 if nf in name and total > 0 and qty > 0:
@@ -291,8 +439,14 @@ def check_vendor_patterns(items: list[dict], vendor: str | None) -> dict[int, li
 def run_semantic_validation(items: list[dict], vendor: str | None = None) -> dict:
     """
     Run all semantic validation checks on parsed items.
-    Adds a `semantic_flags` field to each item and returns an aggregate summary.
+    Adds `semantic_flags`, `row_type`, `semantic_status`, and `trust_level` to each item.
     Never auto-corrects — only flags.
+
+    Trust model:
+      - Math validation = primary financial trust signal
+      - Semantic flags = informational annotations (don't degrade trust when math passes)
+      - Row classification (product/service) determines which checks apply
+      - Trust level = trusted / info / warning / needs_review
     """
     if not items:
         return {
@@ -305,11 +459,22 @@ def run_semantic_validation(items: list[dict], vendor: str | None = None) -> dic
 
     checks_run = []
 
+    # 0. Row classification (product vs service)
+    for item in items:
+        item["row_type"] = classify_row_type(item)
+    checks_run.append("row_classification")
+
     # 1. Row-level name quality
     for i, item in enumerate(items):
         name_flags = check_item_name_quality(item)
         bleed_flags = check_column_bleed(item)
         all_flags = name_flags + bleed_flags
+
+        # For service rows, suppress service_row flag from name quality
+        # (it's expected, not a problem — already classified)
+        if item["row_type"] == "service":
+            all_flags = [f for f in all_flags if "possible_service_row" not in f]
+
         item.setdefault("semantic_flags", []).extend(all_flags)
     checks_run.append("name_quality")
     checks_run.append("column_bleed")
@@ -334,14 +499,13 @@ def run_semantic_validation(items: list[dict], vendor: str | None = None) -> dic
         checks_run.append(f"vendor_patterns:{vendor}")
 
     # 4.5 Deduplicate: suppress distributor_missing_pack_size when pack_size_in_name
-    # is already flagged (pack info exists, just in wrong column — not truly missing)
     for item in items:
         sf = item.get("semantic_flags", [])
         has_pack_in_name = any("pack_size_in_name" in f for f in sf)
         if has_pack_in_name:
             item["semantic_flags"] = [f for f in sf if "distributor_missing_pack_size" not in f]
 
-    # 5. Compute per-item semantic status
+    # 5. Compute per-item semantic status and trust level
     flagged_indices = []
     suspicious_count = 0
     needs_review_count = 0
@@ -353,31 +517,33 @@ def run_semantic_validation(items: list[dict], vendor: str | None = None) -> dic
 
         if not sem_flags:
             item["semantic_status"] = "pass"
-            continue
-
-        # Determine severity
-        has_critical = any(
-            kw in f for f in sem_flags
-            for kw in ["values_duplicate_neighbor", "total_matches_neighbor",
-                       "price_in_name", "missing_name", "math_mismatch"]
-        )
-        has_moderate = any(
-            kw in f for f in sem_flags
-            for kw in ["total_outlier", "truncated_name", "possible_service_row",
-                       "pack_size_in_name", "generic_name", "qty_and_price_match"]
-        )
-
-        if has_critical:
-            item["semantic_status"] = "needs_review"
-            needs_review_count += 1
-        elif has_moderate:
-            item["semantic_status"] = "suspicious"
-            suspicious_count += 1
         else:
-            item["semantic_status"] = "suspicious"
-            suspicious_count += 1
+            # Determine semantic severity
+            has_critical = any(
+                kw in f for f in sem_flags
+                for kw in ["values_duplicate_neighbor", "total_matches_neighbor",
+                           "price_in_name", "missing_name", "math_mismatch"]
+            )
+            has_moderate = any(
+                kw in f for f in sem_flags
+                for kw in ["total_outlier", "truncated_name",
+                           "pack_size_in_name", "generic_name", "qty_and_price_match"]
+            )
 
-        flagged_indices.append(i)
+            if has_critical:
+                item["semantic_status"] = "needs_review"
+                needs_review_count += 1
+            elif has_moderate:
+                item["semantic_status"] = "suspicious"
+                suspicious_count += 1
+            else:
+                item["semantic_status"] = "suspicious"
+                suspicious_count += 1
+
+            flagged_indices.append(i)
+
+        # Compute unified trust level
+        item["trust_level"] = compute_trust_level(item)
 
     return {
         "semantic_issues_total": total_issues,
