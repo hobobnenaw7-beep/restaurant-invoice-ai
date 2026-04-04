@@ -1,112 +1,80 @@
-# Restaurant Accounting & Invoice Management System
+# Restaurant Accounting — Invoice Review Pipeline
 
 ## Original Problem Statement
-Build a robust, rule-based Invoice Review and Correction Pipeline with phased approach:
-- Save Now, Review Later workflow
-- Normalization Layer, Correction Memory System V1
-- Image preprocessing (deskew, rotation), Document classification
-- Layout-based OCR parsing with deterministic validation
+Build a robust, rule-based Invoice Review and Correction Pipeline for restaurant accounting. Strict phased approach with deterministic logic (no AI/LLM for suggestions or layout fixing). Key goals: UI clarity, correction visibility, image preprocessing, document classification, layout-based OCR parsing.
 
-**User Mandate**: Strict phased rollout with deterministic rule-based logic only. No AI/LLM for suggestions or layout fixing.
+## Architecture
+- **Frontend**: React + Shadcn/UI
+- **Backend**: FastAPI + MongoDB
+- **OCR**: Tesseract + OpenCV
+- **LLM**: OpenAI GPT-5.2 via Emergent LLM Key (for initial extraction)
+- **Validation**: Deterministic rule-based pipeline
 
-## Tech Stack
-- Frontend: React, TailwindCSS, Shadcn UI
-- Backend: FastAPI, Python, MongoDB
-- OCR: Tesseract (pytesseract), OpenCV (cv2)
-- LLM: OpenAI GPT-5.2 via Emergent LLM Key (receipt extraction only)
+## Code Structure
+```
+/app/backend/
+├── routes/upload.py (Pipeline flow)
+├── routes/purchases.py (PATCH for inline edits)
+├── routes/metrics.py (Usability metrics)
+├── services/layout_parser.py (OCR extraction, PFG rules, fallback handlers)
+├── services/semantic_validator.py (Row classification, trust levels, vendor patterns)
+├── preprocessing.py (Pack parsing, item validation, score computation)
+├── tests/
+│   ├── test_pfg_parser.py (18 safeguards)
+│   ├── test_sysco_validation.py (32 tests)
+│   ├── test_sysco_preprocessing.py (12 tests)
+/app/frontend/src/
+├── pages/ExpensesPage.js
+├── components/InvoiceReviewDialog.js
+```
 
-## Completed Phases
+## What's Been Implemented
 
-### Phase 1-3: Foundation (DONE)
-- Correction Layer, Hints UI, Memory Audit, Image Preprocessing, Document Classification, Parser-Specific Layout
+### Completed Phases (1-7.5)
+- Phase 1-3: Preprocess → Classify → Layout Parse
+- Phase 4: Semantic Validation (row-level logical checks)
+- Phase 5: Layout Parser Hardening (PFG rules, fallback handling)
+- Phase 6-7: Review + Correction Layer (InvoiceReviewDialog, PATCH API, audit trail)
+- Phase 7.5: Usability Testing Instrumentation
 
-### Phase 3.5: Real-World Stress Testing (DONE)
-- 15-invoice baseline: 17.6% accuracy
-
-### Phase 4: Layout Parser Stabilization (DONE)
-- **17.6% → 86.8% accuracy (4.9x improvement)**
-
-### Phase 4.5: Numeric Validation Layer (DONE)
-- qty × unit_price ≈ total_price cross-check, 92% detection rate
-
-### Phase 5: Semantic and Consistency Intelligence (DONE)
-- 5 deterministic checks, never auto-corrects, only flags
-
-### Phase 6: Layout Parser Hardening (DONE)
-- Pack-size column extraction, header-less inference, low-yield fallback
-
-### Phase 7: Review + Correction Layer (DONE)
-- Inline editing, validation display, field-level highlighting, audit trail
-- Testing: 17/17 backend + 17/17 frontend
-
-### Phase 7.5: Usability Testing Instrumentation (DONE)
-- Lightweight metrics: time per invoice, edits per invoice, flagged rows count
-
-### Performance Parser Fix (DONE, VALIDATED, LOCKED) — April 2026
-
-**Root cause**: Parser confused ORD qty / SHIP qty / WEIGHT / pack-size numerics on PFG invoices.
-
-**3 bugs fixed**:
-1. WEIGHT mapped as quantity → Built `_parse_pfg_inferred()` with ORD/SHIP pair detection
-2. OCR misreads leaking WEIGHT into empty qty → Unknown column handler respects dedicated columns
-3. ORD spilling into SHIP column → Nearest-center fallback skips numeric fields for non-numeric words
-
-**Result**: 0/8 → 8/8 correct quantities on problematic invoice
-
-**Safeguards locked**:
-1. **Permanent regression tests** — 13 pytest fixtures at `/app/backend/tests/test_pfg_parser.py`:
-   - SHIP vs ORD selection (3 tests)
-   - WEIGHT never used as qty (2 tests)
-   - Pack-size token handling (2 tests)
-   - Math consistency (2 tests)
-   - Unknown column guard (1 test)
-   - Full end-to-end (3 tests)
-2. **Unknown column guard** — When a dedicated qty column exists, unknown columns NEVER fill qty
-3. **Qty validation safety net** — When multiple qty candidates exist, validates via qty×price≈total. If no candidate is close (<30%), falls back to rightmost (SHIP)
-4. **Vendor rule documented** — PFG = SHIP is authoritative quantity (not ORD, not WEIGHT). Documented in layout_parser.py vendor rules section.
-5. **T05 seafood** — Tagged as OCR_QUALITY_LIMITATION, not parser regression
-
-**Regression results**: 9/10 tests PASS, 47/50 rows correct
-- T05 (Seafood) is known OCR quality limitation on generated images, not a parser bug
-- Zero regressions in Sysco, US Foods, semantic detection
-
-## Known Limitations
-
-### OCR Quality (tagged: OCR_QUALITY_LIMITATION)
-- Tesseract garbles small generated test images (13pt monospace font)
-- Real scanned invoices at 300 DPI perform dramatically better
-- This validates the need for Document Capture / Scan Mode
-
-### Vendor Model — Intentional
-- PFG weight-based pricing: total = weight × $/LB, NOT qty × $/LB
-  - Math validation correctly flags as needs_review (expected behavior)
-
-## Other Known Issues
-- **bcrypt** attribute error in backend logs (P2, parked)
-- **pytest** suite failures (P2, blocked by user instruction)
+### Bug Fixes (Latest Session - Feb 2026)
+- **PFG Parsing Bug**: Fixed pack-token leakage. Pack zone now covers full gap between description text and ORD/SHIP columns. ORD captured as explicit "unknown" column. 5 new safeguard tests added.
+- **Sysco Validation Improvements**:
+  - Row classification: product vs service (SERVICE_KEYWORDS-based)
+  - Expanded pack format handling: dimensions (1508X8X3), metric (10007 GM), volume (4 GAL)
+  - Softened HARD GATE 3: pack parse failure = informational when math passes
+  - Case weight check now uses LB-equivalent conversion
+  - Trust level computation: trusted/info/warning/needs_review based on math + fields + classification
+- Upload hint text added: "For best results, use scanned invoices..."
 
 ## Key API Endpoints
-- `POST /api/upload/extract`: Full pipeline
-- `PATCH /api/purchases/{id}/items/{index}`: Inline edit with revalidation + audit
-- `GET /api/purchases/{id}/edit-history`: Edit audit trail
-- `POST /api/metrics/review-session`: Log review session metrics
-- `GET /api/metrics/review-sessions`: Retrieve all metrics
+- `POST /api/upload/extract` - Extract invoice data
+- `PATCH /api/purchases/{id}/items/{index}` - Inline edits with revalidation
+- `POST /api/metrics/session` - Usability tracking
 
-## Database Schema
-- `purchases`: items[], edit_history[], review_status, layout_parse_results
-- `correction_memory`: usage_count, last_used_at, enabled
-- `review_metrics`: purchase_id, time_spent_seconds, edits_count, flagged_rows_count
+## Testing Status
+- **62 backend tests**: 18 PFG + 32 Sysco validation + 12 Sysco preprocessing — ALL PASS
+- **Frontend**: Login, dashboard, expenses, upload dialog — ALL VERIFIED
+- **Testing agent iteration**: 74 (100% pass rate)
+
+## Prioritized Backlog
+
+### P0 (Pending real-world test results)
+- Document Capture / Scan Mode (auto-edge detection, crop, perspective correction, deskew)
+
+### P1
+- Integrate loose match keys into vendor comparison for improved auto-grouping
+
+### P2
+- AI Chat Assistant Page Polish
+- Add OCR/Image Upload to Salaries tab
+- Client-side pack size preview
+- bcrypt attribute error in backend logs (parked)
+- Old pytest suite failures (parked)
+
+## Known Limitations
+- OCR precision on very small (10pt) monospace fonts on noisy backgrounds (documented as acceptable)
+- Parser safeguards: "If a quantity column exists, unknown columns must NEVER fill qty" — DO NOT alter
 
 ## Credentials
-- Email: demo@test.com
-- Password: testpassword
-
-## Upcoming (user to decide next step)
-- **Option A**: Controlled real-world testing (1-2 restaurants, 5-10 invoices)
-- **Option B**: Document Capture / Scan Mode (auto-detect edges, crop, perspective correction, deskew, contrast → scan-like quality before OCR)
-- Vendor comparison with loose match keys (P1, blocked until phase defined)
-
-## Future/Backlog
-- AI Chat Assistant Page Polish (P2)
-- OCR/Image Upload for Salaries tab (P2)
-- Client-side pack size preview (P2)
+- Demo: demo@test.com / testpassword
