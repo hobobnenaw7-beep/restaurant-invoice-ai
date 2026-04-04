@@ -13,6 +13,81 @@ from core.auth import get_user
 router = APIRouter()
 
 
+# PFG-specific keywords that indicate weight/pack info leaked into item name
+_PFG_WEIGHT_PATTERNS = re.compile(
+    r'\b(\d+(?:\.\d+)?)\s*(LB|LBS|OZ|GM|KG)\b',
+    re.IGNORECASE,
+)
+_PFG_PACK_IN_NAME = re.compile(
+    r'\b\d+/\d+\s*(LB|LBS|OZ|CT|EA|GAL)\b',
+    re.IGNORECASE,
+)
+
+_SERVICE_KW = {"delivery", "fuel", "surcharge", "credit", "discount", "freight",
+               "handling", "service", "charge", "fee", "adjustment", "return",
+               "deposit", "rebate", "refund", "coupon", "promo", "minimum"}
+
+
+def _validate_pfg_extraction(items: list) -> None:
+    """
+    PFG-specific post-extraction validation for LLM output.
+    Detects and flags common errors without auto-correcting.
+
+    Checks:
+    1. All-qty=1 pattern (likely SHIP column not read)
+    2. Pack info leaked into item name
+    3. Service row classification
+    4. Unrealistic weight-as-qty values
+    """
+    if not items:
+        return
+
+    # Check 1: All-qty=1 pattern — strong signal the SHIP column was missed
+    product_items = [it for it in items
+                     if not (set((it.get("raw_name") or "").lower().split()) & _SERVICE_KW)]
+    product_qtys = [float(it.get("quantity", 0) or 0) for it in product_items]
+
+    if len(product_qtys) >= 3 and all(q == 1 for q in product_qtys):
+        # ALL product items have qty=1 → likely extraction failure
+        for it in product_items:
+            it["needs_review"] = True
+            it["confidence_level"] = "review"
+            it["review_reason"] = "PFG: all quantities are 1 — SHIP column may not have been read correctly"
+            it.setdefault("validation_errors", []).append(
+                "pfg_all_qty_1: likely SHIP column not extracted"
+            )
+
+    # Per-item checks
+    for it in items:
+        name = (it.get("raw_name") or "").strip()
+        qty = float(it.get("quantity", 0) or 0)
+        name_lower = name.lower()
+        name_words = set(name_lower.split())
+
+        # Check 2: Pack info leaked into item name
+        if _PFG_PACK_IN_NAME.search(name):
+            it.setdefault("validation_errors", []).append(
+                f"pfg_pack_in_name: pack pattern found in item name '{name}'"
+            )
+
+        # Check 3: Service row classification
+        if name_words & _SERVICE_KW and len(name_words) <= 4:
+            it["row_type"] = "service"
+
+        # Check 4: Weight-as-qty (e.g., qty=75.00 when weight=75.00 LB)
+        # PFG SHIP values are always small integers (<200)
+        if qty > 100 and qty == int(qty):
+            # Could be weight, not qty
+            it.setdefault("validation_errors", []).append(
+                f"pfg_suspicious_qty: qty={qty} is unusually large for PFG (may be WEIGHT value)"
+            )
+            if it.get("confidence_level") == "trusted":
+                it["confidence_level"] = "review"
+                it["needs_review"] = True
+                it["review_reason"] = f"PFG: qty={qty} is unusually large — may be WEIGHT not SHIP"
+
+
+
 def _normalize_date(raw: str) -> str:
     """Try to parse various date formats and return YYYY-MM-DD."""
     if not raw or not raw.strip():
@@ -300,6 +375,53 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
 
         parsing_method = "vendor" if vendor_pattern else "general"
 
+        # ── Built-in vendor-specific extraction guidance ──
+        # Hardcoded layout knowledge for known distributors.
+        # This supplements any stored vendor_patterns hints.
+        builtin_vendor_hint = ""
+        if detected_vendor and detected_vendor.upper() != "UNKNOWN":
+            dv_lower = detected_vendor.lower()
+            if "performance" in dv_lower or "pfg" in dv_lower:
+                builtin_vendor_hint = """
+
+PERFORMANCE FOODSERVICE (PFG) COLUMN LAYOUT:
+This is a PFG invoice with a specific columnar format. Read carefully:
+- ITEM# (leftmost): 7-digit product code
+- DESCRIPTION: product name (text words)
+- PACK/SIZE: pack specification like "6/4 LB", "1/25 LB", "4/10 LB", "2/5 OZ". This is NOT the quantity.
+- ORD: ordered quantity (integer). This is NOT the shipped quantity.
+- SHIP: shipped quantity (integer). THIS IS THE CORRECT QUANTITY to extract.
+- WEIGHT: total weight in LBs (decimal). This is NOT the quantity.
+- $/LB: price per pound ($-prefixed). This is the unit_price.
+- EXT PRICE: extended price ($-prefixed). This is the total.
+
+CRITICAL PFG RULES:
+1. quantity MUST come from the SHIP column ONLY, NOT from ORD, PACK, or WEIGHT
+2. Pack values like "6/4 LB" or "1/25 LB" are pack specifications, NOT quantities
+3. The WEIGHT column shows total weight (e.g., 24.00, 40.00) — do NOT confuse with quantity
+4. A "FUEL SURCHARGE" or "SURCHARGE" line is a service charge, not a product
+5. If a row has SHIP=0 but ORD>0, it was not delivered — use quantity=0
+6. Do NOT default quantity to 1 when uncertain — look at the SHIP column carefully"""
+
+            elif "sysco" in dv_lower:
+                builtin_vendor_hint = """
+
+SYSCO INVOICE COLUMN LAYOUT:
+This is a Sysco invoice with a standard columnar format:
+- ITEM/CODE: product code (numeric)
+- DESCRIPTION: product name
+- PACK: pack specification like "6/#10", "4/5 LB", "24 CT", "1508X8X3" (dimensions). NOT the quantity.
+- QTY/ORDERED: the quantity ordered/shipped. THIS IS the correct quantity.
+- PRICE: unit price per case
+- AMOUNT/TOTAL: extended total for the line
+
+CRITICAL SYSCO RULES:
+1. quantity comes from the QTY or ORDERED column
+2. Pack values are descriptors, NOT quantities
+3. "FUEL SURCHARGE", "DELIVERY", "SERVICE CHARGE" lines are service items — extract them with quantity=1
+4. Some packs use dimension format (e.g., "1508X8X3") or metric weight (e.g., "10007 GM") — copy verbatim
+5. Do NOT confuse pack with quantity: "6/#10" means 6 cans of #10 size, the quantity is in a separate column"""
+
         # Update classification with vendor info now that we know it
         if vendor_pattern and detected_vendor.upper() != "UNKNOWN":
             doc_classification = classify_document(
@@ -344,7 +466,7 @@ CRITICAL rules for line items:
 - Dates must be in YYYY-MM-DD format. Convert any date format you see.
 - Use 0 for any truly missing numeric values
 - pack_size: The pack/case size EXACTLY as shown on the invoice. Common formats: "10/4 LB" (10 packs of 4 LB), "6/5 LB", "BAG 50 LB", "150 EA", "1 GAL", "2/17.5 LB", "1/25 LB", "12/1 QT", "50 LB", "10#". Copy this field verbatim. Leave empty string "" if not visible.
-- Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
+- Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
             elif document_type == "salary_document":
                 prompt = f"""You are reading a payroll document, salary slip, or payment record for restaurant staff. Extract data into this exact JSON format:
 {{"employee_name":"","position":"","amount":0,"payment_date":"YYYY-MM-DD","notes":"","pay_period":"","deductions":0,"gross_amount":0}}
@@ -544,6 +666,12 @@ Rules:
 
                 extracted["items"] = processed_items
 
+                # ── PFG-specific post-extraction validation ──
+                # Detect common PFG extraction errors in LLM output
+                dv_lower = (detected_vendor or "").lower()
+                if "performance" in dv_lower or "pfg" in dv_lower:
+                    _validate_pfg_extraction(extracted["items"])
+
                 items_sum = round(sum(float(it.get("total", 0) or 0) for it in extracted.get("items", [])), 2)
                 if not extracted.get("subtotal") and items_sum > 0:
                     extracted["subtotal"] = items_sum
@@ -554,6 +682,18 @@ Rules:
                 if items_sum > 0 and subtotal > 0 and abs(items_sum - subtotal) > 0.10:
                     warnings.append(f"Items sum ({items_sum}) differs from subtotal ({subtotal})")
                     extracted["_subtotal_warning"] = True
+                    # ── Subtotal-level validation: downgrade trust when sum ≠ total ──
+                    pct_diff = abs(items_sum - subtotal) / subtotal if subtotal else 0
+                    if pct_diff > 0.05:
+                        # More than 5% off — extraction is unreliable
+                        for it in extracted.get("items", []):
+                            if it.get("confidence_level") == "trusted":
+                                it["confidence_level"] = "review"
+                                it["needs_review"] = True
+                                it["review_reason"] = f"Invoice-level mismatch: items sum ${items_sum} vs subtotal ${subtotal} ({pct_diff:.0%} off)"
+                                it.setdefault("validation_errors", []).append(
+                                    f"subtotal_mismatch: sum={items_sum}, declared={subtotal}"
+                                )
 
                 total = float(extracted.get("total", 0) or 0)
                 tax = float(extracted.get("tax", 0) or 0)

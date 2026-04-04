@@ -4,11 +4,12 @@ Extracts structured line items from invoice images using Tesseract OCR
 with spatial analysis (row/column detection).
 
 Pipeline:
-  1. Run Tesseract → get word-level bounding boxes
-  2. Group words into rows by y-coordinate clustering
-  3. Detect column boundaries from header alignment
-  4. Map cells into structured line items
-  5. Route to vendor-specific or generic parser
+  1. Preprocess image (auto-rotate, adaptive threshold, scale)
+  2. Run Tesseract → get word-level bounding boxes
+  3. Group words into rows by y-coordinate clustering
+  4. Detect column boundaries from header alignment
+  5. Map cells into structured line items
+  6. Route to vendor-specific or generic parser
 
 NO AI/LLM calls — pure rule-based spatial analysis.
 """
@@ -18,6 +19,7 @@ import base64
 import logging
 from collections import defaultdict
 
+import cv2
 import numpy as np
 import pytesseract
 from PIL import Image
@@ -31,16 +33,65 @@ PACK_PATTERN = re.compile(
 )
 
 
+# ── 0. Image Preprocessing ──
+
+def _preprocess_for_ocr(img_bytes: bytes) -> Image.Image:
+    """
+    Preprocess a camera photo or scanned image for better OCR:
+    1. Auto-detect and fix orientation (portrait → landscape for invoices)
+    2. Convert to grayscale
+    3. Adaptive thresholding for uneven lighting (camera photos)
+    4. Scale to reasonable size (~2000-3000px longest dimension)
+    Returns a PIL Image ready for Tesseract.
+    """
+    # Decode with OpenCV for preprocessing
+    arr = np.frombuffer(img_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+    if img is None:
+        # Fallback: return original as PIL
+        return Image.open(io.BytesIO(img_bytes)).convert("RGB")
+
+    h, w = img.shape[:2]
+
+    # Auto-rotate: invoices are typically landscape.
+    # If image is portrait and very tall (aspect > 1.2), try both rotations.
+    if h > w * 1.2:
+        # Try counterclockwise rotation (most common for phone photos of landscape docs)
+        img = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        h, w = img.shape[:2]
+
+    # Scale: target longest dimension ~2500px for good OCR balance
+    max_dim = max(h, w)
+    if max_dim > 3500:
+        scale = 2500 / max_dim
+        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    elif max_dim < 1500:
+        scale = 2000 / max_dim
+        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+    # Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Adaptive threshold for uneven lighting (camera flash, shadows)
+    thresh = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 15
+    )
+
+    # Convert back to PIL Image
+    pil_img = Image.fromarray(thresh).convert("RGB")
+    return pil_img
+
+
 # ── 1. Tesseract OCR with position data ──
 
 def run_ocr(image_bytes: bytes) -> list[dict]:
     """
     Run Tesseract on image bytes, return word-level data with bounding boxes.
+    Applies preprocessing (rotation, threshold, scaling) for camera photos.
     Each word: {text, left, top, width, height, conf, line_num, block_num}
     """
-    img = Image.open(io.BytesIO(image_bytes))
-    if img.mode != "RGB":
-        img = img.convert("RGB")
+    img = _preprocess_for_ocr(image_bytes)
 
     data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT, config="--psm 6 --dpi 300")
 

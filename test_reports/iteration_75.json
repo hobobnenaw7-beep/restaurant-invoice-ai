@@ -1,0 +1,138 @@
+{
+  "summary": "Iteration 75: All 69 backend tests pass (18 PFG parser + 32 Sysco validation + 12 Sysco preprocessing + 7 PFG post-extraction). Frontend loads, login works, expenses page accessible, upload dialog shows scan hint text. Key new features verified: PFG-specific LLM prompt, image preprocessing, PFG post-extraction validation, subtotal-level validation.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard charts", "issues": ["Console warnings about chart width/height being -1 - cosmetic issue, charts still render correctly"]}
+    ]
+  },
+  "test_results": {
+    "backend_tests": {
+      "test_pfg_parser.py": {
+        "total": 18,
+        "passed": 18,
+        "failed": 0,
+        "tests": [
+          "TestPFGShipVsOrd::test_ship_selected_over_ord_row0 - PASS",
+          "TestPFGShipVsOrd::test_ship_selected_over_ord_row7 - PASS",
+          "TestPFGShipVsOrd::test_ship_not_ord_when_different - PASS",
+          "TestPFGWeightIgnored::test_weight_not_qty_row5 - PASS",
+          "TestPFGWeightIgnored::test_weight_not_qty_row0 - PASS",
+          "TestPFGPackSizeHandling::test_pack_not_qty - PASS",
+          "TestPFGPackSizeHandling::test_pack_correctly_extracted - PASS",
+          "TestPFGMathConsistency::test_all_rows_math_check - PASS",
+          "TestPFGMathConsistency::test_variant_math_check - PASS",
+          "TestUnknownColumnGuard::test_unknown_does_not_fill_qty - PASS",
+          "TestPFGEndToEnd::test_problematic_invoice_full - PASS",
+          "TestPFGEndToEnd::test_variant_invoice_full - PASS",
+          "TestPFGEndToEnd::test_parser_used_is_pfg - PASS",
+          "TestPFGPackTokenExclusion::test_pack_1_25_lb_qty_not_1 - PASS",
+          "TestPFGPackTokenExclusion::test_pack_6_4_lb_qty_not_6 - PASS",
+          "TestPFGPackTokenExclusion::test_pack_4_10_lb_qty_not_4 - PASS",
+          "TestPFGPackTokenExclusion::test_pack_1_50_lb_qty_not_1 - PASS",
+          "TestPFGPackTokenExclusion::test_ord_column_captured_as_unknown - PASS"
+        ]
+      },
+      "test_sysco_validation.py": {
+        "total": 32,
+        "passed": 32,
+        "failed": 0,
+        "tests": [
+          "TestRowClassification - 8 tests PASS (fuel_surcharge, delivery_fee, credit_adjustment, discount, normal_product, chicken_breast, empty_name, return_deposit)",
+          "TestPackFormatValidation - 12 tests PASS (weight, volume, count, dimension, dimension_2d, ratio, metric_weight, pound_hash, standard_weight_pack, each, empty_not_valid, none_not_valid)",
+          "TestTrustLevel - 8 tests PASS (math_pass_no_flags, math_pass_with_pack_noise, math_fail, service_row_with_total, service_row_no_total, ambiguous_structure, missing_critical_fields, math_warning_no_structural)",
+          "TestSyscoScenarios - 4 tests PASS (ketchup_not_downgraded, dimension_pack_not_flagged, service_row_bypasses_pack, mixed_products_and_service)"
+        ]
+      },
+      "test_sysco_preprocessing.py": {
+        "total": 12,
+        "passed": 12,
+        "failed": 0,
+        "tests": [
+          "TestPackParseDimensions - 3 tests PASS (3segment_dimension, 3segment_lowercase, 2segment_dimension)",
+          "TestPackParseMetric - 3 tests PASS (grams_parse, grams_not_suspicious, 5000_lb_is_suspicious)",
+          "TestServiceRowDetection - 3 tests PASS (fuel_surcharge_trusted, delivery_fee_trusted, normal_product_not_service)",
+          "TestMathPassesPackNoise - 3 tests PASS (unrecognized_pack_with_math_ok, dimension_pack_not_failed, grams_pack_not_suspicious)"
+        ]
+      },
+      "test_pfg_post_extraction.py": {
+        "total": 7,
+        "passed": 7,
+        "failed": 0,
+        "tests": [
+          "TestPFGPostExtraction::test_all_qty_1_flagged - PASS",
+          "TestPFGPostExtraction::test_mixed_qty_not_flagged - PASS",
+          "TestPFGPostExtraction::test_service_rows_excluded_from_all_qty_1 - PASS",
+          "TestPFGPostExtraction::test_pack_in_name_detected - PASS",
+          "TestPFGPostExtraction::test_weight_as_qty_detected - PASS",
+          "TestSubtotalValidation::test_subtotal_mismatch_downgrades_trust - PASS",
+          "TestSubtotalValidation::test_matching_subtotal_keeps_trust - PASS"
+        ]
+      }
+    },
+    "frontend_tests": {
+      "login_flow": "PASS - Login with demo@test.com / testpassword works, 'Welcome back!' message shown",
+      "dashboard_loads": "PASS - Dashboard visible with spending charts, sales data, market insights",
+      "expenses_page": "PASS - Expenses page loads with purchase list and validation badges (name, math, pack)",
+      "upload_dialog": "PASS - Add button opens 'Add Raw Material Purchase' dialog with upload options",
+      "scan_hint_visible": "PASS - 'For best results, use scanned invoices instead of direct camera photos' visible in upload dialog"
+    }
+  },
+  "features_verified": [
+    "PFG-specific LLM prompt: builtin_vendor_hint for PFG with column layout guidance (ITEM#, DESCRIPTION, PACK/SIZE, ORD, SHIP, WEIGHT, $/LB, EXT PRICE)",
+    "PFG-specific LLM prompt: builtin_vendor_hint for Sysco with column layout guidance",
+    "Image preprocessing: _preprocess_for_ocr() with auto-rotate portrait→landscape, adaptive threshold, scaling",
+    "PFG post-extraction: all-qty-1 items flagged as needs_review (test_all_qty_1_flagged)",
+    "PFG post-extraction: service rows (fuel surcharge) classified correctly (test_service_rows_excluded_from_all_qty_1)",
+    "PFG post-extraction: pack pattern in item name detected (test_pack_in_name_detected)",
+    "PFG post-extraction: weight-as-qty (qty>100) flagged (test_weight_as_qty_detected)",
+    "Subtotal validation: items sum ≠ declared subtotal by >5% downgrades trust (test_subtotal_mismatch_downgrades_trust)",
+    "Sysco: dimension packs (1508X8X3) accepted via Pattern 4c (test_dimension_format)",
+    "Sysco: service rows bypass pack validation (test_service_row_bypasses_pack_validation)",
+    "Sysco: OCR-noisy packs with math OK → trusted (test_ketchup_not_downgraded_with_correct_math)",
+    "PFG parsing: SHIP column used as authoritative quantity (not ORD, not WEIGHT)",
+    "PFG parsing: pack-token exclusion prevents pack fragments from becoming qty",
+    "Backend server starts without errors",
+    "Frontend loads without errors",
+    "Login flow works with demo@test.com / testpassword"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_pfg_parser.py",
+    "/app/backend/tests/test_sysco_validation.py",
+    "/app/backend/tests/test_sysco_preprocessing.py",
+    "/app/backend/tests/test_pfg_post_extraction.py",
+    "/app/test_reports/pytest/pytest_iteration75.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PFG-specific LLM prompt in upload.py correctly guides GPT-5.2 to read SHIP column for quantity",
+    "Image preprocessing in layout_parser.py handles camera photos with auto-rotate and adaptive threshold",
+    "_validate_pfg_extraction() in upload.py catches common LLM extraction errors (all-qty-1, pack-in-name, weight-as-qty)",
+    "Subtotal-level validation in upload.py downgrades trust when items sum differs from declared subtotal by >5%",
+    "Pattern 4c in preprocessing.py parse_pack_size() handles dimension packs (1508X8X3)",
+    "Service row bypass in semantic_validator.py skips pack validation for fuel surcharge, delivery fee, etc.",
+    "HARD GATE 3 softening: pack parse failure is informational when math passes"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (69/69 passed)",
+    "frontend": "100% (5/5 UI features verified)"
+  },
+  "test_credentials": {
+    "email": "demo@test.com",
+    "password": "testpassword"
+  },
+  "seed_data_creation": "None - used existing test data",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 75 verified all 69 backend tests pass including 7 new PFG post-extraction tests. Key files: upload.py (_validate_pfg_extraction, builtin_vendor_hint), layout_parser.py (_preprocess_for_ocr, _parse_pfg_inferred), semantic_validator.py (classify_row_type, is_valid_pack_format, compute_trust_level), preprocessing.py (parse_pack_size Pattern 4c, _detect_suspicious_patterns). No regressions from iteration 74.",
+  "mocked_apis": {
+    "has_mocked_apis": false,
+    "mocked_apis_list": []
+  }
+}
