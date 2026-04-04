@@ -482,9 +482,16 @@ def _map_words_to_columns(row: list[dict], columns: list[dict]) -> dict:
             continue
 
         # Phase 2: Fallback — nearest column center (only if no boundary match)
+        # For numeric fields, only accept numeric-like words via nearest match
+        # to prevent OCR artifacts (e.g., "lo" for "10") from poisoning numeric columns
         best_col = None
         best_dist = float("inf")
+        w_text = w["text"].strip()
+        w_is_numeric = bool(re.match(r'^[\d$.,]+$', w_text.replace(",", "").strip("'`\"\u2018\u2019\u201C\u201D")))
         for col in columns:
+            # Skip numeric columns for non-numeric words
+            if col["field"] in ("quantity", "unit_price", "total") and not w_is_numeric:
+                continue
             col_center = (col["left"] + col["right"]) // 2
             dist = abs(w_center - col_center)
             if dist < best_dist:
@@ -497,7 +504,18 @@ def _map_words_to_columns(row: list[dict], columns: list[dict]) -> dict:
     if "item_name" in col_assignments:
         result["item_name"] = " ".join(col_assignments["item_name"])
     if "quantity" in col_assignments:
-        result["quantity"] = _parse_number(" ".join(col_assignments["quantity"]))
+        # Multiple words in qty column: take the last (rightmost) value
+        # This handles ORD/SHIP spillover where both values land in qty column
+        qty_words = col_assignments["quantity"]
+        qty_val = _parse_number(" ".join(qty_words))
+        if qty_val == 0 and len(qty_words) > 1:
+            # Try each word individually, take the last parseable one
+            for qw in reversed(qty_words):
+                v = _parse_number(qw)
+                if v > 0:
+                    qty_val = v
+                    break
+        result["quantity"] = qty_val
     if "unit_price" in col_assignments:
         result["unit_price"] = _parse_number(" ".join(col_assignments["unit_price"]))
     if "total" in col_assignments:
@@ -506,6 +524,11 @@ def _map_words_to_columns(row: list[dict], columns: list[dict]) -> dict:
         result["pack_size"] = " ".join(col_assignments["pack_size"])
 
     # Handle unknown columns — try to assign as numbers or pack sizes
+    # Only fill quantity/price/total from unknown columns if there's no dedicated column for them
+    has_qty_column = any(c["field"] == "quantity" for c in columns)
+    has_price_column = any(c["field"] == "unit_price" for c in columns)
+    has_total_column = any(c["field"] == "total" for c in columns)
+
     for field, words in col_assignments.items():
         if field == "unknown":
             # Check if all words are pack-size words
@@ -517,13 +540,13 @@ def _map_words_to_columns(row: list[dict], columns: list[dict]) -> dict:
             if val > 0:
                 # Heuristic: small integers (1-999) with no decimal → likely quantity
                 is_integer = val == int(val) and val < 1000
-                if is_integer and result["quantity"] == 0:
+                if is_integer and result["quantity"] == 0 and not has_qty_column:
                     result["quantity"] = val
-                elif result["total_price"] == 0:
+                elif result["total_price"] == 0 and not has_total_column:
                     result["total_price"] = val
-                elif result["unit_price"] == 0:
+                elif result["unit_price"] == 0 and not has_price_column:
                     result["unit_price"] = val
-                elif result["quantity"] == 0:
+                elif result["quantity"] == 0 and not has_qty_column:
                     result["quantity"] = val
 
     # Post-process: extract pack-size patterns from item_name into pack_size
@@ -798,11 +821,194 @@ def _parse_sysco(rows: list[list[dict]]) -> list[dict]:
 
 def _parse_pfg(rows: list[list[dict]]) -> list[dict]:
     """
-    PFG invoices: DESCRIPTION, PACK, QTY, CASEWT, $/LB, TOTAL
-    Weight-based pricing: total = qty × caseWT × $/LB
+    PFG / Performance Foodservice invoices.
+    Column layout: ITEM# | DESCRIPTION | PACK | ORD | SHIP | WEIGHT | $/LB | EXT PRICE
+
+    Key: the correct billing quantity is SHIP, not ORD. WEIGHT is NOT quantity.
+    The generic right-to-left assignment (total, price, qty) wrongly maps WEIGHT to qty.
+
+    Strategy:
+    1. Try header detection (if readable)
+    2. Fallback: PFG-specific column inference — identify ORD/SHIP pair (two
+       small-integer columns between pack and weight), use SHIP as quantity
     """
-    header_kw = ["description", "pack", "qty", "casewt", "weight", "lb", "price", "total", "ext"]
+    header_kw = ["description", "pack", "qty", "ord", "ship", "casewt", "weight",
+                 "lb", "price", "total", "ext"]
     col_info = detect_columns(rows, header_kw)
+    items = extract_line_items(rows, col_info)
+    if items and not _is_low_yield(items, rows, col_info):
+        return items
+
+    # Fallback: PFG-specific column inference
+    items = _parse_pfg_inferred(rows)
+    if items:
+        return items
+
+    # Last resort: simple extraction
+    return _extract_items_simple(rows)
+
+
+def _parse_pfg_inferred(rows: list[list[dict]]) -> list[dict]:
+    """
+    PFG-specific column inference.
+    Identifies the ORD/SHIP pair and WEIGHT column to correctly assign qty.
+
+    PFG layout (by x-position):
+    - ITEM# (x≈16-65): 7-digit number
+    - DESCRIPTION (x≈86-300): text words
+    - PACK (x≈366-419): pack-size words (e.g., "6/4 LB")
+    - ORD (x≈466-480): small integer (ordered qty)
+    - SHIP (x≈526-540): small integer (shipped qty) ← THIS IS THE CORRECT QTY
+    - WEIGHT (x≈596-633): decimal (total weight in LBs)
+    - $/LB (x≈686-740): $-prefixed price per pound
+    - EXT PRICE (x≈796-862): $-prefixed total
+
+    Detection logic:
+    - Find ALL numeric columns by spatial clustering
+    - Identify the $-prefixed columns (price + total) from the right
+    - Among the remaining numeric columns, find the ORD/SHIP pair:
+      two adjacent small-integer columns between pack zone and weight zone
+    - SHIP is the second of the pair (closer to weight)
+    - WEIGHT is the decimal column just before $/LB
+    """
+    # Find data rows
+    data_rows = []
+    for i, row in enumerate(rows):
+        nums = [w for w in row if _is_price_like(w["text"])]
+        if len(nums) >= 3:
+            data_rows.append((i, row))
+
+    if not data_rows:
+        return []
+
+    # Cluster ALL numeric words by x-position
+    num_positions = []  # (left, right, text, row_idx)
+    for ri, row in data_rows:
+        for w in row:
+            if _is_price_like(w["text"]):
+                num_positions.append((w["left"], w["right"], w["text"], ri))
+
+    # Cluster by left position
+    from collections import defaultdict
+    pos_sorted = sorted(num_positions, key=lambda x: x[0])
+    clusters = []
+    curr = [pos_sorted[0]]
+    for p in pos_sorted[1:]:
+        if p[0] - curr[-1][0] < 40:
+            curr.append(p)
+        else:
+            clusters.append(curr)
+            curr = [p]
+    clusters.append(curr)
+
+    # Classify each cluster
+    # $-prefixed clusters are price/total, decimal clusters could be weight,
+    # small-integer clusters are qty candidates
+    cluster_info = []
+    for cl in clusters:
+        avg_left = int(np.mean([p[0] for p in cl]))
+        avg_right = int(np.mean([p[1] for p in cl]))
+        texts = [p[2] for p in cl]
+        has_dollar = any("$" in t for t in texts)
+        values = []
+        for t in texts:
+            v = _parse_number(t)
+            if v > 0:
+                values.append(v)
+        avg_val = np.mean(values) if values else 0
+        max_val = max(values) if values else 0
+        # Distinguish true small integers (1, 4, 25) from decimal-formatted values (24.00, 80.00)
+        # "24.00" is int-valued but written with decimals → it's a weight/decimal column, not qty
+        texts_have_decimal = any("." in t.replace("$", "") for t in texts)
+        is_small_integer = (not texts_have_decimal and
+                            all(v == int(v) and v < 200 for v in values)) if values else False
+
+        cluster_info.append({
+            "left": avg_left, "right": avg_right,
+            "has_dollar": has_dollar, "is_small_integer": is_small_integer,
+            "texts_have_decimal": texts_have_decimal,
+            "avg_val": avg_val, "max_val": max_val,
+            "count": len(cl), "texts": texts,
+        })
+
+    # Sort clusters left-to-right
+    cluster_info.sort(key=lambda c: c["left"])
+
+    # Identify: rightmost $-prefixed = total, second rightmost $-prefixed = $/LB
+    dollar_clusters = [c for c in cluster_info if c["has_dollar"]]
+    non_dollar = [c for c in cluster_info if not c["has_dollar"]]
+
+    if len(dollar_clusters) < 2:
+        return []  # Can't identify price+total
+
+    dollar_clusters.sort(key=lambda c: c["left"])
+    price_col_info = dollar_clusters[-2]  # $/LB
+    total_col_info = dollar_clusters[-1]  # EXT PRICE
+
+    # Among non-dollar clusters, identify:
+    # - ITEM# (leftmost, 7-digit numbers)
+    # - ORD/SHIP pair (two adjacent small-integer columns, max_val < 200)
+    # - WEIGHT (decimal column, between SHIP and $/LB)
+    qty_candidates = []
+    weight_candidate = None
+
+    for c in non_dollar:
+        # Skip if it's the leftmost (likely ITEM#)
+        if c["left"] < 100:
+            continue
+        # Skip if right of price column
+        if c["left"] > price_col_info["left"]:
+            continue
+
+        if c["is_small_integer"] and c["max_val"] < 200:
+            qty_candidates.append(c)
+        elif c["texts_have_decimal"] and c["avg_val"] > 5:
+            weight_candidate = c
+
+    # The SHIP column is the one closest to (but left of) the WEIGHT column
+    # If we have exactly 2 qty candidates, SHIP = the right one
+    ship_col = None
+    if len(qty_candidates) >= 2:
+        qty_candidates.sort(key=lambda c: c["left"])
+        ship_col = qty_candidates[-1]  # Rightmost small-integer = SHIP
+    elif len(qty_candidates) == 1:
+        ship_col = qty_candidates[0]
+
+    if not ship_col:
+        return []  # Can't find qty column
+
+    # Build column definitions
+    # Find pack zone
+    pack_positions = []
+    for _, row in data_rows:
+        for w in row:
+            if _is_pack_size_word(w["text"]):
+                pack_positions.append(w)
+    pack_right = max(p["right"] for p in pack_positions) + 10 if pack_positions else ship_col["left"] - 20
+
+    columns = [
+        {"name": "Description", "left": 0, "right": pack_right - 5 if pack_positions else ship_col["left"] - 20, "field": "item_name"},
+    ]
+    if pack_positions:
+        pack_left = min(p["left"] for p in pack_positions) - 10
+        columns.append({"name": "Pack", "left": pack_left, "right": pack_right, "field": "pack_size"})
+
+    columns.append({"name": "Ship Qty", "left": ship_col["left"] - 10, "right": ship_col["right"] + 10, "field": "quantity"})
+
+    if weight_candidate:
+        columns.append({"name": "Weight", "left": weight_candidate["left"] - 10, "right": weight_candidate["right"] + 10, "field": "unknown"})
+
+    columns.append({"name": "$/LB", "left": price_col_info["left"] - 10, "right": price_col_info["right"] + 10, "field": "unit_price"})
+    columns.append({"name": "Ext Price", "left": total_col_info["left"] - 10, "right": total_col_info["right"] + 10, "field": "total"})
+
+    columns.sort(key=lambda c: c["left"])
+
+    col_info = {
+        "header_row_idx": -1,
+        "columns": columns,
+        "data_start_idx": data_rows[0][0],
+    }
+
     return extract_line_items(rows, col_info)
 
 
