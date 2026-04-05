@@ -1416,15 +1416,43 @@ def validate_and_score_item(item: dict) -> dict:
                 errors.append(f"normalized price exists but unit '{pack_unit}' is not weight-based — cleared")
                 item["normalized_price_per_lb"] = None
 
-    # ===== Final classification: Trust > Coverage =====
+    # ===== Final classification: Strict Decision Gate =====
+    # No row becomes "trusted" unless ALL conditions pass:
+    #   1. qty from defined column (qty > 0)
+    #   2. unit_price from defined column (up > 0)
+    #   3. total from defined column (total > 0)
+    #   4. math validated (valid_calc = True)
+    #   5. item name present
+    #   6. no hard failures
     score = max(0, min(100, score))
 
+    # Determine review status taxonomy:
+    #   trusted            — all gates pass, no ambiguity
+    #   needs_review_light — minor issues (pack format, name quality) but math OK
+    #   needs_review_numeric — math mismatch or missing numeric field
+    #   extraction_failed  — critical fields missing or garbled
+    #   vendor_unsupported — vendor not yet supported (PFG limited, US Foods)
+
+    all_fields_present = (qty > 0 and up > 0 and total > 0 and bool(raw_name))
+
     if hard_fail:
-        level = "unverified"
+        if not raw_name or (qty == 0 and up == 0 and total == 0):
+            level = "extraction_failed"
+        elif not valid_calc:
+            level = "needs_review_numeric"
+        else:
+            level = "needs_review_numeric"
+    elif not all_fields_present:
+        if total > 0 and (qty == 0 or up == 0):
+            level = "needs_review_numeric"
+        else:
+            level = "extraction_failed"
+    elif not valid_calc:
+        level = "needs_review_numeric"
     elif score >= 85:
         level = "trusted"
     else:
-        level = "unverified"
+        level = "needs_review_light"
 
     item["valid_calc"] = valid_calc
     item["validation_errors"] = errors
@@ -1433,21 +1461,32 @@ def validate_and_score_item(item: dict) -> dict:
 
     # Human-readable primary reason
     if level == "trusted":
-        item["confidence_reason"] = "All checks passed"
-    elif not valid_calc and qty > 0 and up > 0 and total > 0:
-        item["confidence_reason"] = "Math mismatch (qty × price ≠ total)"
-    elif not raw_name:
-        item["confidence_reason"] = "Missing item name"
-    elif has_pack and pack_status == "failed" and not valid_calc:
-        item["confidence_reason"] = "Pack size could not be parsed"
-    elif sus_flags:
-        item["confidence_reason"] = "Suspicious values detected"
-    elif missing:
-        item["confidence_reason"] = f"Missing fields: {', '.join(missing)}"
+        item["confidence_reason"] = "All gates passed"
+    elif level == "extraction_failed":
+        if not raw_name:
+            item["confidence_reason"] = "Missing item name — extraction failure"
+        else:
+            item["confidence_reason"] = "Critical fields missing — extraction failure"
+    elif level == "needs_review_numeric":
+        if not valid_calc and qty > 0 and up > 0 and total > 0:
+            item["confidence_reason"] = "Math mismatch (qty × price ≠ total)"
+        elif missing:
+            item["confidence_reason"] = f"Missing numeric fields: {', '.join(missing)}"
+        elif sus_flags:
+            item["confidence_reason"] = "Suspicious numeric values"
+        else:
+            item["confidence_reason"] = "Numeric validation failed"
+    elif level == "needs_review_light":
+        if has_pack and pack_status == "failed":
+            item["confidence_reason"] = "Pack format unrecognized (math OK)"
+        else:
+            item["confidence_reason"] = "Minor quality issues (math OK)"
+    elif level == "vendor_unsupported":
+        item["confidence_reason"] = "Vendor not yet fully supported"
     else:
-        item["confidence_reason"] = "Needs review"
+        item["confidence_reason"] = "Review required"
 
-    # Explicit review markers for "save now, review later"
+    # needs_review: true for anything except trusted
     item["needs_review"] = level != "trusted"
     item["review_reason"] = item["confidence_reason"] if level != "trusted" else None
 

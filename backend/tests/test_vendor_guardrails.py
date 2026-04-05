@@ -31,14 +31,14 @@ class TestSyscoOperationalGuardrails:
     """Sysco guardrails: group text, missing qty, math validation."""
 
     def test_group_text_flagged(self):
-        """Items with 'GROUP TOTAL' or 'SUBTOTAL' text → needs_review."""
+        """Items with 'GROUP TOTAL' or 'SUBTOTAL' text → extraction_failed."""
         items = [
             {"raw_name": "PAPA GROUP TOTAL DISP", "quantity": 2, "unit_price": 38.45,
              "total": 76.90, "confidence_level": "trusted", "validation_errors": []},
         ]
         _validate_sysco_extraction(items)
         assert items[0]["needs_review"] is True
-        assert items[0]["confidence_level"] == "review"
+        assert items[0]["confidence_level"] == "extraction_failed"
         assert any("group_text" in e for e in items[0]["validation_errors"])
 
     def test_subtotal_text_flagged(self):
@@ -50,24 +50,26 @@ class TestSyscoOperationalGuardrails:
         assert items[0]["needs_review"] is True
 
     def test_missing_qty_flagged(self):
-        """qty=0 with total>0 → needs_review."""
+        """qty=0 with total>0 → needs_review_numeric."""
         items = [
             {"raw_name": "CONTAINER FOAM HNG", "quantity": 0, "unit_price": 13.50,
              "total": 326.04, "confidence_level": "trusted", "validation_errors": []},
         ]
         _validate_sysco_extraction(items)
         assert items[0]["needs_review"] is True
+        assert items[0]["confidence_level"] == "needs_review_numeric"
         assert any("missing_qty" in e for e in items[0]["validation_errors"])
 
     def test_math_mismatch_flagged(self):
-        """qty × price ≠ total by >10% → needs_review."""
+        """qty × price ≠ total by >2% → needs_review_numeric."""
         items = [
             {"raw_name": "CHICKEN BREAST", "quantity": 5, "unit_price": 10.00,
              "total": 80.00, "confidence_level": "trusted", "validation_errors": []},
         ]
         _validate_sysco_extraction(items)
-        # 5×10=50 vs 80 → 37.5% off → needs_review
+        # 5×10=50 vs 80 → 37.5% off → needs_review_numeric
         assert items[0]["needs_review"] is True
+        assert items[0]["confidence_level"] == "needs_review_numeric"
         assert any("math_mismatch" in e for e in items[0]["validation_errors"])
 
     def test_correct_math_passes(self):
@@ -88,17 +90,17 @@ class TestSyscoOperationalGuardrails:
         ]
         _validate_sysco_extraction(items)
         assert items[0].get("row_type") == "service"
-        assert items[0].get("vendor_status") == "operational"
+        assert items[0].get("vendor_status") == "controlled_operational"
 
     def test_normal_product_passes(self):
-        """Normal product with correct math → trusted + operational."""
+        """Normal product with correct math → trusted + controlled_operational."""
         items = [
             {"raw_name": "KETCHUP PACKET FOIL", "quantity": 2, "unit_price": 18.95,
              "total": 37.90, "confidence_level": "trusted", "validation_errors": []},
         ]
         _validate_sysco_extraction(items)
         assert items[0].get("confidence_level") == "trusted"
-        assert items[0].get("vendor_status") == "operational"
+        assert items[0].get("vendor_status") == "controlled_operational"
 
     def test_asterisk_header_flagged(self):
         """Row with *** → group header text, flagged."""

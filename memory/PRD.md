@@ -32,7 +32,26 @@ Endpoints:
 - `POST /api/metrics/invoice-lifecycle` — Log per-invoice lifecycle data
 - `GET /api/metrics/invoice-summary` — Aggregated stats for internal analysis
 
-## Guardrails
+## Strict Decision Gate (Deterministic)
+
+No row becomes "trusted" unless ALL conditions pass:
+1. qty from defined column (qty > 0)
+2. unit_price from defined column (price > 0)
+3. total from defined column (total > 0)
+4. item name present
+5. math validated (qty × price ≈ total within 2% or $0.50)
+6. no hard failures
+7. subtotal validates (items sum within 5% of declared total)
+
+## Review Status Taxonomy
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| `trusted` | All gates passed, no ambiguity | Auto-accepted |
+| `needs_review_light` | Minor issues (pack format, name quality) but math OK | User review recommended |
+| `needs_review_numeric` | Math mismatch or missing qty/price/total | User review required |
+| `extraction_failed` | Critical fields missing or garbled | Manual entry needed |
+| `vendor_unsupported` | Vendor not yet fully supported (PFG, US Foods) | Manual entry needed |
 
 ### Sysco (Controlled Operational — Guarded Mode)
 Usable for real-world testing. NOT fully trusted. Validation gates all output.

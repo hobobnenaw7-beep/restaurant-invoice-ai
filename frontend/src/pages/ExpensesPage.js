@@ -121,10 +121,10 @@ function revalidateItem(item) {
   if (qty > 0 && up > 0 && qty === up) { hardFail = true; errors.push('qty equals price — suspicious'); }
 
   score = Math.max(0, Math.min(100, score));
-  const level = hardFail ? 'unverified' : score >= 85 ? 'trusted' : 'unverified';
+  const level = hardFail ? 'extraction_failed' : score >= 85 ? 'trusted' : (item.valid_calc === false ? 'needs_review_numeric' : 'needs_review_light');
 
   let reason;
-  if (level === 'trusted') reason = 'All checks passed';
+  if (level === 'trusted') reason = 'All gates passed';
   else if (!validCalc && qty > 0 && up > 0 && total > 0) reason = 'Math mismatch (qty × price ≠ total)';
   else if (!name) reason = 'Missing item name';
   else if (packRaw && packStatus === 'failed') reason = 'Pack size could not be parsed';
@@ -834,8 +834,8 @@ function RawMaterialsTab({ api }) {
                 const cl = item.confidence_level;
                 const isUncertain = (item.needs_review || (cl && cl !== 'trusted')) && !item._reviewed;
                 const isTrusted = (!item.needs_review && cl === 'trusted') || item._reviewed;
-                const confidenceDot = isTrusted ? 'bg-emerald-500' : cl === 'unverified' ? 'bg-amber-500' : 'bg-slate-300';
-                const confidenceTitle = item._reviewed ? 'Confirmed by user' : cl === 'trusted' ? 'Trusted — auto-verified' : cl === 'unverified' ? 'Unverified — needs review' : '';
+                const confidenceDot = isTrusted ? 'bg-emerald-500' : cl === 'extraction_failed' ? 'bg-red-500' : cl === 'needs_review_numeric' ? 'bg-amber-500' : cl === 'vendor_unsupported' ? 'bg-slate-400' : cl === 'needs_review_light' ? 'bg-yellow-400' : 'bg-amber-500';
+                const confidenceTitle = item._reviewed ? 'Confirmed by user' : cl === 'trusted' ? 'Trusted — all gates passed' : cl === 'needs_review_numeric' ? 'Numeric issue — math or field mismatch' : cl === 'extraction_failed' ? 'Extraction failed — critical fields missing' : cl === 'vendor_unsupported' ? 'Vendor not yet fully supported' : cl === 'needs_review_light' ? 'Minor issue — math OK' : '';
                 const rowBorder = item._fixing ? 'border-blue-300 bg-blue-50/40 ring-1 ring-blue-200' : isUncertain ? 'border-amber-200 bg-amber-50/40' : item._reviewed ? 'bg-emerald-50/30 border border-emerald-200' : item._warning ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50';
                 const fixHighlight = item._fixing ? 'ring-1 ring-blue-300 border-blue-300' : '';
                 const issue = isUncertain ? classifyIssue(item) : null;
