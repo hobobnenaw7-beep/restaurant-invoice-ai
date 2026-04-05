@@ -60,7 +60,7 @@ function DeltaBadge({ delta }) {
   return null;
 }
 
-export default function InvoiceReviewDialog({ purchase, open, onClose, api, onUpdate }) {
+export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, api, onUpdate }) {
   const [items, setItems] = useState([]);
   const [editingRow, setEditingRow] = useState(null);
   const [editValues, setEditValues] = useState({});
@@ -86,8 +86,9 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, api, onUp
     if (open && purchase?.id) {
       sessionStart.current = Date.now();
       editsInSession.current = 0;
+      if (onOpen) onOpen();
     }
-  }, [open, purchase?.id]);
+  }, [open, purchase?.id, onOpen]);
 
   const loadHistory = useCallback(async () => {
     if (!purchase?.id) return;

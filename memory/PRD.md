@@ -6,106 +6,92 @@ Build a robust, rule-based Invoice Review and Correction Pipeline for restaurant
 ## Architecture
 - **Frontend**: React + Shadcn/UI
 - **Backend**: FastAPI + MongoDB
-- **OCR**: Tesseract + OpenCV (proven unreliable on camera photos AND scanned PDFs)
+- **OCR**: Tesseract + OpenCV (proven unreliable — kept only for synthetic tests)
 - **LLM**: OpenAI GPT-5.2 via Emergent LLM Key (primary extraction — vision-based)
 - **Validation**: Deterministic rule-based pipeline (system-enforced, no LLM math)
 
-## Vendor Operational Status
+## Vendor-Separated Pipeline Strategy
 
-| Vendor | Status | Input Format | Key Limitation |
-|--------|--------|-------------|----------------|
-| **Sysco** | **CONTROLLED OPERATIONAL** (guarded mode) | Scanned PDF preferred | Subtotal mismatches, occasional unreadable qty, row misclassification — all gated by validation guardrails |
-| **PFG** | **LIMITED** (all items → needs_review) | Scanned PDF | $/LB and EXT PRICE columns cannot be separated — dedicated phase needed |
-| **US Foods** | **NOT STARTED** | — | Separate extraction/OCR problem, parked for future phase |
+**Three separate failure classes. Do NOT treat as one pipeline problem.**
 
-## Critical Findings (Spike Testing)
+| Vendor | Failure Class | Status | Input | Next Phase |
+|--------|--------------|--------|-------|------------|
+| **Sysco** | Refinement/Validation | **Controlled Operational** (guarded, scanned only) | Scanned PDF | Operational testing with usability metrics |
+| **PFG** | Column Separation | **Limited Mode** (all items → needs_review) | Any | Dedicated PFG Column Separation Phase |
+| **US Foods** | Extraction/Reading | **Parked** | — | Dedicated extraction phase later |
 
-### Tesseract OCR — Proven Unusable
-- Camera photos: complete garbage output for ALL vendors
-- Scanned PDFs: also garbage output (PFG colored backgrounds, Sysco dense layout)
-- **Decision: Tesseract is NOT a viable reading layer for these invoice formats**
+## Usability Metrics (Silent Collection)
 
-### GPT-5.2 Vision — Primary Reading Layer
-- Can read invoice text reliably from both camera photos and scans
-- **Limitation 1**: Non-deterministic — same image gives different numeric values across runs (camera photos only; stable on scans)
-- **Limitation 2**: Cannot separate PFG's $/LB and EXT PRICE columns (too close together)
-- **Scanned input stabilizes Sysco** — ketchup price stable at $18.95, math validates
+4 dimensions tracked per invoice — no user-facing UI:
+1. **Time saved** — upload-to-save vs 5-min manual baseline (configurable)
+2. **Review burden** — trusted vs needs_review vs manually corrected
+3. **Error detection value** — system-flagged items: confirmed vs overridden
+4. **User friction** — edits count, fields corrected, review time
 
-### Architecture Validation
-The hybrid approach (GPT reads → system enforces) is structurally sound:
-- Group header filtering: works
-- Row classification (product/service): works
-- qty from SHIP column (PFG): works
-- Math validation (qty × price ≈ total): works
-- Subtotal-level validation: works
+Endpoints:
+- `POST /api/metrics/invoice-lifecycle` — Log per-invoice lifecycle data
+- `GET /api/metrics/invoice-summary` — Aggregated stats for internal analysis
 
-## Guardrails Implemented
+## Guardrails
 
 ### Sysco (Controlled Operational — Guarded Mode)
-Usable in real-world testing but NOT fully trusted. Validation gates all output.
-1. Group total / subtotal text in item name → needs_review (never becomes product)
+Usable for real-world testing. NOT fully trusted. Validation gates all output.
+1. Group total / subtotal text in item name → needs_review
 2. Missing or unreadable qty (qty=0 with total>0) → needs_review
 3. Math validation: qty × price ≠ total by >10% → needs_review
 4. Service row classification (fuel surcharge, delivery)
 5. Subtotal mismatch >5% → ALL items downgraded to review
-6. Any invoice with subtotal mismatch, unreadable fields, or misclassification → partial or full needs_review
 
 ### PFG (Limited Mode)
-1. ALL items → needs_review with explanation: "$/LB and EXT PRICE cannot be reliably separated"
-2. All-qty-1 detection (SHIP column missed)
-3. Pack-in-name leakage detection
-4. Weight-as-qty detection (qty > 100)
-5. Service row classification
+1. ALL items → needs_review: "$/LB and EXT PRICE cannot be reliably separated"
+2. All-qty-1 detection, pack-in-name, weight-as-qty, service rows
+
+## Critical Findings (Spike Testing V1-V3)
+
+- Tesseract OCR: unusable on both camera photos AND scanned PDFs
+- GPT-5.2 Vision: primary reading layer, stable on scanned Sysco, unstable on PFG column separation
+- Hybrid architecture (GPT reads → system enforces): structurally sound
 
 ## Code Structure
 ```
 /app/backend/
 ├── routes/
-│   ├── upload.py           (Pipeline, vendor prompts, PFG/Sysco post-validation)
-│   ├── purchases.py        (PATCH for inline edits)
-│   ├── metrics.py          (Usability metrics)
+│   ├── upload.py               (Pipeline, vendor prompts, PFG/Sysco post-validation)
+│   ├── purchases.py            (PATCH for inline edits)
+│   ├── metrics.py              (Legacy review session tracking)
+│   ├── usability_metrics.py    (4-dimension silent lifecycle tracking)
 ├── services/
-│   ├── layout_parser.py    (OCR extraction — proven unreliable, kept as validation layer)
-│   ├── semantic_validator.py (Row classification, trust levels, vendor patterns)
-├── preprocessing.py        (Pack parsing, item validation, score computation)
+│   ├── layout_parser.py        (OCR extraction — kept for synthetic tests)
+│   ├── semantic_validator.py   (Row classification, trust levels, vendor patterns)
+├── preprocessing.py            (Pack parsing, item validation, score computation)
 ├── tests/
-│   ├── test_pfg_parser.py           (18 tests — layout parser safeguards)
-│   ├── test_sysco_validation.py     (32 tests — semantic validator)
-│   ├── test_sysco_preprocessing.py  (12 tests — preprocessing)
-│   ├── test_pfg_post_extraction.py  (7 tests — LLM output validation)
-│   ├── test_vendor_guardrails.py    (9 tests — operational guardrails)
-│   ├── spike_hybrid.py             (Spike V1 — camera photos)
-│   ├── spike_hybrid_v2.py          (Spike V2 — camera photos with read-only prompt)
-│   ├── spike_hybrid_v3.py          (Spike V3 — scanned PDFs)
+│   ├── test_pfg_parser.py           (18 tests)
+│   ├── test_sysco_validation.py     (32 tests)
+│   ├── test_sysco_preprocessing.py  (12 tests)
+│   ├── test_pfg_post_extraction.py  (7 tests)
+│   ├── test_vendor_guardrails.py    (9 tests)
+│   ├── spike_hybrid*.py            (Spike V1-V3 evidence)
 ```
 
-## Testing Status
-- **78 backend tests**: ALL PASS, zero regressions
-- **Spike tests**: V1-V3 completed, evidence documented
-- **Testing agent iterations**: 73-75 (100% pass rate)
-
-## Key API Endpoints
-- `POST /api/upload/extract` — Extract invoice data (vendor-specific prompts + guardrails)
-- `PATCH /api/purchases/{id}/items/{index}` — Inline edits with revalidation
-- `POST /api/metrics/session` — Usability tracking
+## Testing: 78/78 backend tests pass
 
 ## Prioritized Backlog
 
-### P0 — Next Phase
-- **PFG Column Separation Phase**: Dedicated approach to separate $/LB and EXT PRICE columns. Options: column-region cropping, multi-pass extraction, or structured table prompt.
-- **Scanned input workflow**: UI guidance to prefer scanned PDFs over camera photos.
+### P0 — Immediate
+- Sysco operational testing with scanned invoices + usability metrics collection
+
+### P0 — Next Dedicated Phase
+- PFG Column Separation Phase ($/LB vs EXT PRICE separation)
 
 ### P1
-- US Foods dedicated extraction/OCR recovery phase
-- Document Capture / Scan Mode (auto-edge detection, crop, perspective correction)
+- US Foods dedicated extraction phase
+- Document Capture / Scan Mode
 - Vendor comparison with loose match keys
 
 ### P2
-- AI Chat Assistant Page Polish
-- OCR/Image Upload for Salaries tab
-- Client-side pack size preview
-- bcrypt attribute error (parked)
-- pytest suite failures (parked)
+- AI Chat Assistant Polish
+- Salaries OCR, pack size preview
+- bcrypt / pytest fixes (parked)
 
 ## Credentials
 - Demo: demo@test.com / testpassword

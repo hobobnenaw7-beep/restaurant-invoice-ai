@@ -29,6 +29,31 @@ import InvoiceReviewDialog from '@/components/InvoiceReviewDialog';
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
 function nextKey() { return `k${++_keySeq}_${Date.now()}`; }
+
+// ── Silent usability metrics tracking ──
+const _lifecycle = {
+  uploadStartMs: null,
+  extractionCompleteMs: null,
+  reviewOpenMs: null,
+  reviewCloseMs: null,
+  saveMs: null,
+  fieldsEdited: new Set(),
+  editsCount: 0,
+  initialFlaggedItems: [],
+  editedItemIndices: new Set(),
+};
+
+function resetLifecycle() {
+  _lifecycle.uploadStartMs = null;
+  _lifecycle.extractionCompleteMs = null;
+  _lifecycle.reviewOpenMs = null;
+  _lifecycle.reviewCloseMs = null;
+  _lifecycle.saveMs = null;
+  _lifecycle.fieldsEdited = new Set();
+  _lifecycle.editsCount = 0;
+  _lifecycle.initialFlaggedItems = [];
+  _lifecycle.editedItemIndices = new Set();
+}
 function mkItem(raw_name = '', quantity = 1, pack_size = '', unit_price = 0, total = 0, pack_unit = null, total_case_weight = null, normalized_price_per_lb = null, pack_parse_status = null, warning = false, warning_detail = '', confidence_score = null, confidence_level = null, validation_errors = [], valid_calc = null, _reviewed = false, confidence_reason = null, needs_review = false, review_reason = null, suggested_fix = null) {
   return { _key: nextKey(), raw_name, quantity, pack_size, unit_price, total, pack_unit, total_case_weight, normalized_price_per_lb, pack_parse_status, _warning: warning, _warning_detail: warning_detail, confidence_score, confidence_level, validation_errors, valid_calc, _reviewed, confidence_reason, needs_review, review_reason, suggested_fix, _fixing: false, _suggestionDismissed: false };
 }
@@ -342,7 +367,7 @@ function RawMaterialsTab({ api }) {
     const subtotal = round2(lineItems.reduce((s, it) => s + (parseFloat(it.total) || 0), 0));
     return { subtotal, total: round2(subtotal + (parseFloat(tax) || 0)) };
   };
-  const updateItem = (idx, k, v) => { setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') { it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); it[idx]._warning = false; it[idx]._warning_detail = ''; } const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
+  const updateItem = (idx, k, v) => { _lifecycle.editsCount++; _lifecycle.fieldsEdited.add(k); _lifecycle.editedItemIndices.add(idx); setForm(f => { const it = [...f.items]; it[idx] = { ...it[idx], [k]: v }; if (k === 'quantity' || k === 'unit_price') { it[idx].total = round2(parseFloat(it[idx].quantity || 0) * parseFloat(it[idx].unit_price || 0)); it[idx]._warning = false; it[idx]._warning_detail = ''; } const totals = recalcTotals(it, f.tax); return { ...f, items: it, ...totals }; }); };
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, mkItem()] }));
 
   const openAdd = () => {
@@ -422,6 +447,8 @@ function RawMaterialsTab({ api }) {
     if (!uploadFiles.length || extractingRef.current) return;
     extractingRef.current = true;
     setExtracting(true);
+    resetLifecycle();
+    _lifecycle.uploadStartMs = Date.now();
     try {
       const fd = new FormData();
       // Send all files under 'files' key for multi-image, or 'file' for single+excel
@@ -433,6 +460,7 @@ function RawMaterialsTab({ api }) {
       fd.append('document_type', 'purchase_invoice');
       const ep = (uploadFiles.length === 1 && isExcelFile(uploadFiles[0])) ? '/upload/parse-excel' : '/upload/extract';
       const res = await api.post(ep, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 90000 });
+      _lifecycle.extractionCompleteMs = Date.now();
       const d = res.data?.extracted_data || {};
       const items = Array.isArray(d.items) ? d.items : [];
       const hasWarnings = d._has_warnings || false;
@@ -454,6 +482,10 @@ function RawMaterialsTab({ api }) {
       });
       // Check for items that need review
       const uncertainCount = items.filter(it => it.needs_review || ((it.confidence_level || 'trusted') !== 'trusted')).length;
+      _lifecycle.initialFlaggedItems = items.map((it, idx) => ({
+        idx, needsReview: !!it.needs_review,
+        confidenceLevel: it.confidence_level || 'trusted',
+      })).filter(x => x.needsReview || x.confidenceLevel !== 'trusted');
       if (uncertainCount > 0) {
         toast.warning(`${uncertainCount} item${uncertainCount > 1 ? 's' : ''} need${uncertainCount === 1 ? 's' : ''} review — check highlighted rows`);
         setReviewMode(true);
@@ -514,6 +546,40 @@ function RawMaterialsTab({ api }) {
             });
           } catch { /* silent — learning failure shouldn't block save */ }
         }
+
+        // ── Silent usability metrics ──
+        try {
+          _lifecycle.saveMs = Date.now();
+          const allItems = form.items || [];
+          const trustedItems = allItems.filter(it => (it.confidence_level || 'trusted') === 'trusted' && !it.needs_review);
+          const reviewItems = allItems.filter(it => it.needs_review || (it.confidence_level && it.confidence_level !== 'trusted'));
+          const flaggedCount = _lifecycle.initialFlaggedItems.length;
+          const editedFlagged = _lifecycle.initialFlaggedItems.filter(f => _lifecycle.editedItemIndices.has(f.idx));
+          const overrodeFlagged = flaggedCount - editedFlagged.length;
+          await api.post('/metrics/invoice-lifecycle', {
+            purchase_id: res?.data?.id || editingId || null,
+            supplier_name: form.supplier_name || '',
+            vendor_status: allItems[0]?.vendor_status || 'unknown',
+            upload_start_ms: _lifecycle.uploadStartMs,
+            extraction_complete_ms: _lifecycle.extractionCompleteMs,
+            review_open_ms: _lifecycle.reviewOpenMs,
+            review_close_ms: _lifecycle.reviewCloseMs,
+            save_ms: _lifecycle.saveMs,
+            total_items: allItems.length,
+            trusted_items: trustedItems.length,
+            needs_review_items: reviewItems.length,
+            manually_edited_items: _lifecycle.editedItemIndices.size,
+            system_flagged_count: flaggedCount,
+            user_confirmed_flags: editedFlagged.length,
+            user_overrode_flags: overrodeFlagged > 0 ? overrodeFlagged : 0,
+            edits_count: _lifecycle.editsCount,
+            fields_corrected: [..._lifecycle.fieldsEdited],
+            input_format: uploadFiles.length > 0 ? (uploadFiles[0].name?.split('.').pop() || 'unknown') : 'manual',
+            page_count: uploadFiles.length || 1,
+            document_type: form.document_type || 'purchase_invoice',
+          });
+        } catch { /* silent — metrics failure should never block save */ }
+        resetLifecycle();
         setShowAdd(false);
         setReceiptId(null); setParsingMethod(null);
         load(true);
@@ -630,7 +696,11 @@ function RawMaterialsTab({ api }) {
       <InvoiceReviewDialog
         purchase={selected}
         open={!!selected}
-        onClose={() => setSelected(null)}
+        onClose={() => {
+          _lifecycle.reviewCloseMs = Date.now();
+          setSelected(null);
+        }}
+        onOpen={() => { _lifecycle.reviewOpenMs = Date.now(); }}
         api={api}
         onUpdate={() => load(false)}
       />
