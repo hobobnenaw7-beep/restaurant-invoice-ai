@@ -1,6 +1,7 @@
 """
 Image preprocessing and multi-page classification for invoice extraction.
 Phase 1: Orientation fix, deskew, enhancement, standardization.
+Phase 2: Scan Mode — always-on document edge detection + perspective correction.
 """
 import base64
 import io
@@ -9,6 +10,7 @@ import re
 import logging
 import uuid
 import numpy as np
+import cv2
 from PIL import Image, ImageOps, ImageFilter, ImageEnhance
 
 logger = logging.getLogger(__name__)
@@ -21,23 +23,30 @@ logger = logging.getLogger(__name__)
 def preprocess_image(image_bytes: bytes) -> bytes:
     """
     Full preprocessing pipeline for invoice images.
+    Scan Mode is ALWAYS ON.
     Steps:
+      0. Scan Mode — detect document edges, perspective correct (camera photos)
       1. EXIF auto-rotate (camera orientation metadata)
       2. Orientation detection & correction (90/180/270° via Tesseract OSD)
       3. Deskew (straighten slight angle skew)
-      4. Enhancement (contrast, noise, sharpness)
-      5. Standardization (consistent brightness/contrast)
+      4. Enhancement (auto-contrast, noise reduction, sharpness)
+      5. Crop empty margins
     Returns processed PNG bytes. Falls back to original on ANY error.
     """
     try:
         img = Image.open(io.BytesIO(image_bytes))
 
-        # 1. Auto-rotate from EXIF (fixes phone-camera orientation)
+        # 0. EXIF auto-rotate first (so scan mode works on correct orientation)
         img = ImageOps.exif_transpose(img)
 
-        # 2. Convert to RGB
+        # 1. Convert to RGB
         if img.mode != "RGB":
             img = img.convert("RGB")
+
+        # 2. Scan Mode — always ON
+        #    Detects document edges in camera photos and applies perspective correction.
+        #    No-op for clean scans (already full-frame document).
+        img = _scan_mode_detect_and_correct(img)
 
         # 3. Detect and fix 90/180/270° rotation
         img = _fix_orientation(img)
@@ -48,7 +57,7 @@ def preprocess_image(image_bytes: bytes) -> bytes:
         # 5. Crop empty margins
         img = _crop_margins(img)
 
-        # 6. Enhancement pipeline
+        # 6. Enhancement pipeline (auto-contrast, noise, sharpness)
         img = _enhance_image(img)
 
         buf = io.BytesIO()
@@ -62,6 +71,288 @@ def preprocess_image(image_bytes: bytes) -> bytes:
     except Exception as e:
         logger.warning(f"Image preprocessing failed, using original: {e}")
         return image_bytes
+
+
+# ---------------------------------------------------------------------------
+# 0. Scan Mode — Document Edge Detection & Perspective Correction
+# ---------------------------------------------------------------------------
+
+def _scan_mode_detect_and_correct(img: Image.Image) -> Image.Image:
+    """
+    Always-on scan mode. Detects if image is a camera photo of a document
+    and applies edge detection + perspective correction.
+
+    Strategy:
+      1. Check if image needs scan mode (has non-white borders = camera photo)
+      2. Find document contour using Canny edges + contour detection
+      3. If a valid quadrilateral found, apply 4-point perspective transform
+      4. If not found, return original (no-op for clean scans)
+    """
+    try:
+        arr = np.array(img)
+        h, w = arr.shape[:2]
+
+        # Skip very small images — not worth processing
+        if h < 200 or w < 200:
+            return img
+
+        # Step 1: Check if this looks like a camera photo
+        #   Camera photos have non-white borders (desk, table, background)
+        #   Clean scans are nearly all white at the edges
+        if not _image_needs_scan_mode(arr):
+            logger.info("Scan mode: clean scan detected, skipping edge detection")
+            return img
+
+        logger.info("Scan mode: camera photo detected, attempting edge detection")
+
+        # Step 2: Find document contour
+        doc_contour = _find_document_contour(arr)
+
+        if doc_contour is None:
+            logger.info("Scan mode: no document contour found, using adaptive crop")
+            # Fallback: adaptive contrast + tighter crop for camera photos
+            return _camera_photo_enhance(img)
+
+        # Step 3: Apply perspective correction
+        corrected = _apply_perspective_transform(arr, doc_contour)
+        if corrected is not None:
+            result = Image.fromarray(corrected)
+            logger.info(
+                f"Scan mode: perspective corrected "
+                f"({w}x{h} → {result.size[0]}x{result.size[1]})"
+            )
+            return result
+
+        logger.info("Scan mode: perspective transform failed, using adaptive crop")
+        return _camera_photo_enhance(img)
+
+    except Exception as e:
+        logger.warning(f"Scan mode failed (non-fatal): {e}")
+        return img
+
+
+def _image_needs_scan_mode(arr: np.ndarray) -> bool:
+    """
+    Detect if an image is a camera photo (needs scan mode) vs a clean scan.
+
+    Camera photos: non-white borders, visible desk/table/background.
+    Clean scans: white/near-white at edges, document fills the frame.
+
+    Checks border strips (top/bottom/left/right 5% of image).
+    If average border brightness < 200 (not white), it's likely a camera photo.
+    """
+    h, w = arr.shape[:2]
+    strip = max(int(min(h, w) * 0.05), 10)
+
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY) if len(arr.shape) == 3 else arr
+
+    # Sample border strips
+    borders = [
+        gray[:strip, :],          # top
+        gray[h - strip:, :],      # bottom
+        gray[:, :strip],          # left
+        gray[:, w - strip:],      # right
+    ]
+
+    border_means = [float(np.mean(b)) for b in borders]
+    avg_border = sum(border_means) / len(border_means)
+
+    # Count how many borders are dark (non-white)
+    dark_borders = sum(1 for m in border_means if m < 200)
+
+    # If average border is dark OR 2+ borders are dark → camera photo
+    if avg_border < 190 or dark_borders >= 2:
+        logger.info(
+            f"Scan mode check: border brightness={avg_border:.0f}, "
+            f"dark_borders={dark_borders}/4 → camera photo"
+        )
+        return True
+
+    return False
+
+
+def _find_document_contour(arr: np.ndarray) -> np.ndarray | None:
+    """
+    Find the largest quadrilateral contour that represents the document.
+    Uses Canny edge detection + contour approximation.
+
+    Returns a 4-point contour (numpy array shape (4,2)) or None.
+    """
+    h, w = arr.shape[:2]
+    img_area = h * w
+
+    # Convert to grayscale
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+
+    # Reduce noise
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # Try multiple Canny thresholds (adaptive)
+    for low_t, high_t in [(30, 100), (50, 150), (20, 80)]:
+        edges = cv2.Canny(blurred, low_t, high_t)
+
+        # Dilate to close gaps in edges
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        edges = cv2.dilate(edges, kernel, iterations=2)
+
+        # Find contours
+        contours, _ = cv2.findContours(
+            edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        if not contours:
+            continue
+
+        # Sort by area, largest first
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+        for contour in contours[:5]:  # Check top 5 largest
+            area = cv2.contourArea(contour)
+
+            # Document must be at least 15% of image area
+            if area < img_area * 0.15:
+                continue
+
+            # Approximate contour to polygon
+            peri = cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+
+            # We want a quadrilateral (4 points)
+            if len(approx) == 4:
+                # Verify it's roughly rectangular (angles close to 90°)
+                if _is_valid_quad(approx.reshape(4, 2), w, h):
+                    logger.info(
+                        f"Scan mode: found document contour "
+                        f"(area={area/img_area:.0%} of image, "
+                        f"canny={low_t}/{high_t})"
+                    )
+                    return approx.reshape(4, 2)
+
+    return None
+
+
+def _is_valid_quad(pts: np.ndarray, img_w: int, img_h: int) -> bool:
+    """
+    Validate that a 4-point contour is a reasonable document rectangle.
+
+    Checks:
+    - Not too small (> 15% of image area)
+    - Not too large (< 98% of image — that's just the full image)
+    - Aspect ratio is reasonable for a document (not a thin strip)
+    """
+    # Bounding rect area
+    x, y, bw, bh = cv2.boundingRect(pts.astype(np.int32))
+    bound_area = bw * bh
+    img_area = img_w * img_h
+
+    if bound_area < img_area * 0.15:
+        return False
+    if bound_area > img_area * 0.98:
+        return False
+
+    # Aspect ratio check — documents are typically 1:1.2 to 1:2
+    aspect = max(bw, bh) / max(min(bw, bh), 1)
+    if aspect > 4.0:  # Too elongated — probably not a document
+        return False
+
+    return True
+
+
+def _order_points(pts: np.ndarray) -> np.ndarray:
+    """
+    Order 4 points as: top-left, top-right, bottom-right, bottom-left.
+    Required for consistent perspective transform.
+    """
+    rect = np.zeros((4, 2), dtype=np.float32)
+
+    # Sum: top-left has smallest sum, bottom-right has largest
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
+
+    # Diff: top-right has smallest diff, bottom-left has largest
+    d = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(d)]
+    rect[3] = pts[np.argmax(d)]
+
+    return rect
+
+
+def _apply_perspective_transform(
+    arr: np.ndarray, contour: np.ndarray
+) -> np.ndarray | None:
+    """
+    Apply 4-point perspective transform to extract the document region
+    as a flat, front-facing rectangle.
+    """
+    try:
+        rect = _order_points(contour.astype(np.float32))
+        tl, tr, br, bl = rect
+
+        # Compute output dimensions
+        width_top = np.linalg.norm(tr - tl)
+        width_bot = np.linalg.norm(br - bl)
+        max_width = int(max(width_top, width_bot))
+
+        height_left = np.linalg.norm(bl - tl)
+        height_right = np.linalg.norm(br - tr)
+        max_height = int(max(height_left, height_right))
+
+        if max_width < 100 or max_height < 100:
+            return None
+
+        dst = np.array([
+            [0, 0],
+            [max_width - 1, 0],
+            [max_width - 1, max_height - 1],
+            [0, max_height - 1],
+        ], dtype=np.float32)
+
+        M = cv2.getPerspectiveTransform(rect, dst)
+        warped = cv2.warpPerspective(
+            arr, M, (max_width, max_height),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+
+        return warped
+
+    except Exception as e:
+        logger.warning(f"Perspective transform error: {e}")
+        return None
+
+
+def _camera_photo_enhance(img: Image.Image) -> Image.Image:
+    """
+    Fallback enhancement for camera photos when edge detection fails.
+    Applies stronger contrast + brightness normalization than standard pipeline.
+    """
+    try:
+        arr = np.array(img)
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        mean_brightness = float(np.mean(gray))
+
+        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        # on the luminance channel for better local contrast
+        lab = cv2.cvtColor(arr, cv2.COLOR_RGB2LAB)
+        l_channel = lab[:, :, 0]
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        lab[:, :, 0] = clahe.apply(l_channel)
+        enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+
+        # If very dark, boost brightness
+        if mean_brightness < 150:
+            enhanced = cv2.convertScaleAbs(enhanced, alpha=1.2, beta=30)
+
+        logger.info(
+            f"Scan mode fallback: CLAHE enhancement applied "
+            f"(brightness was {mean_brightness:.0f})"
+        )
+        return Image.fromarray(enhanced)
+
+    except Exception as e:
+        logger.warning(f"Camera photo enhance failed: {e}")
+        return img
 
 
 # ---------------------------------------------------------------------------

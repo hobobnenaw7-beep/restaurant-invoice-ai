@@ -82,32 +82,43 @@ Usable for real-world testing. NOT fully trusted. Validation gates all output.
 ├── services/
 │   ├── layout_parser.py        (OCR extraction — kept for synthetic tests)
 │   ├── semantic_validator.py   (Row classification, trust levels, vendor patterns)
-├── preprocessing.py            (Pack parsing, item validation, score computation)
+├── preprocessing.py            (Pack parsing, item validation, score computation, SCAN MODE)
 ├── tests/
 │   ├── test_pfg_parser.py           (18 tests)
 │   ├── test_sysco_validation.py     (32 tests)
 │   ├── test_sysco_preprocessing.py  (12 tests)
 │   ├── test_pfg_post_extraction.py  (7 tests)
 │   ├── test_vendor_guardrails.py    (9 tests)
+│   ├── test_scan_mode.py            (25 tests — edge detection, perspective, pipeline)
 │   ├── spike_hybrid*.py            (Spike V1-V3 evidence)
 ```
 
-## Testing: 78/78 backend tests pass
+## Scan Mode (Always ON — Feb 2026)
+Automatic image preprocessing for camera photos:
+1. **Edge detection**: OpenCV Canny + contour detection to find document boundaries
+2. **Perspective correction**: 4-point transform to flatten angled photos
+3. **Camera photo detection**: Border brightness analysis (dark borders = camera photo)
+4. **Fallback**: CLAHE adaptive contrast for photos where edges can't be found
+5. **Clean scan passthrough**: No-op for scanned PDFs (already full-frame)
+Pipeline: Scan Mode → EXIF rotate → Orientation fix → Deskew → Crop margins → Enhancement
+
+## Testing: 103/103 backend tests pass (78 existing + 25 scan mode)
 
 ## Prioritized Backlog
 
 ### P0 — Immediate
-- Sysco operational testing with scanned invoices + usability metrics collection
+- Real-world Sysco testing (20-30 invoices)
+- Success criteria: ≥70% fully trusted invoices, ≥85% trusted rows, <2 min correction time
+- Identify top 3 failure patterns from real usage → fix those
 
 ### P0 — Next Dedicated Phase
 - PFG Column Separation Phase ($/LB vs EXT PRICE separation)
 
 ### P1
 - US Foods dedicated extraction phase
-- Document Capture / Scan Mode
 - Vendor comparison with loose match keys
 
-### P2
+### P2 (Paused)
 - AI Chat Assistant Polish
 - Salaries OCR, pack size preview
 - bcrypt / pytest fixes (parked)
