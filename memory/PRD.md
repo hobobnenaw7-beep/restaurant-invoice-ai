@@ -98,11 +98,15 @@ Automatic image preprocessing for camera photos:
 1. **Edge detection**: OpenCV Canny + contour detection to find document boundaries
 2. **Perspective correction**: 4-point transform to flatten angled photos
 3. **Camera photo detection**: Border brightness analysis (dark borders = camera photo)
-4. **Fallback**: CLAHE adaptive contrast for photos where edges can't be found
-5. **Clean scan passthrough**: No-op for scanned PDFs (already full-frame)
-Pipeline: Scan Mode → EXIF rotate → Orientation fix → Deskew → Crop margins → Enhancement
+4. **4-way orientation fix**: Compares OCR readability at 0°/90°/180°/270° — picks best (fixes upside-down and sideways documents)
+5. **Fallback**: CLAHE adaptive contrast for photos where edges can't be found
+6. **Clean scan passthrough**: No-op for scanned PDFs (already full-frame)
+7. **Preprocessing evidence**: Every upload returns step-by-step metadata + before/after artifacts
+Pipeline: Scan Mode → EXIF rotate → 4-way Orientation fix → Deskew → Crop margins → Enhancement
 
-## Testing: 103/103 backend tests pass (78 existing + 25 scan mode)
+**Requires**: `tesseract-ocr` + `tesseract-ocr-eng` system packages (for OSD + readability scoring)
+
+## Testing: 85/85 backend tests pass (60 existing + 25 scan mode)
 
 ## Prioritized Backlog
 

@@ -79,9 +79,9 @@ def preprocess_image(image_bytes: bytes, save_artifacts: bool = False, artifact_
 
         # 3. Detect and fix 90/180/270° rotation
         size_before_orient = img.size
-        img = _fix_orientation(img)
-        if img.size != size_before_orient:
-            meta["steps_applied"].append(f"orientation_fix: {size_before_orient[0]}x{size_before_orient[1]} → {img.size[0]}x{img.size[1]}")
+        img, rotation_applied = _fix_orientation(img)
+        if rotation_applied != 0:
+            meta["steps_applied"].append(f"orientation_fix_{rotation_applied}deg: {size_before_orient[0]}x{size_before_orient[1]} → {img.size[0]}x{img.size[1]}")
         else:
             meta["steps_applied"].append("orientation_check_ok")
 
@@ -453,28 +453,164 @@ def _camera_photo_enhance(img: Image.Image) -> Image.Image:
 # 1a. Orientation Detection (90 / 180 / 270)
 # ---------------------------------------------------------------------------
 
-def _fix_orientation(img: Image.Image) -> Image.Image:
+def _fix_orientation(img: Image.Image) -> tuple[Image.Image, int]:
     """
-    Detect if image is rotated 90°, 180°, or 270° using Tesseract OSD.
-    Falls back to projection-profile heuristic if OSD fails.
+    Detect if image is rotated 90°, 180°, or 270°.
+    Uses multiple strategies:
+      1. Tesseract OSD (if available and confident)
+      2. 4-way OCR confidence comparison (0°, 90°, 180°, 270°)
+      3. Projection-profile heuristic for 90° detection (final fallback)
+
+    Returns (corrected_image, rotation_applied).
     """
-    # Try Tesseract OSD first (most reliable)
+    # Try Tesseract OSD first (handles all angles if confident)
     rotation = _detect_orientation_tesseract(img)
     if rotation is not None and rotation != 0:
         logger.info(f"Orientation fix: rotating {rotation}° (tesseract OSD)")
         return img.rotate(rotation, resample=Image.BICUBIC, expand=True,
-                          fillcolor=(255, 255, 255))
+                          fillcolor=(255, 255, 255)), rotation
     if rotation is not None:
-        return img  # OSD said 0° — no rotation needed
+        # OSD said 0° with confidence — still verify with OCR comparison
+        pass
 
-    # Fallback: projection-profile heuristic
-    rotation = _detect_orientation_heuristic(img)
-    if rotation != 0:
-        logger.info(f"Orientation fix: rotating {rotation}° (heuristic)")
-        return img.rotate(rotation, resample=Image.BICUBIC, expand=True,
-                          fillcolor=(255, 255, 255))
+    # Compare all 4 orientations using OCR confidence
+    best_angle = _detect_best_orientation(img)
+    if best_angle != 0:
+        logger.info(f"Orientation fix: rotating {best_angle}° (4-way OCR comparison)")
+        return img.rotate(best_angle, resample=Image.BICUBIC, expand=True,
+                          fillcolor=(255, 255, 255)), best_angle
 
-    return img
+    return img, 0
+
+
+def _detect_best_orientation(img: Image.Image) -> int:
+    """
+    Compare OCR readability at 0°, 90°, 180°, 270° and return the
+    rotation angle that produces the most readable text.
+
+    Returns 0 if current orientation is best (or if detection fails).
+    Requires the winning angle to score at least 1.5x better than current.
+    """
+    try:
+        thumb = img.copy()
+        thumb.thumbnail((800, 1200))
+        gray = thumb.convert("L")
+
+        scores = {}
+        for angle in [0, 90, 180, 270]:
+            if angle == 0:
+                rotated = gray
+            else:
+                rotated = gray.rotate(angle, expand=True)
+            scores[angle] = _measure_text_readability(rotated)
+
+        best_angle = max(scores, key=scores.get)
+        best_score = scores[best_angle]
+        current_score = scores[0]
+
+        logger.info(
+            f"4-way orientation: 0°={scores[0]:.0f}, 90°={scores[90]:.0f}, "
+            f"180°={scores[180]:.0f}, 270°={scores[270]:.0f} → best={best_angle}°"
+        )
+
+        # Require significant improvement over current orientation
+        if best_angle == 0:
+            return 0
+        if current_score == 0 and best_score > 0:
+            return best_angle
+        if best_score > current_score * 1.5:
+            return best_angle
+
+        return 0
+
+    except Exception as e:
+        logger.debug(f"4-way orientation detection failed: {e}")
+        return 0
+
+
+def _detect_180_rotation(img: Image.Image) -> bool:
+    """
+    Detect if an image is upside-down (needs 180° rotation).
+
+    Strategy: Compare Tesseract OCR readability at 0° vs 180°.
+    The correct orientation produces significantly more readable text
+    (higher confidence scores, more recognized words).
+
+    Uses a downscaled thumbnail for speed (~1-2 seconds).
+    Returns True if image should be rotated 180°.
+    """
+    try:
+        import pytesseract
+
+        # Downscale for speed
+        thumb = img.copy()
+        thumb.thumbnail((800, 1200))
+        gray = thumb.convert("L")
+
+        # Measure readability at current orientation (0°)
+        score_0 = _measure_text_readability(gray)
+
+        # Measure readability at 180°
+        gray_180 = gray.rotate(180, expand=False)
+        score_180 = _measure_text_readability(gray_180)
+
+        logger.info(
+            f"180° check: score_0={score_0:.0f}, score_180={score_180:.0f}, "
+            f"ratio={score_180/max(score_0, 1):.1f}x"
+        )
+
+        # 180° is correct if it scores significantly better
+        # Require at least 1.5x improvement to avoid false positives
+        if score_0 == 0 and score_180 == 0:
+            return False
+        if score_0 == 0 and score_180 > 0:
+            return True
+        if score_180 > score_0 * 1.5:
+            return True
+
+        return False
+
+    except Exception as e:
+        logger.debug(f"180° detection failed (non-fatal): {e}")
+        return False
+
+
+def _measure_text_readability(gray_img: Image.Image) -> float:
+    """
+    Measure how readable the text is using Tesseract.
+    Returns a composite score based on:
+      - Number of high-confidence word detections
+      - Average confidence of detected words
+    Higher score = more readable text = correct orientation.
+    """
+    try:
+        import pytesseract
+
+        data = pytesseract.image_to_data(
+            gray_img,
+            output_type=pytesseract.Output.DICT,
+            config="--psm 3 --dpi 300",
+        )
+
+        confs = [int(c) for c in data["conf"] if int(c) > 0]
+        if not confs:
+            return 0.0
+
+        # Count words with high confidence (>60) that have alpha characters
+        high_conf_words = 0
+        for text, conf in zip(data["text"], data["conf"]):
+            c = int(conf)
+            t = (text or "").strip()
+            if c > 60 and len(t) >= 2 and sum(1 for ch in t if ch.isalpha()) > len(t) * 0.5:
+                high_conf_words += 1
+
+        avg_conf = sum(confs) / len(confs)
+
+        # Composite score: word count weighted by average confidence
+        return high_conf_words * (avg_conf / 100.0)
+
+    except Exception:
+        return 0.0
 
 
 def _detect_orientation_tesseract(img: Image.Image):
