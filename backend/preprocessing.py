@@ -20,57 +20,151 @@ logger = logging.getLogger(__name__)
 # 1. Image Preprocessing
 # ---------------------------------------------------------------------------
 
-def preprocess_image(image_bytes: bytes) -> bytes:
+def preprocess_image(image_bytes: bytes, save_artifacts: bool = False, artifact_id: str = "") -> bytes:
     """
     Full preprocessing pipeline for invoice images.
     Scan Mode is ALWAYS ON.
-    Steps:
-      0. Scan Mode — detect document edges, perspective correct (camera photos)
-      1. EXIF auto-rotate (camera orientation metadata)
-      2. Orientation detection & correction (90/180/270° via Tesseract OSD)
-      3. Deskew (straighten slight angle skew)
-      4. Enhancement (auto-contrast, noise reduction, sharpness)
-      5. Crop empty margins
+
+    Args:
+        image_bytes: raw image bytes
+        save_artifacts: if True, saves before/after images to uploads dir
+        artifact_id: unique ID for naming artifact files
+
     Returns processed PNG bytes. Falls back to original on ANY error.
+    Populates _last_preprocess_meta (module-level) with step-by-step evidence.
     """
+    global _last_preprocess_meta
+    meta = {
+        "original_size_bytes": len(image_bytes),
+        "original_dimensions": None,
+        "steps_applied": [],
+        "scan_mode_triggered": False,
+        "scan_mode_result": "skipped",
+        "final_dimensions": None,
+        "final_size_bytes": 0,
+        "artifact_before_url": None,
+        "artifact_after_url": None,
+    }
+    _last_preprocess_meta = meta
+
     try:
         img = Image.open(io.BytesIO(image_bytes))
+        meta["original_dimensions"] = f"{img.size[0]}x{img.size[1]}"
+
+        # Save BEFORE artifact
+        if save_artifacts and artifact_id:
+            _save_artifact(image_bytes, artifact_id, "before", img.size)
+            meta["artifact_before_url"] = f"/uploads/scan_before_{artifact_id}.jpg"
 
         # 0. EXIF auto-rotate first (so scan mode works on correct orientation)
         img = ImageOps.exif_transpose(img)
+        meta["steps_applied"].append("exif_transpose")
 
         # 1. Convert to RGB
         if img.mode != "RGB":
             img = img.convert("RGB")
 
         # 2. Scan Mode — always ON
-        #    Detects document edges in camera photos and applies perspective correction.
-        #    No-op for clean scans (already full-frame document).
+        size_before_scan = img.size
         img = _scan_mode_detect_and_correct(img)
+        size_after_scan = img.size
+        if size_after_scan != size_before_scan:
+            meta["scan_mode_triggered"] = True
+            meta["scan_mode_result"] = f"corrected: {size_before_scan[0]}x{size_before_scan[1]} → {size_after_scan[0]}x{size_after_scan[1]}"
+            meta["steps_applied"].append("scan_mode_perspective_correct")
+        else:
+            # Check if camera enhance fallback was used (dimensions unchanged but pixels changed)
+            meta["scan_mode_result"] = "clean_scan_passthrough"
+            meta["steps_applied"].append("scan_mode_passthrough")
 
         # 3. Detect and fix 90/180/270° rotation
+        size_before_orient = img.size
         img = _fix_orientation(img)
+        if img.size != size_before_orient:
+            meta["steps_applied"].append(f"orientation_fix: {size_before_orient[0]}x{size_before_orient[1]} → {img.size[0]}x{img.size[1]}")
+        else:
+            meta["steps_applied"].append("orientation_check_ok")
 
         # 4. Deskew — straighten slight tilt
+        size_before_deskew = img.size
         img = _deskew(img)
+        if img.size != size_before_deskew:
+            meta["steps_applied"].append(f"deskew_applied")
+        else:
+            meta["steps_applied"].append("deskew_not_needed")
 
         # 5. Crop empty margins
+        size_before_crop = img.size
         img = _crop_margins(img)
+        if img.size != size_before_crop:
+            meta["steps_applied"].append(f"crop: {size_before_crop[0]}x{size_before_crop[1]} → {img.size[0]}x{img.size[1]}")
+        else:
+            meta["steps_applied"].append("crop_not_needed")
 
         # 6. Enhancement pipeline (auto-contrast, noise, sharpness)
         img = _enhance_image(img)
+        meta["steps_applied"].append("enhancement_applied")
 
         buf = io.BytesIO()
         img.save(buf, format="PNG", optimize=True)
         processed = buf.getvalue()
+
+        meta["final_dimensions"] = f"{img.size[0]}x{img.size[1]}"
+        meta["final_size_bytes"] = len(processed)
+
+        # Save AFTER artifact
+        if save_artifacts and artifact_id:
+            _save_artifact(processed, artifact_id, "after", img.size)
+            meta["artifact_after_url"] = f"/uploads/scan_after_{artifact_id}.png"
+
         logger.info(
             f"Preprocessed image: {len(image_bytes)}→{len(processed)} bytes "
-            f"({img.size[0]}x{img.size[1]})"
+            f"({img.size[0]}x{img.size[1]}), "
+            f"scan_mode={meta['scan_mode_result']}"
         )
         return processed
     except Exception as e:
         logger.warning(f"Image preprocessing failed, using original: {e}")
+        meta["steps_applied"].append(f"FAILED: {str(e)}")
         return image_bytes
+
+
+# Module-level storage for last preprocessing metadata
+_last_preprocess_meta: dict = {}
+
+
+def get_last_preprocess_meta() -> dict:
+    """Return metadata from the last preprocess_image call."""
+    return _last_preprocess_meta.copy()
+
+
+def _save_artifact(image_bytes: bytes, artifact_id: str, stage: str, size: tuple) -> None:
+    """Save a before/after artifact image to uploads dir."""
+    try:
+        from pathlib import Path
+        uploads = Path(__file__).parent / "uploads"
+        uploads.mkdir(exist_ok=True)
+        ext = "jpg" if stage == "before" else "png"
+        path = uploads / f"scan_{stage}_{artifact_id}.{ext}"
+
+        if stage == "before":
+            # Save as JPEG for smaller size
+            img = Image.open(io.BytesIO(image_bytes))
+            img.thumbnail((1200, 1600))  # Reasonable preview size
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=60)
+            path.write_bytes(buf.getvalue())
+        else:
+            # After is already PNG
+            img = Image.open(io.BytesIO(image_bytes))
+            img.thumbnail((1200, 1600))
+            buf = io.BytesIO()
+            img.save(buf, format="PNG", optimize=True)
+            path.write_bytes(buf.getvalue())
+
+        logger.info(f"Saved scan artifact: {path.name} ({size[0]}x{size[1]})")
+    except Exception as e:
+        logger.warning(f"Failed to save artifact {stage}/{artifact_id}: {e}")
 
 
 # ---------------------------------------------------------------------------

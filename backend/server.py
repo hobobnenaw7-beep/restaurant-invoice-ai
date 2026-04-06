@@ -36,6 +36,9 @@ app = FastAPI()
 # --- Static files ---
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
+# Also serve under /api/uploads for ingress compatibility (external access)
+app.mount("/api/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="api_uploads")
+
 # --- API router with /api prefix ---
 api_router = APIRouter(prefix="/api")
 

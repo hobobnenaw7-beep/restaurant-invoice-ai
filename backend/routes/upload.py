@@ -363,12 +363,13 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
         logger.info(f"Extract: received {len(all_files)} file(s), document_type={document_type}")
         rid = user["restaurant_id"]
 
-        from preprocessing import preprocess_image
+        from preprocessing import preprocess_image, get_last_preprocess_meta
 
         images_b64 = []
         first_content = None
         first_fname = ""
         first_mime = ""
+        preprocess_evidence = []  # Track preprocessing for each image
 
         for idx, f in enumerate(all_files):
             content = await f.read()
@@ -387,11 +388,15 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
                     page = pdf_doc[page_num]
                     pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
                     img_bytes = pix.tobytes("png")
-                    img_bytes = preprocess_image(img_bytes)
+                    artifact_id = str(uuid.uuid4())[:8]
+                    img_bytes = preprocess_image(img_bytes, save_artifacts=True, artifact_id=artifact_id)
+                    preprocess_evidence.append(get_last_preprocess_meta())
                     images_b64.append(base64.b64encode(img_bytes).decode())
                 pdf_doc.close()
             else:
-                processed = preprocess_image(content)
+                artifact_id = str(uuid.uuid4())[:8]
+                processed = preprocess_image(content, save_artifacts=True, artifact_id=artifact_id)
+                preprocess_evidence.append(get_last_preprocess_meta())
                 images_b64.append(base64.b64encode(processed).decode())
 
         logger.info(f"Extract: {len(images_b64)} total image(s) to process")
@@ -885,6 +890,7 @@ Rules:
                 "semantic_summary": layout_parse_result.get("semantic_summary"),
             } if layout_parse_result else None,
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
+            "preprocess_evidence": preprocess_evidence,
             "message": f"Data extracted using {parsing_method} parsing" + (" (vendor pattern matched)" if parsing_method == "vendor" else "") + (f" -- pages classified as {page_types}" if page_types else ""),
         }
 
