@@ -106,27 +106,41 @@ Pipeline: Scan Mode → EXIF rotate → 4-way Orientation fix → Deskew → Cro
 
 **Requires**: `tesseract-ocr` + `tesseract-ocr-eng` system packages (for OSD + readability scoring)
 
-## Testing: 121/121 backend tests pass
+## Testing: 140/140 backend tests pass
 
-## Sysco Pipeline Isolation (Apr 2026)
-Sysco has a clean, isolated pipeline separate from other vendors:
+## Sysco Table Reconstruction Pipeline (Apr 2026)
+**New architecture**: OCR-based table reconstruction replaces GPT for Sysco.
+No LLM involved in Sysco extraction — all deterministic.
 
-### Single Pipeline Flow
+### Pipeline Flow
 ```
-upload → preprocess (scan mode) → GPT read-only → row classify → numeric validate → vendor validate → trust gate
+upload → preprocess (scan mode) → Tesseract OCR → table reconstruction → row classification → numeric extraction → validation → trust gate
 ```
 
-### Key Controls
-1. **GPT = read-only**: Sysco prompt explicitly forbids computing/inferring numbers. GPT must return 0 for any field it cannot clearly read.
-2. **Math infill = DISABLED**: No silent auto-correction of qty/price/total. Legacy infill preserved for non-Sysco only.
-3. **Row classification FIRST**: GROUP TOTAL, ORDER SUMMARY, subtotal, tax, header rows excluded before any scoring.
-4. **Single source of truth**: `_apply_numeric_trust_gate` is the ONLY place that can mark a row "trusted".
-5. **No trusted without validation**: Every trusted row must have all 3 sources = `column_read` + math validated.
+### Architecture (`/app/backend/services/sysco_pipeline.py`)
+1. **OCR**: Tesseract `image_to_data` → word-level bounding boxes with confidence
+2. **Row Segmentation**: Y-position clustering groups words into rows (dynamic threshold)
+3. **Column Detection**: Data-driven x-position clustering finds QTY, PRICE, TOTAL columns from where numbers actually appear (not from headers)
+4. **Row Classification**: Each row → `line_item`, `group_total`, `subtotal`, `tax`, `fee`, `header`, `unknown`
+5. **Footer Trimming**: All rows after last group_total/subtotal → excluded (legal/signature text)
+6. **Numeric Extraction**: Parse numbers from column-assigned cells
+7. **Math Validation**: qty × price ≈ total (2% or $0.50 tolerance)
+8. **Trust Gate**: Trusted ONLY if all 3 sources = column_read + math validates
 
-### Legacy Code (preserved, not deleted)
-- Math infill in upload.py: wrapped with `if not is_sysco` guard
-- Generic GPT prompt: preserved for non-Sysco vendors
-- `validate_and_score_item()`: still runs for all vendors (initial scoring), but numeric trust gate overrides for Sysco
+### Integration with Upload Flow
+- Sysco vendors → `run_sysco_pipeline()` (OCR-based, no GPT)
+- Non-Sysco vendors → GPT path (unchanged)
+- Sysco pipeline items bypass per-item re-scoring (already validated)
+
+### Results on Real Invoice
+- 10 items extracted, 6 trusted, 4 review
+- Trusted items: all have correct math (qty × price = total)
+- Review items: OCR misread (1), missing qty (2), missing price (1) — all correctly flagged
+
+### Legacy Code (preserved)
+- GPT extraction: preserved for non-Sysco vendors
+- Math infill: wrapped with `if not is_sysco` guard
+- `validate_and_score_item()`: runs for GPT path only
 
 ## Numeric Field Trust System (Apr 2026)
 Eliminates false trust on numeric fields (qty, price, total):

@@ -974,23 +974,62 @@ Rules:
 - Use 0 for any truly missing numeric values
 - Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
 
-        chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
-        file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
-        user_msg = UserMessage(text=prompt, file_contents=file_contents)
-        response = await chat.send_message(user_msg)
+        # ── SYSCO TABLE RECONSTRUCTION PIPELINE ──
+        # For Sysco vendors, use OCR-based table reconstruction instead of GPT.
+        # This gives us structural position data (column assignments) that GPT cannot provide.
+        is_sysco_vendor = "sysco" in (detected_vendor or "").lower()
+        sysco_pipeline_used = False
 
-        json_match = re.search(r'\{[\s\S]*\}', response)
-        if json_match:
+        if is_sysco_vendor and document_type == "purchase_invoice":
             try:
-                extracted = json.loads(json_match.group())
-            except json.JSONDecodeError:
+                from services.sysco_pipeline import run_sysco_pipeline
+
+                logger.info("Sysco pipeline: using table reconstruction (OCR-based)")
+                sysco_result = run_sysco_pipeline(images_b64[0])
+                sysco_meta = sysco_result.get("pipeline_meta", {})
+
+                if sysco_result["items"]:
+                    # Convert Sysco pipeline output to standard extracted format
+                    extracted = {
+                        "supplier_name": detected_vendor,
+                        "invoice_date": "",
+                        "invoice_number": "",
+                        "items": sysco_result["items"],
+                        "subtotal": sysco_result["subtotal_validation"].get("items_sum", 0),
+                        "tax": 0,
+                        "total": sysco_result["subtotal_validation"].get("items_sum", 0),
+                    }
+                    sysco_pipeline_used = True
+                    parsing_method = "sysco_table_reconstruction"
+                    logger.info(
+                        f"Sysco pipeline: {len(sysco_result['items'])} items, "
+                        f"{sysco_meta.get('trusted', 0)} trusted, "
+                        f"{sysco_meta.get('needs_review', 0)} review"
+                    )
+                else:
+                    logger.warning("Sysco pipeline returned 0 items, falling back to GPT")
+            except Exception as e:
+                logger.warning(f"Sysco pipeline failed, falling back to GPT: {e}")
+
+        # ── GPT EXTRACTION (non-Sysco, or Sysco fallback) ──
+        if not sysco_pipeline_used:
+            chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
+            file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
+            user_msg = UserMessage(text=prompt, file_contents=file_contents)
+            response = await chat.send_message(user_msg)
+
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                try:
+                    extracted = json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    from preprocessing import salvage_partial_extraction
+                    extracted = salvage_partial_extraction(response)
+                    logger.warning(f"JSON decode failed, salvaged partial extraction: {list(extracted.keys())}")
+            else:
                 from preprocessing import salvage_partial_extraction
                 extracted = salvage_partial_extraction(response)
-                logger.warning(f"JSON decode failed, salvaged partial extraction: {list(extracted.keys())}")
-        else:
-            from preprocessing import salvage_partial_extraction
-            extracted = salvage_partial_extraction(response)
-            logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
+                logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
 
         receipt_id = str(uuid.uuid4())
 
@@ -1031,7 +1070,7 @@ Rules:
                 "validation_summary": layout_parse_result.get("validation_summary"),
                 "semantic_summary": layout_parse_result.get("semantic_summary"),
             } if layout_parse_result else None,
-            "raw_ocr_text": response[:5000],
+            "raw_ocr_text": response[:5000] if not sysco_pipeline_used else "sysco_table_reconstruction",
             "detected_vendor": detected_vendor if detected_vendor.upper() != "UNKNOWN" else None,
             "vendor_id": vendor_pattern.get("vendor_id") if vendor_pattern else None,
             "parsing_method": parsing_method,
@@ -1056,183 +1095,195 @@ Rules:
                 )
                 from services.normalization import normalize_item
 
-                warnings = []
-                processed_items = []
-                for idx, item in enumerate(extracted.get("items", [])):
-                    try:
-                        sanitize_extracted_item(item)
+                if sysco_pipeline_used:
+                    # ── Sysco pipeline items already have trust levels set ──
+                    # Skip per-item re-scoring. Only run normalization.
+                    processed_items = []
+                    for item in extracted.get("items", []):
+                        if item.get("confidence_level") == "excluded":
+                            continue
+                        if not (item.get("raw_name") or "").strip() and item.get("total", 0) == 0:
+                            continue  # Skip empty rows
+                        try:
+                            normalized = normalize_item(item.get("raw_name", ""))
+                            item["item_name"] = normalized.get("normalized_name", item.get("raw_name", ""))
+                            item["category"] = normalized.get("category", "")
+                        except Exception:
+                            item["item_name"] = item.get("raw_name", "")
+                            item["category"] = ""
+                        processed_items.append(item)
+                    extracted["items"] = processed_items
 
-                        qty = float(item.get("quantity", 0) or 0)
-                        up = float(item.get("unit_price", 0) or 0)
-                        tot = float(item.get("total", 0) or 0)
-                        item_warnings = []
+                    # Row classification already done in sysco_pipeline
+                    # Numeric validation already done in sysco_pipeline
+                    # Trust gate already done in sysco_pipeline
+                    # Vendor validation: mark all as controlled_operational
+                    for item in extracted["items"]:
+                        item["vendor_status"] = "controlled_operational"
 
-                        # ── LEGACY: Math infill (disabled for Sysco) ──
-                        # For non-Sysco vendors, infill missing fields from existing ones.
-                        # Sysco uses a strict pipeline where GPT must read all fields.
-                        is_sysco = "sysco" in (detected_vendor or "").lower()
-                        if not is_sysco:
-                            # legacy_math_infill: compute missing fields
-                            if tot == 0 and qty > 0 and up > 0:
-                                item["total"] = round(qty * up, 2)
-                                item["total_source"] = "inferred"
-                                tot = item["total"]
-                            elif up == 0 and tot > 0 and qty > 0:
-                                item["unit_price"] = round(tot / qty, 2)
-                                item["price_source"] = "inferred"
-                                up = item["unit_price"]
-                            elif qty == 0 and tot > 0 and up > 0:
-                                item["quantity"] = round(tot / up, 2)
-                                item["qty_source"] = "inferred"
-                                qty = item["quantity"]
-                        else:
-                            # Sysco strict: NO math infill. GPT reads or it stays zero.
-                            # Mark any zero field as "missing" so trust gate catches it.
-                            if tot == 0 and (qty > 0 or up > 0):
-                                item_warnings.append("total is zero (not infilled — Sysco strict mode)")
-                            if up == 0 and tot > 0:
-                                item_warnings.append("unit_price is zero (not infilled — Sysco strict mode)")
-                            if qty == 0 and tot > 0:
-                                item_warnings.append("quantity is zero (not infilled — Sysco strict mode)")
+                else:
+                    warnings = []
+                    processed_items = []
+                    for idx, item in enumerate(extracted.get("items", [])):
+                        try:
+                            sanitize_extracted_item(item)
 
-                        if qty > 0 and up > 0 and tot > 0:
-                            expected = round(qty * up, 2)
-                            if abs(expected - tot) > 0.02:
-                                item_warnings.append(f"qty*price={expected} but total={tot}")
+                            qty = float(item.get("quantity", 0) or 0)
+                            up = float(item.get("unit_price", 0) or 0)
+                            tot = float(item.get("total", 0) or 0)
+                            item_warnings = []
+
+                            # ── LEGACY: Math infill (disabled for Sysco) ──
+                            is_sysco = "sysco" in (detected_vendor or "").lower()
+                            if not is_sysco:
+                                if tot == 0 and qty > 0 and up > 0:
+                                    item["total"] = round(qty * up, 2)
+                                    item["total_source"] = "inferred"
+                                    tot = item["total"]
+                                elif up == 0 and tot > 0 and qty > 0:
+                                    item["unit_price"] = round(tot / qty, 2)
+                                    item["price_source"] = "inferred"
+                                    up = item["unit_price"]
+                                elif qty == 0 and tot > 0 and up > 0:
+                                    item["quantity"] = round(tot / up, 2)
+                                    item["qty_source"] = "inferred"
+                                    qty = item["quantity"]
+                            else:
+                                if tot == 0 and (qty > 0 or up > 0):
+                                    item_warnings.append("total is zero (not infilled — Sysco strict mode)")
+                                if up == 0 and tot > 0:
+                                    item_warnings.append("unit_price is zero (not infilled — Sysco strict mode)")
+                                if qty == 0 and tot > 0:
+                                    item_warnings.append("quantity is zero (not infilled — Sysco strict mode)")
+
+                            if qty > 0 and up > 0 and tot > 0:
+                                expected = round(qty * up, 2)
+                                if abs(expected - tot) > 0.02:
+                                    item_warnings.append(f"qty*price={expected} but total={tot}")
+                                    item["_warning"] = True
+
+                            if qty == 0:
+                                item_warnings.append("missing quantity")
+                                item["_warning"] = True
+                            if up == 0 and tot == 0:
+                                item_warnings.append("missing price and total")
+                                item["_warning"] = True
+                            if not item.get("raw_name", "").strip():
+                                item_warnings.append("missing item name")
                                 item["_warning"] = True
 
-                        if qty == 0:
-                            item_warnings.append("missing quantity")
+                            pack_raw = item.get("pack_size", "") or ""
+                            if pack_raw:
+                                item["pack_size"] = pack_raw
+                                enrich_item_with_pack_size(item)
+
+                            normalize_item(item)
+                            validate_and_score_item(item)
+
+                            if item.get("_parse_issues"):
+                                item_warnings.extend(item["_parse_issues"])
+
+                            if item_warnings:
+                                item["_warning_detail"] = "; ".join(item_warnings)
+                                warnings.extend(item_warnings)
+
+                            processed_items.append(item)
+                        except Exception as item_err:
+                            logger.error(f"Item {idx} processing failed: {item_err}")
                             item["_warning"] = True
-                        if up == 0 and tot == 0:
-                            item_warnings.append("missing price and total")
-                            item["_warning"] = True
-                        if not item.get("raw_name", "").strip():
-                            item_warnings.append("missing item name")
-                            item["_warning"] = True
+                            item["_warning_detail"] = f"Processing error: {str(item_err)}"
+                            item["confidence_level"] = "extraction_failed"
+                            item["confidence_score"] = 0
+                            item["needs_review"] = True
+                            item["review_reason"] = f"Processing error: {str(item_err)}"
+                            warnings.append(f"Item {idx}: processing error")
+                            processed_items.append(item)
 
-                        pack_raw = item.get("pack_size", "") or ""
-                        if pack_raw:
-                            item["pack_size"] = pack_raw
-                            enrich_item_with_pack_size(item)
+                    extracted["items"] = processed_items
 
-                        normalize_item(item)
-                        validate_and_score_item(item)
+                    # ── Row Type Classification (FIRST) ──
+                    _classify_all_row_types(extracted["items"])
 
-                        if item.get("_parse_issues"):
-                            item_warnings.extend(item["_parse_issues"])
+                    # ── System-level numeric source validation ──
+                    scoreable_items = [it for it in extracted["items"]
+                                       if it.get("row_type") in ("line_item", "fee")]
+                    _validate_numeric_field_sources(scoreable_items)
 
-                        if item_warnings:
-                            item["_warning_detail"] = "; ".join(item_warnings)
-                            warnings.extend(item_warnings)
+                    # Non-line-item rows: mark as excluded
+                    for it in extracted["items"]:
+                        if it.get("row_type") not in ("line_item", "fee"):
+                            it["confidence_level"] = "excluded"
+                            it["needs_review"] = False
+                            it["review_reason"] = f"Row type '{it.get('row_type')}' excluded from trust evaluation"
+                            it["numeric_failure_category"] = "n/a"
 
-                        processed_items.append(item)
-                    except Exception as item_err:
-                        logger.error(f"Item {idx} processing failed: {item_err}")
-                        item["_warning"] = True
-                        item["_warning_detail"] = f"Processing error: {str(item_err)}"
-                        item["confidence_level"] = "extraction_failed"
-                        item["confidence_score"] = 0
-                        item["needs_review"] = True
-                        item["review_reason"] = f"Processing error: {str(item_err)}"
-                        warnings.append(f"Item {idx}: processing error")
-                        processed_items.append(item)
+                    # ── Vendor-specific post-extraction validation ──
+                    dv_lower = (detected_vendor or "").lower()
 
-                extracted["items"] = processed_items
-
-                # ── Row Type Classification (FIRST) ──
-                # Classify each row before any numeric validation.
-                # Only line_item and fee rows participate in trust logic.
-                _classify_all_row_types(extracted["items"])
-
-                # ── System-level numeric source validation ──
-                # GPT-reported field sources are HINTS only.
-                # System heuristics override when patterns indicate false confidence.
-                # Only runs on line_item and fee rows.
-                scoreable_items = [it for it in extracted["items"]
-                                   if it.get("row_type") in ("line_item", "fee")]
-                _validate_numeric_field_sources(scoreable_items)
-
-                # Non-line-item rows: mark as excluded from trust evaluation
-                for it in extracted["items"]:
-                    if it.get("row_type") not in ("line_item", "fee"):
-                        it["confidence_level"] = "excluded"
-                        it["needs_review"] = False
-                        it["review_reason"] = f"Row type '{it.get('row_type')}' excluded from trust evaluation"
-                        it["numeric_failure_category"] = "n/a"
-
-                # ── Vendor-specific post-extraction validation ──
-                dv_lower = (detected_vendor or "").lower()
-
-                if "performance" in dv_lower or "pfg" in dv_lower:
-                    # PFG: LIMITED MODE — column separation not yet reliable
-                    # All items → vendor_unsupported until PFG Column Separation Phase
-                    _validate_pfg_extraction(extracted["items"])
-                    for it in extracted.get("items", []):
-                        it["confidence_level"] = "vendor_unsupported"
-                        it["needs_review"] = True
-                        if not it.get("review_reason"):
-                            it["review_reason"] = "PFG extraction limited: $/LB and EXT PRICE columns cannot be reliably separated. Manual review required."
-                        it.setdefault("validation_errors", []).append(
-                            "pfg_limited_mode: column separation not yet implemented"
-                        )
-                        it["vendor_status"] = "limited"
-                        it["extraction_source"] = "gpt_vision"
-
-                elif "sysco" in dv_lower:
-                    # Sysco: OPERATIONAL with strict guardrails
-                    _validate_sysco_extraction(extracted["items"])
-
-                # ── Subtotal validation — only line_item and fee rows ──
-                line_items_for_sum = [it for it in extracted.get("items", [])
-                                      if it.get("row_type") in ("line_item", "fee")]
-                items_sum = round(sum(float(it.get("total", 0) or 0) for it in line_items_for_sum), 2)
-                if not extracted.get("subtotal") and items_sum > 0:
-                    extracted["subtotal"] = items_sum
-                if not extracted.get("total") and items_sum > 0:
-                    extracted["total"] = round(items_sum + float(extracted.get("tax", 0) or 0), 2)
-
-                subtotal = float(extracted.get("subtotal", 0) or 0)
-                if items_sum > 0 and subtotal > 0 and abs(items_sum - subtotal) > 0.10:
-                    warnings.append(f"Items sum ({items_sum}) differs from subtotal ({subtotal})")
-                    extracted["_subtotal_warning"] = True
-                    # ── Strict subtotal Decision Gate ──
-                    # Any subtotal mismatch > 5% downgrades ALL trusted items
-                    pct_diff = abs(items_sum - subtotal) / subtotal if subtotal else 0
-                    if pct_diff > 0.05:
+                    if "performance" in dv_lower or "pfg" in dv_lower:
+                        _validate_pfg_extraction(extracted["items"])
                         for it in extracted.get("items", []):
-                            if it.get("confidence_level") == "trusted" and it.get("row_type") in ("line_item", "fee"):
-                                it["confidence_level"] = "needs_review_numeric"
-                                it["needs_review"] = True
-                                it["review_reason"] = f"Subtotal mismatch: items sum ${items_sum} vs declared ${subtotal} ({pct_diff:.0%} off)"
-                                it.setdefault("validation_errors", []).append(
-                                    f"subtotal_mismatch: sum={items_sum}, declared={subtotal}"
-                                )
+                            it["confidence_level"] = "vendor_unsupported"
+                            it["needs_review"] = True
+                            if not it.get("review_reason"):
+                                it["review_reason"] = "PFG extraction limited: $/LB and EXT PRICE columns cannot be reliably separated. Manual review required."
+                            it.setdefault("validation_errors", []).append(
+                                "pfg_limited_mode: column separation not yet implemented"
+                            )
+                            it["vendor_status"] = "limited"
+                            it["extraction_source"] = "gpt_vision"
 
-                total = float(extracted.get("total", 0) or 0)
-                tax = float(extracted.get("tax", 0) or 0)
-                if subtotal > 0 and total > 0:
-                    expected_total = round(subtotal + tax, 2)
-                    if abs(expected_total - total) > 0.10:
-                        warnings.append(f"subtotal+tax={expected_total} but total={total}")
-                        extracted["_total_warning"] = True
+                    elif "sysco" in dv_lower:
+                        _validate_sysco_extraction(extracted["items"])
 
-                raw_date = extracted.get("invoice_date", "")
-                if raw_date:
-                    normalized = _normalize_date(raw_date)
-                    if normalized != raw_date:
-                        extracted["invoice_date"] = normalized
-                        if not normalized:
-                            warnings.append(f"Could not parse date: {raw_date}")
-                            extracted["_date_warning"] = True
+                    # ── Subtotal validation — only line_item and fee rows ──
+                    line_items_for_sum = [it for it in extracted.get("items", [])
+                                          if it.get("row_type") in ("line_item", "fee")]
+                    items_sum = round(sum(float(it.get("total", 0) or 0) for it in line_items_for_sum), 2)
+                    if not extracted.get("subtotal") and items_sum > 0:
+                        extracted["subtotal"] = items_sum
+                    if not extracted.get("total") and items_sum > 0:
+                        extracted["total"] = round(items_sum + float(extracted.get("tax", 0) or 0), 2)
 
-                extracted["_warnings"] = warnings
-                extracted["_has_warnings"] = len(warnings) > 0
+                    subtotal = float(extracted.get("subtotal", 0) or 0)
+                    if items_sum > 0 and subtotal > 0 and abs(items_sum - subtotal) > 0.10:
+                        warnings.append(f"Items sum ({items_sum}) differs from subtotal ({subtotal})")
+                        extracted["_subtotal_warning"] = True
+                        pct_diff = abs(items_sum - subtotal) / subtotal if subtotal else 0
+                        if pct_diff > 0.05:
+                            for it in extracted.get("items", []):
+                                if it.get("confidence_level") == "trusted" and it.get("row_type") in ("line_item", "fee"):
+                                    it["confidence_level"] = "needs_review_numeric"
+                                    it["needs_review"] = True
+                                    it["review_reason"] = f"Subtotal mismatch: items sum ${items_sum} vs declared ${subtotal} ({pct_diff:.0%} off)"
+                                    it.setdefault("validation_errors", []).append(
+                                        f"subtotal_mismatch: sum={items_sum}, declared={subtotal}"
+                                    )
 
-                # Cross-item validation
-                validate_purchase_items(extracted["items"])
+                    total = float(extracted.get("total", 0) or 0)
+                    tax = float(extracted.get("tax", 0) or 0)
+                    if subtotal > 0 and total > 0:
+                        expected_total = round(subtotal + tax, 2)
+                        if abs(expected_total - total) > 0.10:
+                            warnings.append(f"subtotal+tax={expected_total} but total={total}")
+                            extracted["_total_warning"] = True
 
-                # Compute invoice-level extraction quality
+                    raw_date = extracted.get("invoice_date", "")
+                    if raw_date:
+                        normalized = _normalize_date(raw_date)
+                        if normalized != raw_date:
+                            extracted["invoice_date"] = normalized
+                            if not normalized:
+                                warnings.append(f"Could not parse date: {raw_date}")
+                                extracted["_date_warning"] = True
+
+                    extracted["_warnings"] = warnings
+                    extracted["_has_warnings"] = len(warnings) > 0
+
+                    # Cross-item validation
+                    validate_purchase_items(extracted["items"])
+
+                # Compute invoice-level extraction quality (both paths)
                 extraction_meta = compute_extraction_meta(extracted["items"], extracted)
 
         extraction_id = str(uuid.uuid4())
