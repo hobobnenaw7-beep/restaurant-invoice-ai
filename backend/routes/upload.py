@@ -81,6 +81,10 @@ def _classify_row_type(item: dict) -> str:
     if _TOTAL_LINE_PATTERNS.match(name_cleaned):
         return "subtotal"
 
+    # Rule 2b: ORDER SUMMARY / INVOICE SUMMARY lines
+    if re.search(r'(order\s*summary|invoice\s*summary|payment\s*summary)', name_lower):
+        return "subtotal"
+
     # Rule 3: Section markers (***POULTRY***, ***FROZEN***)
     if _SECTION_MARKER_PATTERNS.match(name.replace(" ", "")):
         return "header"
@@ -221,18 +225,17 @@ def _validate_single_item_sources(item: dict) -> None:
                     "system: price==total with qty=1 — qty may be defaulted"
                 )
 
-    # Check 2: If a field was inferred by our code (math infill), mark source as 'inferred'
-    # regardless of what GPT said
+    # Check 2: If a field was zero and could be inferred — mark source, but do NOT modify the value
+    # The source tracking is informational only.
     if total == 0 and qty > 0 and price > 0:
-        # total was likely infilled by upstream code
         item["total_source"] = "inferred"
-        overrides.append("system: total was zero, inferred from qty*price")
+        overrides.append("system: total is zero — would need inference from qty*price")
     if price == 0 and total > 0 and qty > 0:
         item["price_source"] = "inferred"
-        overrides.append("system: price was zero, inferred from total/qty")
+        overrides.append("system: price is zero — would need inference from total/qty")
     if qty == 0 and total > 0 and price > 0:
         item["qty_source"] = "inferred"
-        overrides.append("system: qty was zero, inferred from total/price")
+        overrides.append("system: qty is zero — would need inference from total/price")
 
     # Check 3: Math mismatch → at least one field is wrong
     # If qty*price != total (>2% or $0.50), we can't trust all three
@@ -860,7 +863,37 @@ These images are parts of ONE document. They may be:
 CRITICAL: Produce ONE unified result. If the same line item appears in multiple images, include it ONLY ONCE. Use the LAST occurrence of subtotal/tax/total. Do NOT duplicate items."""
 
             if document_type == "purchase_invoice":
-                prompt = f"""You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
+                is_sysco_vendor = "sysco" in (detected_vendor or "").lower()
+
+                if is_sysco_vendor:
+                    # ── SYSCO STRICT PROMPT ──
+                    # GPT is a READ-ONLY layer. No math. No inference. No defaults.
+                    prompt = f"""You are reading a Sysco restaurant purchase invoice. READ the document exactly. Do NOT compute or infer any numbers.
+
+Extract into this exact JSON format:
+{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":""}}],"subtotal":0,"tax":0,"total":0}}
+
+STRICT READING RULES:
+- For each line item, READ quantity, unit_price, and total DIRECTLY from their respective columns
+- If you CANNOT clearly read a number from its column, use 0 — do NOT calculate it from other fields
+- Do NOT compute total from qty × price
+- Do NOT compute qty from total / price
+- Do NOT compute price from total / qty
+- Do NOT default quantity to 1 when you cannot see it
+- Read pack_size verbatim from the PACK column. Leave "" if not visible.
+- Dates must be in YYYY-MM-DD format
+- Extract GROUP TOTAL and SUBTOTAL lines as items too (we classify them downstream)
+
+FIELD SOURCE (for each item):
+- qty_source: "column_read" if you clearly see the number in QTY/ORDERED column, "ambiguous" if uncertain
+- price_source: "column_read" if you clearly see it in the PRICE column, "ambiguous" if uncertain
+- total_source: "column_read" if you clearly see it in the AMOUNT/TOTAL column, "ambiguous" if uncertain
+- NEVER use "inferred" — you are not allowed to infer
+
+- Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
+                else:
+                    # ── GENERIC PROMPT (non-Sysco vendors) ──
+                    prompt = f"""You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
 {{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":""}}],"subtotal":0,"tax":0,"total":0}}
 
 CRITICAL rules for line items:
@@ -1034,15 +1067,33 @@ Rules:
                         tot = float(item.get("total", 0) or 0)
                         item_warnings = []
 
-                        if tot == 0 and qty > 0 and up > 0:
-                            item["total"] = round(qty * up, 2)
-                            tot = item["total"]
-                        elif up == 0 and tot > 0 and qty > 0:
-                            item["unit_price"] = round(tot / qty, 2)
-                            up = item["unit_price"]
-                        elif qty == 0 and tot > 0 and up > 0:
-                            item["quantity"] = round(tot / up, 2)
-                            qty = item["quantity"]
+                        # ── LEGACY: Math infill (disabled for Sysco) ──
+                        # For non-Sysco vendors, infill missing fields from existing ones.
+                        # Sysco uses a strict pipeline where GPT must read all fields.
+                        is_sysco = "sysco" in (detected_vendor or "").lower()
+                        if not is_sysco:
+                            # legacy_math_infill: compute missing fields
+                            if tot == 0 and qty > 0 and up > 0:
+                                item["total"] = round(qty * up, 2)
+                                item["total_source"] = "inferred"
+                                tot = item["total"]
+                            elif up == 0 and tot > 0 and qty > 0:
+                                item["unit_price"] = round(tot / qty, 2)
+                                item["price_source"] = "inferred"
+                                up = item["unit_price"]
+                            elif qty == 0 and tot > 0 and up > 0:
+                                item["quantity"] = round(tot / up, 2)
+                                item["qty_source"] = "inferred"
+                                qty = item["quantity"]
+                        else:
+                            # Sysco strict: NO math infill. GPT reads or it stays zero.
+                            # Mark any zero field as "missing" so trust gate catches it.
+                            if tot == 0 and (qty > 0 or up > 0):
+                                item_warnings.append("total is zero (not infilled — Sysco strict mode)")
+                            if up == 0 and tot > 0:
+                                item_warnings.append("unit_price is zero (not infilled — Sysco strict mode)")
+                            if qty == 0 and tot > 0:
+                                item_warnings.append("quantity is zero (not infilled — Sysco strict mode)")
 
                         if qty > 0 and up > 0 and tot > 0:
                             expected = round(qty * up, 2)

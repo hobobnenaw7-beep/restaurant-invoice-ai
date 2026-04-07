@@ -108,6 +108,26 @@ Pipeline: Scan Mode → EXIF rotate → 4-way Orientation fix → Deskew → Cro
 
 ## Testing: 121/121 backend tests pass
 
+## Sysco Pipeline Isolation (Apr 2026)
+Sysco has a clean, isolated pipeline separate from other vendors:
+
+### Single Pipeline Flow
+```
+upload → preprocess (scan mode) → GPT read-only → row classify → numeric validate → vendor validate → trust gate
+```
+
+### Key Controls
+1. **GPT = read-only**: Sysco prompt explicitly forbids computing/inferring numbers. GPT must return 0 for any field it cannot clearly read.
+2. **Math infill = DISABLED**: No silent auto-correction of qty/price/total. Legacy infill preserved for non-Sysco only.
+3. **Row classification FIRST**: GROUP TOTAL, ORDER SUMMARY, subtotal, tax, header rows excluded before any scoring.
+4. **Single source of truth**: `_apply_numeric_trust_gate` is the ONLY place that can mark a row "trusted".
+5. **No trusted without validation**: Every trusted row must have all 3 sources = `column_read` + math validated.
+
+### Legacy Code (preserved, not deleted)
+- Math infill in upload.py: wrapped with `if not is_sysco` guard
+- Generic GPT prompt: preserved for non-Sysco vendors
+- `validate_and_score_item()`: still runs for all vendors (initial scoring), but numeric trust gate overrides for Sysco
+
 ## Numeric Field Trust System (Apr 2026)
 Eliminates false trust on numeric fields (qty, price, total):
 
