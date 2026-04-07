@@ -468,15 +468,16 @@ class TestPreprocessingHelperFunctions:
     """Test individual helper functions in preprocessing.py"""
     
     def test_fix_orientation_function(self):
-        """_fix_orientation() detects and corrects rotation"""
+        """_fix_orientation() detects and corrects rotation, returns (img, angle)"""
         from preprocessing import _fix_orientation
         
         img = create_synthetic_invoice_image()
-        result = _fix_orientation(img)
+        result, angle = _fix_orientation(img)
         
         assert result is not None
         assert isinstance(result, Image.Image)
-        print(f"PASS: _fix_orientation() returns valid image")
+        assert isinstance(angle, int)
+        print(f"PASS: _fix_orientation() returns valid image and angle={angle}")
     
     def test_deskew_function(self):
         """_deskew() straightens skewed images"""

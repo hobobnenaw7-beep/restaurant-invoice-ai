@@ -28,6 +28,334 @@ _SERVICE_KW = {"delivery", "fuel", "surcharge", "credit", "discount", "freight",
                "deposit", "rebate", "refund", "coupon", "promo", "minimum"}
 
 
+# ---------------------------------------------------------------------------
+# Row Type Classification
+# ---------------------------------------------------------------------------
+# Classifies each extracted row BEFORE any numeric validation.
+# Only 'line_item' and 'fee' rows participate in numeric trust logic.
+
+_GROUP_TOTAL_PATTERNS = re.compile(
+    r'(group\s*total|subtotal|sub\s*total|section\s*total|category\s*total)',
+    re.IGNORECASE,
+)
+_SECTION_MARKER_PATTERNS = re.compile(
+    r'^\*{2,}.*\*{2,}$',  # ***POULTRY***, ***FROZEN***, etc.
+)
+_TOTAL_LINE_PATTERNS = re.compile(
+    r'^(total|grand\s*total|invoice\s*total|order\s*total|net\s*total)$',
+    re.IGNORECASE,
+)
+_TAX_PATTERNS = re.compile(
+    r'\b(sales\s*tax|tax|hst|gst|vat)\b',
+    re.IGNORECASE,
+)
+
+
+def _classify_row_type(item: dict) -> str:
+    """
+    Classify a row into one of:
+      line_item    — actual product line
+      group_total  — section/group subtotal (e.g., "GROUP TOTAL****")
+      subtotal     — invoice subtotal line
+      tax          — tax line
+      fee          — service fee (fuel surcharge, delivery)
+      header       — section header text (no numeric value)
+      unknown      — can't determine
+
+    Rules applied in priority order (first match wins).
+    """
+    name = (item.get("raw_name") or "").strip()
+    name_lower = name.lower()
+    name_words = set(name_lower.split())
+    qty = float(item.get("quantity", 0) or 0)
+    price = float(item.get("unit_price", 0) or 0)
+    total = float(item.get("total", 0) or 0)
+
+    # Rule 1: GROUP TOTAL / SUBTOTAL in description
+    if _GROUP_TOTAL_PATTERNS.search(name_lower):
+        return "group_total"
+
+    # Rule 2: Standalone TOTAL line
+    # Strip asterisks and whitespace for matching
+    name_cleaned = re.sub(r'[\*\s]+', ' ', name).strip()
+    if _TOTAL_LINE_PATTERNS.match(name_cleaned):
+        return "subtotal"
+
+    # Rule 3: Section markers (***POULTRY***, ***FROZEN***)
+    if _SECTION_MARKER_PATTERNS.match(name.replace(" ", "")):
+        return "header"
+
+    # Rule 4: Tax line
+    if _TAX_PATTERNS.search(name_lower) and len(name_words) <= 5:
+        return "tax"
+
+    # Rule 5: Service fee — description contains service keywords
+    # Handle both short ("FUEL SURCHARGE") and compound ("MISC CHARGES - CHGS FOR FUEL SURCHARGE")
+    if name_words & _SERVICE_KW:
+        # Short description with service keywords → definitely fee
+        if len(name_words) <= 4:
+            return "fee"
+        # Longer but dominated by service keywords (>50% are service-related)
+        service_word_count = len(name_words & _SERVICE_KW)
+        if service_word_count >= 2:
+            return "fee"
+
+    # Rule 6: Description contains embedded group total text
+    # e.g., "CANNED & DRY GROUP TOTAL**** SYS CLS DRINK MIX"
+    # or "PAPER & DISP**GROUP TOTAL****"
+    if "group total" in name_lower or "group_total" in name_lower:
+        return "group_total"
+
+    # Rule 7: No name but has a total → likely a summary row
+    if not name and total > 0 and qty <= 1:
+        return "unknown"
+
+    # Rule 8: qty missing (0) and price == total → likely summary, not line item
+    if qty == 0 and price > 0 and total > 0 and abs(price - total) < 0.01:
+        # Could be a single-qty item, but without a clear product name pattern
+        # this is suspicious — mark as unknown for further review
+        if len(name_words) <= 3:
+            return "unknown"
+
+    # Default: line_item
+    return "line_item"
+
+
+def _classify_all_row_types(items: list) -> None:
+    """
+    Classify all rows and set row_type on each item.
+    Must run BEFORE any numeric validation or trust gates.
+    """
+    for item in items:
+        item["row_type"] = _classify_row_type(item)
+
+
+# ---------------------------------------------------------------------------
+# Numeric Field Source Validation — System-Level Overrides
+# ---------------------------------------------------------------------------
+# GPT returns qty_source, price_source, total_source as hints.
+# These heuristics OVERRIDE GPT claims when structural patterns indicate
+# the field was NOT reliably read from a column.
+
+_VALID_SOURCES = {"column_read", "inferred", "ambiguous"}
+
+
+def _validate_numeric_field_sources(items: list) -> None:
+    """
+    System-level validation of per-field source confidence.
+    Runs AFTER individual item scoring but BEFORE vendor-specific validation.
+
+    GPT-reported sources are treated as HINTS — system heuristics can
+    downgrade 'column_read' to 'ambiguous' when patterns indicate
+    the value was not reliably read.
+
+    Mutates items in place: sets qty_source, price_source, total_source,
+    numeric_failure_category, and may downgrade confidence_level.
+    """
+    if not items:
+        return
+
+    # Step 0: Normalize GPT-reported sources (handle missing/invalid)
+    for it in items:
+        for field in ("qty_source", "price_source", "total_source"):
+            val = (it.get(field) or "").strip().lower()
+            if val not in _VALID_SOURCES:
+                it[field] = "ambiguous"  # Unknown/missing → treat as ambiguous
+
+    # Step 1: Detect all-qty-1 pattern
+    # If ALL product items have qty=1, it's a strong signal the QTY column
+    # was not actually read — GPT defaulted everything to 1.
+    _detect_all_qty_one_pattern(items)
+
+    # Step 2: Per-item heuristic checks
+    for it in items:
+        _validate_single_item_sources(it)
+
+    # Step 3: Assign numeric failure categories
+    for it in items:
+        _assign_numeric_failure_category(it)
+
+    # Step 4: Apply trust gate — no row trusted unless all sources confirmed
+    for it in items:
+        _apply_numeric_trust_gate(it)
+
+
+def _detect_all_qty_one_pattern(items: list) -> None:
+    """
+    If all line_item rows have qty=1, downgrade ALL qty_source
+    to 'ambiguous' — strong signal GPT defaulted quantities.
+    """
+    product_items = [it for it in items if it.get("row_type") == "line_item"]
+
+    if len(product_items) < 3:
+        return  # Too few items to detect pattern
+
+    all_qty_one = all(float(it.get("quantity", 0) or 0) == 1.0 for it in product_items)
+    if all_qty_one:
+        for it in product_items:
+            it["qty_source"] = "ambiguous"
+            it.setdefault("_source_overrides", []).append(
+                "system: all-qty-1 pattern detected — qty column likely not read"
+            )
+
+
+def _validate_single_item_sources(item: dict) -> None:
+    """
+    Per-item heuristic checks that override GPT-reported sources.
+    Each check can downgrade a source from 'column_read' to 'ambiguous'.
+    """
+    qty = float(item.get("quantity", 0) or 0)
+    price = float(item.get("unit_price", 0) or 0)
+    total = float(item.get("total", 0) or 0)
+
+    overrides = item.setdefault("_source_overrides", [])
+
+    # Check 1: price == total AND qty == 1 → qty likely defaulted
+    # (GPT often defaults qty to 1 when it can't find the QTY column)
+    if qty == 1.0 and price > 0 and total > 0 and abs(price - total) < 0.01:
+        if item.get("qty_source") == "column_read":
+            # Don't override for fee rows — qty=1 is legitimate for service charges
+            if item.get("row_type") != "fee":
+                item["qty_source"] = "ambiguous"
+                overrides.append(
+                    "system: price==total with qty=1 — qty may be defaulted"
+                )
+
+    # Check 2: If a field was inferred by our code (math infill), mark source as 'inferred'
+    # regardless of what GPT said
+    if total == 0 and qty > 0 and price > 0:
+        # total was likely infilled by upstream code
+        item["total_source"] = "inferred"
+        overrides.append("system: total was zero, inferred from qty*price")
+    if price == 0 and total > 0 and qty > 0:
+        item["price_source"] = "inferred"
+        overrides.append("system: price was zero, inferred from total/qty")
+    if qty == 0 and total > 0 and price > 0:
+        item["qty_source"] = "inferred"
+        overrides.append("system: qty was zero, inferred from total/price")
+
+    # Check 3: Math mismatch → at least one field is wrong
+    # If qty*price != total (>2% or $0.50), we can't trust all three
+    if qty > 0 and price > 0 and total > 0:
+        computed = round(qty * price, 2)
+        diff = abs(computed - total)
+        pct = diff / total if total else 0
+        if pct > 0.02 and diff > 0.50:
+            # Math fails — at least one field is wrong. Downgrade any
+            # that GPT claimed as column_read (they can't ALL be right)
+            for field in ("qty_source", "price_source", "total_source"):
+                if item.get(field) == "column_read":
+                    item[field] = "ambiguous"
+            overrides.append(
+                f"system: math mismatch ({qty}×{price}={computed} vs total={total}) — all sources downgraded"
+            )
+
+    # Check 4: Unrealistic values
+    if qty > 500:
+        item["qty_source"] = "ambiguous"
+        overrides.append(f"system: qty={qty} is unrealistically high")
+    if price > 5000:
+        item["price_source"] = "ambiguous"
+        overrides.append(f"system: price={price} is unrealistically high")
+
+
+def _assign_numeric_failure_category(item: dict) -> None:
+    """
+    Categorize numeric failures into specific types:
+    - qty_wrong: qty source is not column_read
+    - price_wrong: price source is not column_read
+    - both_wrong: both qty and price are unreliable
+    - total_wrong_due_to_upstream: total was inferred from wrong inputs
+    - none: all sources confirmed
+    """
+    qty_ok = item.get("qty_source") == "column_read"
+    price_ok = item.get("price_source") == "column_read"
+    total_ok = item.get("total_source") == "column_read"
+
+    if qty_ok and price_ok and total_ok:
+        item["numeric_failure_category"] = "none"
+    elif not qty_ok and not price_ok:
+        item["numeric_failure_category"] = "both_wrong"
+    elif not qty_ok:
+        if not total_ok and item.get("total_source") == "inferred":
+            item["numeric_failure_category"] = "total_wrong_due_to_upstream"
+        else:
+            item["numeric_failure_category"] = "qty_wrong"
+    elif not price_ok:
+        if not total_ok and item.get("total_source") == "inferred":
+            item["numeric_failure_category"] = "total_wrong_due_to_upstream"
+        else:
+            item["numeric_failure_category"] = "price_wrong"
+    elif not total_ok:
+        # qty and price OK, but total not from column
+        if item.get("total_source") == "inferred":
+            item["numeric_failure_category"] = "total_wrong_due_to_upstream"
+        else:
+            item["numeric_failure_category"] = "qty_wrong"  # conservative
+    else:
+        item["numeric_failure_category"] = "none"
+
+
+def _apply_numeric_trust_gate(item: dict) -> None:
+    """
+    Final trust gate: a row can be 'trusted' ONLY if:
+    1. qty_source == 'column_read'
+    2. price_source == 'column_read'
+    3. total_source == 'column_read'
+    4. math validates (valid_calc == True)
+    5. no numeric failure category
+
+    If ANY condition fails, downgrade to 'needs_review_numeric'
+    with specific reason.
+    """
+    current_level = item.get("confidence_level", "")
+
+    # Only gate items that are currently "trusted" or "needs_review_light"
+    # Don't upgrade items that are already failed/unsupported
+    if current_level not in ("trusted", "needs_review_light"):
+        return
+
+    qty_src = item.get("qty_source", "ambiguous")
+    price_src = item.get("price_source", "ambiguous")
+    total_src = item.get("total_source", "ambiguous")
+    failure_cat = item.get("numeric_failure_category", "none")
+
+    all_sourced = (qty_src == "column_read" and
+                   price_src == "column_read" and
+                   total_src == "column_read")
+    math_ok = item.get("valid_calc", False)
+
+    if all_sourced and math_ok and failure_cat == "none":
+        # All conditions met — row stays trusted (or becomes trusted if light review)
+        if current_level == "needs_review_light" and item.get("confidence_score", 0) >= 85:
+            item["confidence_level"] = "trusted"
+            item["needs_review"] = False
+            item["review_reason"] = None
+            item["confidence_reason"] = "All gates passed (field sources verified)"
+        return
+
+    # One or more conditions failed — downgrade
+    reasons = []
+    if qty_src != "column_read":
+        reasons.append(f"qty_source={qty_src}")
+    if price_src != "column_read":
+        reasons.append(f"price_source={price_src}")
+    if total_src != "column_read":
+        reasons.append(f"total_source={total_src}")
+    if not math_ok:
+        reasons.append("math_not_validated")
+
+    reason_str = "; ".join(reasons)
+
+    item["confidence_level"] = "needs_review_numeric"
+    item["needs_review"] = True
+    item["review_reason"] = f"Numeric field trust: {reason_str}"
+    item["confidence_reason"] = f"Numeric field trust: {reason_str}"
+    item.setdefault("validation_errors", []).append(
+        f"numeric_trust_gate: {reason_str} (category={failure_cat})"
+    )
+
+
 def _validate_pfg_extraction(items: list) -> None:
     """
     PFG-specific post-extraction validation for LLM output.
@@ -96,6 +424,7 @@ def _validate_sysco_extraction(items: list) -> None:
     """
     Sysco-specific post-extraction guardrails.
     Strict deterministic validation — no ambiguity allowed.
+    Only validates line_item and fee rows (row_type already classified upstream).
 
     Review status taxonomy:
     - needs_review_light: minor issues, math OK
@@ -106,6 +435,10 @@ def _validate_sysco_extraction(items: list) -> None:
         return
 
     for it in items:
+        # Skip non-line-item rows — already classified and excluded upstream
+        if it.get("row_type") not in ("line_item", "fee"):
+            continue
+
         name = (it.get("raw_name") or "").strip()
         name_lower = name.lower()
         name_words = set(name_lower.split())
@@ -113,18 +446,7 @@ def _validate_sysco_extraction(items: list) -> None:
         price = float(it.get("unit_price", 0) or 0)
         total = float(it.get("total", 0) or 0)
 
-        # Guard 1: Group total / subtotal text → extraction_failed (must never become product)
-        has_group_text = any(kw in name_lower for kw in ["subtotal", "group total", "***"])
-        if has_group_text:
-            it["confidence_level"] = "extraction_failed"
-            it["needs_review"] = True
-            it["review_reason"] = f"Row contains group/subtotal text: '{name}'"
-            it.setdefault("validation_errors", []).append(
-                f"sysco_group_text_in_product: '{name}'"
-            )
-            continue
-
-        # Guard 2: Missing critical fields → extraction_failed
+        # Guard 1: Missing critical fields → extraction_failed
         if not name:
             it["confidence_level"] = "extraction_failed"
             it["needs_review"] = True
@@ -132,7 +454,7 @@ def _validate_sysco_extraction(items: list) -> None:
             it.setdefault("validation_errors", []).append("sysco_missing_name")
             continue
 
-        # Guard 3: Missing qty with total present → needs_review_numeric
+        # Guard 2: Missing qty with total present → needs_review_numeric
         if qty == 0 and total > 0:
             it["confidence_level"] = "needs_review_numeric"
             it["needs_review"] = True
@@ -141,11 +463,7 @@ def _validate_sysco_extraction(items: list) -> None:
                 "sysco_missing_qty: quantity could not be read"
             )
 
-        # Guard 4: Service row classification
-        if name_words & _SERVICE_KW and len(name_words) <= 4:
-            it["row_type"] = "service"
-
-        # Guard 5: Strict math validation — Decision Gate
+        # Guard 3: Strict math validation — Decision Gate
         # qty × price must equal total within 2% or $0.50
         if qty > 0 and price > 0 and total > 0:
             computed = round(qty * price, 2)
@@ -543,7 +861,7 @@ CRITICAL: Produce ONE unified result. If the same line item appears in multiple 
 
             if document_type == "purchase_invoice":
                 prompt = f"""You are reading a restaurant purchase invoice or receipt. Extract ALL data into this exact JSON format:
-{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0}}],"subtotal":0,"tax":0,"total":0}}
+{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":""}}],"subtotal":0,"tax":0,"total":0}}
 
 CRITICAL rules for line items:
 - Look for patterns like: "2 x 5.00", "5.00 x 2", "2 @ 5.00", "Qty 2 Price 5.00"
@@ -556,6 +874,21 @@ CRITICAL rules for line items:
 - Dates must be in YYYY-MM-DD format. Convert any date format you see.
 - Use 0 for any truly missing numeric values
 - pack_size: The pack/case size EXACTLY as shown on the invoice. Common formats: "10/4 LB" (10 packs of 4 LB), "6/5 LB", "BAG 50 LB", "150 EA", "1 GAL", "2/17.5 LB", "1/25 LB", "12/1 QT", "50 LB", "10#". Copy this field verbatim. Leave empty string "" if not visible.
+
+NUMERIC FIELD SOURCE (for each item):
+- qty_source: How was this quantity determined?
+  "column_read" = clearly visible number in the QTY/ORDERED/SHIP column
+  "inferred" = calculated from other fields (e.g. total / unit_price)
+  "ambiguous" = number exists but uncertain which column it belongs to
+- price_source: How was this unit_price determined?
+  "column_read" = clearly visible number in the PRICE/UNIT PRICE column
+  "inferred" = calculated from other fields (e.g. total / quantity)
+  "ambiguous" = number exists but uncertain which column it belongs to
+- total_source: How was this total determined?
+  "column_read" = clearly visible number in the TOTAL/AMOUNT/EXT PRICE column
+  "inferred" = calculated from other fields (e.g. quantity * unit_price)
+  "ambiguous" = number exists but uncertain which column it belongs to
+
 - Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
             elif document_type == "salary_document":
                 prompt = f"""You are reading a payroll document, salary slip, or payment record for restaurant staff. Extract data into this exact JSON format:
@@ -756,6 +1089,27 @@ Rules:
 
                 extracted["items"] = processed_items
 
+                # ── Row Type Classification (FIRST) ──
+                # Classify each row before any numeric validation.
+                # Only line_item and fee rows participate in trust logic.
+                _classify_all_row_types(extracted["items"])
+
+                # ── System-level numeric source validation ──
+                # GPT-reported field sources are HINTS only.
+                # System heuristics override when patterns indicate false confidence.
+                # Only runs on line_item and fee rows.
+                scoreable_items = [it for it in extracted["items"]
+                                   if it.get("row_type") in ("line_item", "fee")]
+                _validate_numeric_field_sources(scoreable_items)
+
+                # Non-line-item rows: mark as excluded from trust evaluation
+                for it in extracted["items"]:
+                    if it.get("row_type") not in ("line_item", "fee"):
+                        it["confidence_level"] = "excluded"
+                        it["needs_review"] = False
+                        it["review_reason"] = f"Row type '{it.get('row_type')}' excluded from trust evaluation"
+                        it["numeric_failure_category"] = "n/a"
+
                 # ── Vendor-specific post-extraction validation ──
                 dv_lower = (detected_vendor or "").lower()
 
@@ -778,7 +1132,10 @@ Rules:
                     # Sysco: OPERATIONAL with strict guardrails
                     _validate_sysco_extraction(extracted["items"])
 
-                items_sum = round(sum(float(it.get("total", 0) or 0) for it in extracted.get("items", [])), 2)
+                # ── Subtotal validation — only line_item and fee rows ──
+                line_items_for_sum = [it for it in extracted.get("items", [])
+                                      if it.get("row_type") in ("line_item", "fee")]
+                items_sum = round(sum(float(it.get("total", 0) or 0) for it in line_items_for_sum), 2)
                 if not extracted.get("subtotal") and items_sum > 0:
                     extracted["subtotal"] = items_sum
                 if not extracted.get("total") and items_sum > 0:
@@ -793,7 +1150,7 @@ Rules:
                     pct_diff = abs(items_sum - subtotal) / subtotal if subtotal else 0
                     if pct_diff > 0.05:
                         for it in extracted.get("items", []):
-                            if it.get("confidence_level") == "trusted":
+                            if it.get("confidence_level") == "trusted" and it.get("row_type") in ("line_item", "fee"):
                                 it["confidence_level"] = "needs_review_numeric"
                                 it["needs_review"] = True
                                 it["review_reason"] = f"Subtotal mismatch: items sum ${items_sum} vs declared ${subtotal} ({pct_diff:.0%} off)"

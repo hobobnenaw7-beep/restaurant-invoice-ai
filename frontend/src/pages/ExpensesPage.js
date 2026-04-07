@@ -391,7 +391,7 @@ function RawMaterialsTab({ api }) {
       supplier_name: record.supplier_name || '',
       invoice_number: record.invoice_number || '',
       invoice_date: record.invoice_date || '',
-      items: (record.items || []).map(it => {
+      items: (record.items || []).filter(it => it.confidence_level !== 'excluded').map(it => {
         const item = mkItem(it.raw_name || '', it.quantity || 0, it.pack_size_raw || it.pack_size || '', it.unit_price || 0, it.total || 0, it.pack_unit || null, it.total_case_weight || null, it.normalized_price_per_lb || null, it.pack_parse_status || null, false, '', it.confidence_score ?? null, it.confidence_level || null, it.validation_errors || [], it.valid_calc ?? null, it.confidence_level === 'trusted', it.confidence_reason || null, !!it.needs_review, it.review_reason || null, it.suggested_fix || null);
         // Store match key from normalization for correction hint matching
         item._matchKey = (it.norm && it.norm.strict_match_key) || '';
@@ -462,7 +462,7 @@ function RawMaterialsTab({ api }) {
       const res = await api.post(ep, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 90000 });
       _lifecycle.extractionCompleteMs = Date.now();
       const d = res.data?.extracted_data || {};
-      const items = Array.isArray(d.items) ? d.items : [];
+      const items = Array.isArray(d.items) ? d.items.filter(it => it.confidence_level !== 'excluded') : [];
       const hasWarnings = d._has_warnings || false;
       setForm({
         supplier_name: d.supplier_name || '',
@@ -834,7 +834,7 @@ function RawMaterialsTab({ api }) {
                 const cl = item.confidence_level;
                 const isUncertain = (item.needs_review || (cl && cl !== 'trusted')) && !item._reviewed;
                 const isTrusted = (!item.needs_review && cl === 'trusted') || item._reviewed;
-                const confidenceDot = isTrusted ? 'bg-emerald-500' : cl === 'extraction_failed' ? 'bg-red-500' : cl === 'needs_review_numeric' ? 'bg-amber-500' : cl === 'vendor_unsupported' ? 'bg-slate-400' : cl === 'needs_review_light' ? 'bg-yellow-400' : 'bg-amber-500';
+                const confidenceDot = isTrusted ? 'bg-emerald-500' : cl === 'extraction_failed' ? 'bg-red-500' : cl === 'needs_review_numeric' ? 'bg-amber-500' : cl === 'vendor_unsupported' ? 'bg-slate-400' : cl === 'excluded' ? 'bg-slate-300' : cl === 'needs_review_light' ? 'bg-yellow-400' : 'bg-amber-500';
                 const confidenceTitle = item._reviewed ? 'Confirmed by user' : cl === 'trusted' ? 'Trusted — all gates passed' : cl === 'needs_review_numeric' ? 'Numeric issue — math or field mismatch' : cl === 'extraction_failed' ? 'Extraction failed — critical fields missing' : cl === 'vendor_unsupported' ? 'Vendor not yet fully supported' : cl === 'needs_review_light' ? 'Minor issue — math OK' : '';
                 const rowBorder = item._fixing ? 'border-blue-300 bg-blue-50/40 ring-1 ring-blue-200' : isUncertain ? 'border-amber-200 bg-amber-50/40' : item._reviewed ? 'bg-emerald-50/30 border border-emerald-200' : item._warning ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50';
                 const fixHighlight = item._fixing ? 'ring-1 ring-blue-300 border-blue-300' : '';

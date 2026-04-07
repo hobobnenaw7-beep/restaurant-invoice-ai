@@ -106,7 +106,48 @@ Pipeline: Scan Mode → EXIF rotate → 4-way Orientation fix → Deskew → Cro
 
 **Requires**: `tesseract-ocr` + `tesseract-ocr-eng` system packages (for OSD + readability scoring)
 
-## Testing: 85/85 backend tests pass (60 existing + 25 scan mode)
+## Testing: 121/121 backend tests pass
+
+## Numeric Field Trust System (Apr 2026)
+Eliminates false trust on numeric fields (qty, price, total):
+
+### Row Type Classification
+Every row classified BEFORE any validation:
+- `line_item` — actual product line (participates in trust evaluation + subtotal sum)
+- `group_total` — section/group subtotal (excluded from all evaluation)
+- `subtotal` — invoice subtotal line (excluded)
+- `tax` — tax line (excluded)
+- `fee` — service fee (participates in trust evaluation)
+- `header` — section header text (excluded)
+- `unknown` — can't determine (excluded)
+
+### Field-Level Source Tracking
+GPT returns per-field source hints (`column_read`, `inferred`, `ambiguous`).
+System heuristics OVERRIDE GPT when patterns indicate false confidence:
+1. **All-qty-1 pattern**: If all line_items have qty=1 → all qty_source → ambiguous
+2. **Price==total with qty=1**: For non-fee items → qty_source → ambiguous
+3. **Math mismatch**: qty×price ≠ total → all sources → ambiguous
+4. **Zero-field infill**: If a field was 0 and computed → source = inferred
+5. **Unrealistic values**: qty>500 or price>5000 → ambiguous
+
+### Numeric Trust Gate
+Row trusted ONLY if ALL conditions met:
+- qty_source == column_read
+- price_source == column_read
+- total_source == column_read
+- Math validates
+- No numeric failure category
+
+### Failure Categories
+Each non-trusted row gets a category:
+- `qty_wrong` — quantity not reliably sourced
+- `price_wrong` — price not reliably sourced
+- `both_wrong` — both qty and price unreliable
+- `total_wrong_due_to_upstream` — total inferred from wrong inputs
+
+### Results
+**Before**: ~40% false trust rate (10/10 trusted, 4 had wrong qty)
+**After**: 0% false trust rate (5/10 trusted — all verified; 5/10 needs_review_numeric — all correctly flagged)
 
 ## Prioritized Backlog
 
@@ -126,6 +167,10 @@ Pipeline: Scan Mode → EXIF rotate → 4-way Orientation fix → Deskew → Cro
 - AI Chat Assistant Polish
 - Salaries OCR, pack size preview
 - bcrypt / pytest fixes (parked)
+
+## System Dependencies
+- `tesseract-ocr` + `tesseract-ocr-eng` (for orientation detection + readability scoring)
+- Install script: `/app/backend/install_deps.sh`
 
 ## Credentials
 - Demo: demo@test.com / testpassword
