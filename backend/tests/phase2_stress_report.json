@@ -1,54 +1,56 @@
 {
   "phase": "phase2",
   "total_files": 50,
-  "successful": 48,
-  "errors": 4,
+  "successful": 50,
+  "errors": 0,
   "vendor_distribution": {
     "Sysco": 20,
-    "Other (Tm Crab)": 1,
+    "Other (Tin Crab)": 1,
+    "Other (SEVILLE SEAFOOD N CHICKEN INC.)": 1,
     "Unknown": 8,
-    "Other (Gville Seafood N Chicken)": 5,
+    "Other (Grille Seafood N Chicken)": 2,
     "PFG": 2,
-    "Other (Seafood Resources Inc.)": 1,
+    "Other (AFS American Food Services, In)": 3,
     "Other (Grille Seafood N Chicken.)": 1,
+    "Other (Gville Seafood N Chicken)": 3,
     "US Foods": 3,
-    "Other (CHRIS PRESCOTT)": 1,
-    "Other (AFS American Food Services, In)": 2,
     "Other (Gainesville Regional Utilities)": 1,
     "Other (Test Supplier)": 1,
-    "Other (Sam's Club)": 1,
+    "Other (Sam\u2019s Club)": 1,
+    "Other (A/S American Food Services, In)": 1,
+    "Other (STIRLING FOOD SYSTEMS)": 1,
     "Other (Comfort Temp Heating & Air)": 1
   },
   "sysco_summary": {
     "invoices": 20,
-    "line_items": 193,
-    "trusted": 90,
-    "review": 97,
-    "excluded": 0,
+    "line_items": 184,
+    "trusted": 96,
+    "review": 88,
+    "excluded": 1,
     "false_trusts": 0,
-    "trust_rate": 0.4663,
+    "trust_rate": 0.5217,
     "completeness": {
-      "complete": 16,
-      "partial": 4
+      "complete": 17,
+      "over_extracted": 1,
+      "partial": 2
     },
     "failure_categories": {
-      "both_wrong": 17,
-      "source_not_column_read": 63,
-      "math_mismatch": 3,
+      "source_not_column_read": 62,
       "qty_wrong": 9,
-      "price_wrong": 4,
-      "total_missing": 1
+      "both_wrong": 11,
+      "price_wrong": 3,
+      "math_mismatch": 3
     }
   },
   "non_sysco_summary": {
-    "invoices": 28,
-    "line_items": 105,
-    "vendor_pending": 103,
+    "invoices": 30,
+    "line_items": 110,
+    "vendor_pending": 110,
     "trusted": 0
   },
   "ambiguity_pattern_log": [
     {
-      "name": "42.5 LEMRS FRI CRAB CAKE BRD O/R KABBY 3 OZ 073550",
+      "name": "MRS FRI CRAB CAKE BRD O/R KRABBY 3 OZ 073550",
       "price": 45.99,
       "total": 45.99,
       "qty_source": "ambiguous",
@@ -58,7 +60,7 @@
       "file": "296c4a30-127b-4252-ae72-8"
     },
     {
-      "name": "SYS CLS DRINK MIX LEMONADE PINK 50/64",
+      "name": "SYS CLS DRINK MIX LEMONADE",
       "price": 35.95,
       "total": 35.95,
       "qty_source": "ambiguous",
@@ -68,7 +70,7 @@
       "file": "296c4a30-127b-4252-ae72-8"
     },
     {
-      "name": "SYS CLS DRINK MIX LEMONADE 50/64",
+      "name": "SYS CLS DRINK MIX LEMONADE PINK",
       "price": 35.95,
       "total": 35.95,
       "qty_source": "ambiguous",
@@ -88,7 +90,27 @@
       "file": "296c4a30-127b-4252-ae72-8"
     },
     {
-      "name": "LEBMS FRI CRAB CAKE BRD O/R KRABBY 3 OZ 073550",
+      "name": "SYS CLS CHICKEN CVP GIZZARD SM",
+      "price": 36.25,
+      "total": 36.25,
+      "qty_source": "ambiguous",
+      "price_source": "column_read",
+      "total_source": "column_read",
+      "review_reason": "Numeric field trust: qty_source=ambiguous",
+      "file": "bfcdcae9-f8d4-4eac-af43-e"
+    },
+    {
+      "name": "SYS CLS DRINK MIX LEMONADE",
+      "price": 35.95,
+      "total": 35.95,
+      "qty_source": "ambiguous",
+      "price_source": "column_read",
+      "total_source": "column_read",
+      "review_reason": "Numeric field trust: qty_source=ambiguous",
+      "file": "bfcdcae9-f8d4-4eac-af43-e"
+    },
+    {
+      "name": "SYS FRI CRAB CAKE BRD 6/3 KRAABY 3 OZ",
       "price": 45.99,
       "total": 45.99,
       "qty_source": "ambiguous",
@@ -98,7 +120,7 @@
       "file": "cc7dc90b-f682-4d5d-91fc-3"
     },
     {
-      "name": "SYS CLS CHICKEN CVP LIVER SM 350",
+      "name": "SYS CLS CHICKEN CVP LIVER SM",
       "price": 24.95,
       "total": 24.95,
       "qty_source": "ambiguous",
@@ -108,7 +130,7 @@
       "file": "cc7dc90b-f682-4d5d-91fc-3"
     },
     {
-      "name": "NABISCO COOKIE VANILLA WAFER 10019320007184",
+      "name": "MEXISCO COOKIE VANILLA WAFER",
       "price": 20.85,
       "total": 20.85,
       "qty_source": "ambiguous",
@@ -118,7 +140,7 @@
       "file": "cc7dc90b-f682-4d5d-91fc-3"
     },
     {
-      "name": "SYS CLS DRINK MIX LEMONADE 50547",
+      "name": "SYS CLS DRINK MIX LEMONADE",
       "price": 35.95,
       "total": 35.95,
       "qty_source": "ambiguous",
@@ -128,7 +150,7 @@
       "file": "cc7dc90b-f682-4d5d-91fc-3"
     },
     {
-      "name": "SYS CLS DRINK MIX LEMONADE PINK 50561",
+      "name": "SYS CLS DRINK MIX LEMONADE PINK",
       "price": 35.95,
       "total": 35.95,
       "qty_source": "ambiguous",
@@ -138,7 +160,7 @@
       "file": "cc7dc90b-f682-4d5d-91fc-3"
     },
     {
-      "name": "MONACO JUICE LEMON 01758",
+      "name": "MONACO JUICE LEMON",
       "price": 22.99,
       "total": 22.99,
       "qty_source": "ambiguous",
@@ -148,9 +170,9 @@
       "file": "cc7dc90b-f682-4d5d-91fc-3"
     },
     {
-      "name": "LE MRS FRI CRAB CAKE BRD O/R KRABBY 3 OZ",
-      "price": 45.99,
-      "total": 45.99,
+      "name": "POLLOCKS PANCAKE\ntillet IQF 3-5 oz",
+      "price": 33.99,
+      "total": 33.99,
       "qty_source": "ambiguous",
       "price_source": "column_read",
       "total_source": "column_read",
@@ -158,9 +180,9 @@
       "file": "receipt_20ea1a7e-762c-4e8"
     },
     {
-      "name": "PORTCLS PANGASIUS FILET IQF 3-5 OZ",
-      "price": 33.99,
-      "total": 33.99,
+      "name": "FLOUNDER SEA OPAL CAKE brd o/f krabby 3 oz",
+      "price": 45.99,
+      "total": 45.99,
       "qty_source": "ambiguous",
       "price_source": "column_read",
       "total_source": "column_read",
@@ -178,16 +200,6 @@
       "file": "receipt_20ea1a7e-762c-4e8"
     },
     {
-      "name": "SYS CLS CHICKEN CVP GIZZARD SM",
-      "price": 36.33,
-      "total": 36.33,
-      "qty_source": "ambiguous",
-      "price_source": "column_read",
-      "total_source": "column_read",
-      "review_reason": "Numeric field trust: qty_source=ambiguous",
-      "file": "receipt_20ea1a7e-762c-4e8"
-    },
-    {
       "name": "SYS CLS DRINK MIX LEMONADE PINK",
       "price": 35.95,
       "total": 35.95,
@@ -198,9 +210,9 @@
       "file": "receipt_20ea1a7e-762c-4e8"
     },
     {
-      "name": "SYS CLS SUGAR GRANULATED XFINE CANE",
-      "price": 37.79,
-      "total": 37.79,
+      "name": "SYS CHEF SAUCE HOT LOUISIANA",
+      "price": 115.9,
+      "total": 115.9,
       "qty_source": "ambiguous",
       "price_source": "column_read",
       "total_source": "column_read",
@@ -208,14 +220,14 @@
       "file": "receipt_20ea1a7e-762c-4e8"
     },
     {
-      "name": "SUB CLS CONTAINER FOAM HNG 1C D YTID199S10000",
-      "price": 20.62,
-      "total": 20.62,
+      "name": "SYS REL POD FOAM SOUFFLE CAFE",
+      "price": 37.79,
+      "total": 37.79,
       "qty_source": "ambiguous",
       "price_source": "column_read",
       "total_source": "column_read",
       "review_reason": "Numeric field trust: qty_source=ambiguous",
-      "file": "receipt_333073da-edec-481"
+      "file": "receipt_20ea1a7e-762c-4e8"
     },
     {
       "name": "SYS CLS CHICKEN CVP BRST TENDER JUMBO",
@@ -238,7 +250,7 @@
       "file": "receipt_46ad2974-1de8-4a4"
     },
     {
-      "name": "SYS RELS DRINK MIX LEMONADE PINK",
+      "name": "SYS RED DRINK MIX LEMONADE PINK",
       "price": 35.95,
       "total": 35.95,
       "qty_source": "ambiguous",
@@ -248,7 +260,7 @@
       "file": "receipt_46ad2974-1de8-4a4"
     },
     {
-      "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI99510000",
+      "name": "SYS CLS CONTAINER FOAM HNG 1C D VIDI99510000",
       "price": 20.62,
       "total": 20.62,
       "qty_source": "ambiguous",
@@ -258,7 +270,7 @@
       "file": "receipt_46ad2974-1de8-4a4"
     },
     {
-      "name": "LEBRS FRI CRAB CAKE BRD O/R KRABBY 3 OZ 073550",
+      "name": "***SEAFOOD***\nFZEN CRAB CAKE BD 6/3 KRABBY 3 OZ",
       "price": 45.99,
       "total": 45.99,
       "qty_source": "ambiguous",
@@ -268,7 +280,7 @@
       "file": "receipt_801ef80d-14d3-40f"
     },
     {
-      "name": "SYS CLS CHICKEN CVP LIVER SM 350",
+      "name": "SYS CLS CHICKEN CVP LIVER SM",
       "price": 24.95,
       "total": 24.95,
       "qty_source": "ambiguous",
@@ -278,7 +290,7 @@
       "file": "receipt_801ef80d-14d3-40f"
     },
     {
-      "name": "NABISCO COOKIE VANILLA WAFER 10019320007184",
+      "name": "*****CANNED & DRY*****\nMEXISCO COOKIE VANILLA WAFE",
       "price": 20.85,
       "total": 20.85,
       "qty_source": "ambiguous",
@@ -288,7 +300,7 @@
       "file": "receipt_801ef80d-14d3-40f"
     },
     {
-      "name": "SYS CLS DRINK MIX LEMONADE 50547",
+      "name": "SYS CLS DRINK MIX LEMONADE",
       "price": 35.95,
       "total": 35.95,
       "qty_source": "ambiguous",
@@ -298,7 +310,7 @@
       "file": "receipt_801ef80d-14d3-40f"
     },
     {
-      "name": "SYS CLS DRINK MIX LEMONADE PINK 50561",
+      "name": "SYS CLS SUGAR CANE SYRUP PINK",
       "price": 35.95,
       "total": 35.95,
       "qty_source": "ambiguous",
@@ -308,7 +320,7 @@
       "file": "receipt_801ef80d-14d3-40f"
     },
     {
-      "name": "MONACO JUICE LEMON 01758",
+      "name": "MONACO JUICE LEMON",
       "price": 22.99,
       "total": 22.99,
       "qty_source": "ambiguous",
@@ -318,7 +330,7 @@
       "file": "receipt_801ef80d-14d3-40f"
     },
     {
-      "name": "CHICKEN CVP LIVER SM",
+      "name": "SYS CHS CHICKEN CVP LIVER SM",
       "price": 25.38,
       "total": 25.38,
       "qty_source": "ambiguous",
@@ -328,7 +340,7 @@
       "file": "receipt_833003c8-7172-4ec"
     },
     {
-      "name": "SYS CS DRINK MIX LEMONADE PINK",
+      "name": "SYS CHS DRINK MIX LEMONADE PINK",
       "price": 35.95,
       "total": 35.95,
       "qty_source": "ambiguous",
@@ -348,17 +360,7 @@
       "file": "receipt_833003c8-7172-4ec"
     },
     {
-      "name": "SYS CLS VINEGAR DISTILLED WHITE 5%",
-      "price": 23.95,
-      "total": 23.95,
-      "qty_source": "ambiguous",
-      "price_source": "column_read",
-      "total_source": "column_read",
-      "review_reason": "Numeric field trust: qty_source=ambiguous",
-      "file": "receipt_a33f716a-bf00-420"
-    },
-    {
-      "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI199S10000",
+      "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
       "price": 20.62,
       "total": 20.62,
       "qty_source": "ambiguous",
@@ -368,7 +370,7 @@
       "file": "receipt_a33f716a-bf00-420"
     },
     {
-      "name": "LSMRS FRI CRAB CAKE BRD O/R KRABBY 3 OZ",
+      "name": "CL SWAS CRAB CAKE BRD O/R KRABY 3 OZ",
       "price": 45.99,
       "total": 45.99,
       "qty_source": "ambiguous",
@@ -378,7 +380,7 @@
       "file": "receipt_dabe0e27-5924-4ad"
     },
     {
-      "name": "PORTCLS PANGASIUS FILET IQF 3-5 OZ",
+      "name": "PORT CLS FANGASIUS GRP TOTAL 3-5 OZ",
       "price": 33.99,
       "total": 33.99,
       "qty_source": "ambiguous",
@@ -388,7 +390,7 @@
       "file": "receipt_dabe0e27-5924-4ad"
     },
     {
-      "name": "SYS CLS CHICKEN CVP BRST TENDER JUMBO",
+      "name": "CLS CLS CHICKEN CVP BRST TENDER JUMBO",
       "price": 60.95,
       "total": 60.95,
       "qty_source": "ambiguous",
@@ -408,6 +410,16 @@
       "file": "receipt_dabe0e27-5924-4ad"
     },
     {
+      "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
+      "price": 49.95,
+      "total": 49.95,
+      "qty_source": "ambiguous",
+      "price_source": "column_read",
+      "total_source": "column_read",
+      "review_reason": "Numeric field trust: qty_source=ambiguous",
+      "file": "receipt_dabe0e27-5924-4ad"
+    },
+    {
       "name": "SYS CLS DRINK MIX LEMONADE PINK",
       "price": 35.95,
       "total": 35.95,
@@ -418,9 +430,9 @@
       "file": "receipt_dabe0e27-5924-4ad"
     },
     {
-      "name": "SYS CLS SUGAR GRANULATED XFINE CANE",
-      "price": 37.79,
-      "total": 37.79,
+      "name": "SYS REL KETCHUP PACKET FOIL",
+      "price": 18.95,
+      "total": 18.95,
       "qty_source": "ambiguous",
       "price_source": "column_read",
       "total_source": "column_read",
@@ -428,9 +440,9 @@
       "file": "receipt_dabe0e27-5924-4ad"
     },
     {
-      "name": "SYS CLS DRINK MIX LEMONADE",
-      "price": 35.95,
-      "total": 35.95,
+      "name": "MRS FRI CRAB CAKE BRD O/R KRABBY 3 OZ",
+      "price": 45.99,
+      "total": 45.99,
       "qty_source": "ambiguous",
       "price_source": "column_read",
       "total_source": "column_read",
@@ -438,9 +450,9 @@
       "file": "receipt_e50c2bf6-5bd2-4fe"
     },
     {
-      "name": "MONACO JUICE LEMON",
-      "price": 22.99,
-      "total": 22.99,
+      "name": "SYS CLS DRINK MIX LEMONADE",
+      "price": 35.95,
+      "total": 35.95,
       "qty_source": "ambiguous",
       "price_source": "column_read",
       "total_source": "column_read",
@@ -488,7 +500,7 @@
       "file": "receipt_e5a037b0-8aa1-453"
     },
     {
-      "name": "SYS CLS CHICKEN CVP BRST TENDER JUMBO 14669",
+      "name": "SYS CLS CHICKEN CVP BRST TENDER JUMBO",
       "price": 60.95,
       "total": 60.95,
       "qty_source": "ambiguous",
@@ -498,7 +510,7 @@
       "file": "95ebb38a-6d7e-4606-83f1-e"
     },
     {
-      "name": "LE HANOVER OKRA BRD MED",
+      "name": "HANOVER OKRA BRD MED",
       "price": 31.79,
       "total": 31.79,
       "qty_source": "ambiguous",
@@ -508,7 +520,7 @@
       "file": "95ebb38a-6d7e-4606-83f1-e"
     },
     {
-      "name": "SYS CLS DRINK MIX LEMONADE PINK 50561",
+      "name": "SYS CLS DRINK MIX LEMONADE PINK",
       "price": 35.95,
       "total": 35.95,
       "qty_source": "ambiguous",
@@ -518,7 +530,7 @@
       "file": "95ebb38a-6d7e-4606-83f1-e"
     },
     {
-      "name": "SYS SYSCLS CONTAINER FOAM HNG 1C D YTD199510000",
+      "name": "SYS CLS CONTAINER FOAM HNG 1C D",
       "price": 20.62,
       "total": 20.62,
       "qty_source": "ambiguous",
@@ -548,7 +560,7 @@
       "file": "receipt_458ec34d-8deb-44e"
     },
     {
-      "name": "MS FRY CRAB CAKE BRD O/R KRABBY 3 OZ",
+      "name": "EXTRA CALA CLAM BRD O/R KABAY 3 OZ",
       "price": 45.99,
       "total": 45.99,
       "qty_source": "ambiguous",
@@ -558,7 +570,7 @@
       "file": "receipt_0ad1fb34-bbcf-4a9"
     },
     {
-      "name": "PORTCLS PANGASIUS FILET IQF 3-5 OZ",
+      "name": "PORTC PANGASIUS FILET IQF 3-5 OZ",
       "price": 33.99,
       "total": 33.99,
       "qty_source": "ambiguous",
@@ -588,27 +600,7 @@
       "file": "receipt_0ad1fb34-bbcf-4a9"
     },
     {
-      "name": "SYS CLS DRINK MIX LEMONADE PINK",
-      "price": 35.95,
-      "total": 35.95,
-      "qty_source": "ambiguous",
-      "price_source": "column_read",
-      "total_source": "column_read",
-      "review_reason": "Numeric field trust: qty_source=ambiguous",
-      "file": "receipt_0ad1fb34-bbcf-4a9"
-    },
-    {
-      "name": "SYS CLS SUGAR GRANULATED XFINE CANE",
-      "price": 37.79,
-      "total": 37.79,
-      "qty_source": "ambiguous",
-      "price_source": "column_read",
-      "total_source": "column_read",
-      "review_reason": "Numeric field trust: qty_source=ambiguous",
-      "file": "receipt_0ad1fb34-bbcf-4a9"
-    },
-    {
-      "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI99S10000",
+      "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
       "price": 20.62,
       "total": 20.62,
       "qty_source": "ambiguous",
@@ -618,7 +610,7 @@
       "file": "receipt_201c7a1b-3f32-499"
     },
     {
-      "name": "SYS CLS VINEGAR DISTILLED WHITE 5%",
+      "name": "SYS CLS VINEGAR DISTILLED WHITE 5*",
       "price": 23.95,
       "total": 23.95,
       "qty_source": "ambiguous",
@@ -648,7 +640,7 @@
       "file": "receipt_27cdefe4-fbba-45c"
     },
     {
-      "name": "CAJ CHEF SAUCE HOT LOUISIANA",
+      "name": "CAJ CHEF SAUCE HOT",
       "price": 39.25,
       "total": 39.25,
       "qty_source": "ambiguous",
@@ -658,7 +650,7 @@
       "file": "receipt_27cdefe4-fbba-45c"
     },
     {
-      "name": "41 GAL SYS CLS VINEGAR DISTILLED WHITE 5%",
+      "name": "SYS CLS VINEGAR DISTILLED WHITE 5%",
       "price": 23.95,
       "total": 23.95,
       "qty_source": "ambiguous",
@@ -668,7 +660,7 @@
       "file": "receipt_5ff63026-250a-43b"
     },
     {
-      "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
+      "name": "SYS CLS CONTAINER FOAM HNG 1C D",
       "price": 20.62,
       "total": 20.62,
       "qty_source": "ambiguous",
@@ -684,27 +676,25 @@
       "vendor_detected": "SYSCO JACKSONVILLE",
       "vendor_class": "Sysco",
       "is_sysco": true,
-      "total_items_returned": 13,
-      "extracted_line_items": 13,
-      "trusted_count": 5,
-      "review_count": 8,
+      "total_items_returned": 12,
+      "extracted_line_items": 12,
+      "trusted_count": 8,
+      "review_count": 4,
       "vendor_pending_count": 0,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "both_wrong": 3,
-        "source_not_column_read": 4,
-        "math_mismatch": 1
+        "source_not_column_read": 4
       },
-      "merchandise_subtotal": 1049.64,
+      "merchandise_subtotal": 1213.74,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
-      "declared_subtotal": 2096.64,
+      "declared_subtotal": 1213.74,
       "ambiguity_log": [
         {
-          "name": "42.5 LEMRS FRI CRAB CAKE BRD O/R KABBY 3 OZ 073550",
+          "name": "MRS FRI CRAB CAKE BRD O/R KRABBY 3 OZ 073550",
           "price": 45.99,
           "total": 45.99,
           "qty_source": "ambiguous",
@@ -714,7 +704,7 @@
           "file": "296c4a30-127b-4252-ae72-8"
         },
         {
-          "name": "SYS CLS DRINK MIX LEMONADE PINK 50/64",
+          "name": "SYS CLS DRINK MIX LEMONADE",
           "price": 35.95,
           "total": 35.95,
           "qty_source": "ambiguous",
@@ -724,7 +714,7 @@
           "file": "296c4a30-127b-4252-ae72-8"
         },
         {
-          "name": "SYS CLS DRINK MIX LEMONADE 50/64",
+          "name": "SYS CLS DRINK MIX LEMONADE PINK",
           "price": 35.95,
           "total": 35.95,
           "qty_source": "ambiguous",
@@ -744,9 +734,17 @@
           "file": "296c4a30-127b-4252-ae72-8"
         }
       ],
+      "qty_distribution": {
+        "1": 4,
+        "3": 2,
+        "12": 1,
+        "2": 4,
+        "5": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS CHICKEN CVP GIZZARD SM 4/10LB",
+          "name": "SYS CLS CHICKEN CVP GIZZARD SM",
           "qty": 3.0,
           "price": 34.57,
           "total": 103.71
@@ -758,56 +756,140 @@
           "total": 599.4
         },
         {
-          "name": "SYS CLS FLOUR ALL PURP HER BL EN MT 150LB",
+          "name": "HANOVER OKRA BRD MED",
+          "qty": 2.0,
+          "price": 31.95,
+          "total": 63.9
+        },
+        {
+          "name": "NABISCO COOKIE VANILLA WAFER 10019320007184",
+          "qty": 2.0,
+          "price": 20.85,
+          "total": 41.7
+        },
+        {
+          "name": "SYS CLS FLOUR ALL PURP H&R BL EN MI 5196154",
           "qty": 2.0,
           "price": 16.2,
           "total": 32.4
         },
         {
-          "name": "SYS KETCHUP PACKET FOIL",
+          "name": "SYS REL KETCHUP PACKET FOIL",
           "qty": 5.0,
           "price": 18.95,
           "total": 94.75
         },
         {
-          "name": "CAJ CHF SAUCE HOT LOUISIANA",
+          "name": "CAJ CHEF SAUCE HOT ROUE STANKY 12200",
           "qty": 2.0,
           "price": 39.25,
           "total": 78.5
+        },
+        {
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD188S10000",
+          "qty": 3.0,
+          "price": 19.5,
+          "total": 58.5
         }
       ],
-      "api_time_sec": 34.6,
+      "api_time_sec": 30.1,
       "file_size_kb": 4093
     },
     {
       "file": "bfcdcae9-f8d4-4eac-af43-e4e0bfe2b7d5.jpg",
-      "vendor_detected": "SYSCO JACKSONVILLE FL 32254",
+      "vendor_detected": "SYSCO JACKSONVILLE",
       "vendor_class": "Sysco",
       "is_sysco": true,
       "total_items_returned": 8,
       "extracted_line_items": 8,
-      "trusted_count": 0,
-      "review_count": 8,
+      "trusted_count": 6,
+      "review_count": 2,
       "vendor_pending_count": 0,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "qty_wrong": 8
+        "source_not_column_read": 2
       },
-      "merchandise_subtotal": 0,
+      "merchandise_subtotal": 1095.73,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
-      "declared_subtotal": 1186.67,
-      "ambiguity_log": [],
-      "trusted_items_detail": [],
-      "api_time_sec": 31.1,
+      "declared_subtotal": 1095.73,
+      "ambiguity_log": [
+        {
+          "name": "SYS CLS CHICKEN CVP GIZZARD SM",
+          "price": 36.25,
+          "total": 36.25,
+          "qty_source": "ambiguous",
+          "price_source": "column_read",
+          "total_source": "column_read",
+          "review_reason": "Numeric field trust: qty_source=ambiguous",
+          "file": "bfcdcae9-f8d4-4eac-af43-e"
+        },
+        {
+          "name": "SYS CLS DRINK MIX LEMONADE",
+          "price": 35.95,
+          "total": 35.95,
+          "qty_source": "ambiguous",
+          "price_source": "column_read",
+          "total_source": "column_read",
+          "review_reason": "Numeric field trust: qty_source=ambiguous",
+          "file": "bfcdcae9-f8d4-4eac-af43-e"
+        }
+      ],
+      "qty_distribution": {
+        "1": 2,
+        "2": 2,
+        "14": 1,
+        "3": 2,
+        "4": 1
+      },
+      "usfoods_detail": null,
+      "trusted_items_detail": [
+        {
+          "name": "SYS CLS CHICKEN CVP LIVER SM",
+          "qty": 2.0,
+          "price": 25.38,
+          "total": 50.76
+        },
+        {
+          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
+          "qty": 14.0,
+          "price": 49.95,
+          "total": 699.3
+        },
+        {
+          "name": "HANOVER OKRA BRD MED",
+          "qty": 3.0,
+          "price": 31.79,
+          "total": 95.37
+        },
+        {
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD188S10000",
+          "qty": 3.0,
+          "price": 19.5,
+          "total": 58.5
+        },
+        {
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
+          "qty": 2.0,
+          "price": 20.62,
+          "total": 41.24
+        },
+        {
+          "name": "IMPFISH POTATO BAKING RUSSET 90CT FRSH",
+          "qty": 4.0,
+          "price": 19.59,
+          "total": 78.36
+        }
+      ],
+      "api_time_sec": 24.6,
       "file_size_kb": 3041
     },
     {
       "file": "cc7dc90b-f682-4d5d-91fc-36de6439c60b.jpg",
-      "vendor_detected": "SYSCO",
+      "vendor_detected": "Sysco Jacksonville, Inc.",
       "vendor_class": "Sysco",
       "is_sysco": true,
       "total_items_returned": 13,
@@ -828,7 +910,7 @@
       "declared_subtotal": 894.76,
       "ambiguity_log": [
         {
-          "name": "LEBMS FRI CRAB CAKE BRD O/R KRABBY 3 OZ 073550",
+          "name": "SYS FRI CRAB CAKE BRD 6/3 KRAABY 3 OZ",
           "price": 45.99,
           "total": 45.99,
           "qty_source": "ambiguous",
@@ -838,7 +920,7 @@
           "file": "cc7dc90b-f682-4d5d-91fc-3"
         },
         {
-          "name": "SYS CLS CHICKEN CVP LIVER SM 350",
+          "name": "SYS CLS CHICKEN CVP LIVER SM",
           "price": 24.95,
           "total": 24.95,
           "qty_source": "ambiguous",
@@ -848,7 +930,7 @@
           "file": "cc7dc90b-f682-4d5d-91fc-3"
         },
         {
-          "name": "NABISCO COOKIE VANILLA WAFER 10019320007184",
+          "name": "MEXISCO COOKIE VANILLA WAFER",
           "price": 20.85,
           "total": 20.85,
           "qty_source": "ambiguous",
@@ -858,7 +940,7 @@
           "file": "cc7dc90b-f682-4d5d-91fc-3"
         },
         {
-          "name": "SYS CLS DRINK MIX LEMONADE 50547",
+          "name": "SYS CLS DRINK MIX LEMONADE",
           "price": 35.95,
           "total": 35.95,
           "qty_source": "ambiguous",
@@ -868,7 +950,7 @@
           "file": "cc7dc90b-f682-4d5d-91fc-3"
         },
         {
-          "name": "SYS CLS DRINK MIX LEMONADE PINK 50561",
+          "name": "SYS CLS DRINK MIX LEMONADE PINK",
           "price": 35.95,
           "total": 35.95,
           "qty_source": "ambiguous",
@@ -878,7 +960,7 @@
           "file": "cc7dc90b-f682-4d5d-91fc-3"
         },
         {
-          "name": "MONACO JUICE LEMON 01758",
+          "name": "MONACO JUICE LEMON",
           "price": 22.99,
           "total": 22.99,
           "qty_source": "ambiguous",
@@ -888,51 +970,59 @@
           "file": "cc7dc90b-f682-4d5d-91fc-3"
         }
       ],
+      "qty_distribution": {
+        "1": 6,
+        "2": 4,
+        "4": 1,
+        "5": 1,
+        "3": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS CHICKEN CVP BRST TENDER JUMBO 14669",
+          "name": "SYS CLS CHICKEN CVP PSRT TENDER JUMBO",
           "qty": 2.0,
           "price": 63.2,
           "total": 126.4
         },
         {
-          "name": "SYS CLS CHICKEN CVP GIZZARD SM 329",
+          "name": "SYS CLS CHICKEN CVP GIZZARD SM",
           "qty": 2.0,
           "price": 34.95,
           "total": 69.9
         },
         {
-          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL 32",
+          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
           "qty": 4.0,
           "price": 49.95,
           "total": 199.8
         },
         {
-          "name": "HANOVER OKRA BRD MED 2880029418",
+          "name": "ELMONTE OKRA BRD 6/5",
           "qty": 2.0,
           "price": 31.79,
           "total": 63.58
         },
         {
-          "name": "SYS CLS FLOUR ALL PURP H&R BL EN MT 5196154",
+          "name": "SYS CLS FLOUR ALL PURP HAR BL EN WT",
           "qty": 2.0,
           "price": 17.95,
           "total": 35.9
         },
         {
-          "name": "SYS REL KETCHUP PACKET FOIL SYRY57G",
+          "name": "SYS REL KETCHUP PACKET FOIL",
           "qty": 5.0,
           "price": 18.95,
           "total": 94.75
         },
         {
-          "name": "CAJ CHF SAUCE HOT LOUISIANA 12200",
+          "name": "CW CHEF SAUCE HOT LOUISIANA",
           "qty": 3.0,
           "price": 39.25,
           "total": 117.75
         }
       ],
-      "api_time_sec": 30.7,
+      "api_time_sec": 31.1,
       "file_size_kb": 3969
     },
     {
@@ -942,42 +1032,40 @@
       "is_sysco": true,
       "total_items_returned": 5,
       "extracted_line_items": 5,
-      "trusted_count": 1,
-      "review_count": 4,
+      "trusted_count": 0,
+      "review_count": 5,
       "vendor_pending_count": 0,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "price_wrong": 1,
-        "math_mismatch": 2,
-        "both_wrong": 1
+        "qty_wrong": 3,
+        "both_wrong": 1,
+        "price_wrong": 1
       },
-      "merchandise_subtotal": 383.2,
-      "subtotal_match": true,
-      "is_partial_page": true,
-      "invoice_completeness": "partial",
-      "declared_subtotal": 987.07,
+      "merchandise_subtotal": 0,
+      "subtotal_match": false,
+      "is_partial_page": false,
+      "invoice_completeness": "complete",
+      "declared_subtotal": 133.55,
       "ambiguity_log": [],
-      "trusted_items_detail": [
-        {
-          "name": "41 GAL SYS CLS VINEGAR DISTILLED WHITE 5%",
-          "qty": 16.0,
-          "price": 23.95,
-          "total": 383.2
-        }
-      ],
-      "api_time_sec": 25.0,
+      "qty_distribution": {
+        "0": 4,
+        "1": 1
+      },
+      "usfoods_detail": null,
+      "trusted_items_detail": [],
+      "api_time_sec": 26.8,
       "file_size_kb": 3705
     },
     {
       "file": "receipt_20ea1a7e-762c-4e82-8c1d-bbdae92594d1.jpg",
-      "vendor_detected": "Sysco",
+      "vendor_detected": "Sysco Jacksonville Inc.",
       "vendor_class": "Sysco",
       "is_sysco": true,
-      "total_items_returned": 12,
-      "extracted_line_items": 12,
-      "trusted_count": 5,
+      "total_items_returned": 11,
+      "extracted_line_items": 11,
+      "trusted_count": 4,
       "review_count": 7,
       "vendor_pending_count": 0,
       "excluded_count": 0,
@@ -985,18 +1073,18 @@
       "false_trust_count": 0,
       "failure_categories": {
         "source_not_column_read": 6,
-        "both_wrong": 1
+        "math_mismatch": 1
       },
-      "merchandise_subtotal": 1374.16,
-      "subtotal_match": false,
-      "is_partial_page": false,
-      "invoice_completeness": "complete",
-      "declared_subtotal": 1380.66,
+      "merchandise_subtotal": 586.73,
+      "subtotal_match": true,
+      "is_partial_page": true,
+      "invoice_completeness": "over_extracted",
+      "declared_subtotal": 1263.98,
       "ambiguity_log": [
         {
-          "name": "LE MRS FRI CRAB CAKE BRD O/R KRABBY 3 OZ",
-          "price": 45.99,
-          "total": 45.99,
+          "name": "POLLOCKS PANCAKE\ntillet IQF 3-5 oz",
+          "price": 33.99,
+          "total": 33.99,
           "qty_source": "ambiguous",
           "price_source": "column_read",
           "total_source": "column_read",
@@ -1004,9 +1092,9 @@
           "file": "receipt_20ea1a7e-762c-4e8"
         },
         {
-          "name": "PORTCLS PANGASIUS FILET IQF 3-5 OZ",
-          "price": 33.99,
-          "total": 33.99,
+          "name": "FLOUNDER SEA OPAL CAKE brd o/f krabby 3 oz",
+          "price": 45.99,
+          "total": 45.99,
           "qty_source": "ambiguous",
           "price_source": "column_read",
           "total_source": "column_read",
@@ -1024,16 +1112,6 @@
           "file": "receipt_20ea1a7e-762c-4e8"
         },
         {
-          "name": "SYS CLS CHICKEN CVP GIZZARD SM",
-          "price": 36.33,
-          "total": 36.33,
-          "qty_source": "ambiguous",
-          "price_source": "column_read",
-          "total_source": "column_read",
-          "review_reason": "Numeric field trust: qty_source=ambiguous",
-          "file": "receipt_20ea1a7e-762c-4e8"
-        },
-        {
           "name": "SYS CLS DRINK MIX LEMONADE PINK",
           "price": 35.95,
           "total": 35.95,
@@ -1044,7 +1122,17 @@
           "file": "receipt_20ea1a7e-762c-4e8"
         },
         {
-          "name": "SYS CLS SUGAR GRANULATED XFINE CANE",
+          "name": "SYS CHEF SAUCE HOT LOUISIANA",
+          "price": 115.9,
+          "total": 115.9,
+          "qty_source": "ambiguous",
+          "price_source": "column_read",
+          "total_source": "column_read",
+          "review_reason": "Numeric field trust: qty_source=ambiguous",
+          "file": "receipt_20ea1a7e-762c-4e8"
+        },
+        {
+          "name": "SYS REL POD FOAM SOUFFLE CAFE",
           "price": 37.79,
           "total": 37.79,
           "qty_source": "ambiguous",
@@ -1054,39 +1142,40 @@
           "file": "receipt_20ea1a7e-762c-4e8"
         }
       ],
+      "qty_distribution": {
+        "1": 7,
+        "23": 1,
+        "2": 2,
+        "8": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
-          "qty": 15.0,
-          "price": 49.95,
-          "total": 749.25
-        },
-        {
-          "name": "HANOVER OKRA BRD MED",
+          "name": "HANOVER OPAL brd grou",
           "qty": 2.0,
           "price": 31.79,
           "total": 63.58
         },
         {
-          "name": "NABISCO COOKIE VANILLA WAFER",
+          "name": "NESTLE pured vnlila wafer",
           "qty": 2.0,
           "price": 20.49,
           "total": 40.98
         },
         {
-          "name": "SYS REL KETCHUP PACKET FOLI",
+          "name": "SYS REL KETCHUP PACKET FOIL",
           "qty": 8.0,
           "price": 18.95,
           "total": 151.6
         },
         {
-          "name": "CHEF SAUCE HOT LOUISIANA",
-          "qty": 3.0,
-          "price": 39.25,
-          "total": 117.75
+          "name": "CHGS FOR FUEL SURCHARGE TOTAL",
+          "qty": 1.0,
+          "price": 6.5,
+          "total": 6.5
         }
       ],
-      "api_time_sec": 53.0,
+      "api_time_sec": 36.7,
       "file_size_kb": 3798
     },
     {
@@ -1096,48 +1185,28 @@
       "is_sysco": true,
       "total_items_returned": 5,
       "extracted_line_items": 5,
-      "trusted_count": 2,
-      "review_count": 3,
+      "trusted_count": 0,
+      "review_count": 5,
       "vendor_pending_count": 0,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "both_wrong": 2,
-        "source_not_column_read": 1
+        "qty_wrong": 3,
+        "both_wrong": 2
       },
-      "merchandise_subtotal": 421.11,
+      "merchandise_subtotal": 0,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
-      "declared_subtotal": 427.61,
-      "ambiguity_log": [
-        {
-          "name": "SUB CLS CONTAINER FOAM HNG 1C D YTID199S10000",
-          "price": 20.62,
-          "total": 20.62,
-          "qty_source": "ambiguous",
-          "price_source": "column_read",
-          "total_source": "column_read",
-          "review_reason": "Numeric field trust: qty_source=ambiguous",
-          "file": "receipt_333073da-edec-481"
-        }
-      ],
-      "trusted_items_detail": [
-        {
-          "name": "41 GAL SYS CLS VINEGAR DISTILLED WHITE 5%",
-          "qty": 15.0,
-          "price": 23.95,
-          "total": 359.25
-        },
-        {
-          "name": "SUB CLS CONTAINER FOAM HNG 1C D YTID199S10000",
-          "qty": 2.0,
-          "price": 20.62,
-          "total": 41.24
-        }
-      ],
-      "api_time_sec": 24.4,
+      "declared_subtotal": 92.31,
+      "ambiguity_log": [],
+      "qty_distribution": {
+        "0": 5
+      },
+      "usfoods_detail": null,
+      "trusted_items_detail": [],
+      "api_time_sec": 23.4,
       "file_size_kb": 3705
     },
     {
@@ -1145,9 +1214,9 @@
       "vendor_detected": "SYSCO JACKSONVILLE, INC.",
       "vendor_class": "Sysco",
       "is_sysco": true,
-      "total_items_returned": 9,
-      "extracted_line_items": 9,
-      "trusted_count": 5,
+      "total_items_returned": 10,
+      "extracted_line_items": 10,
+      "trusted_count": 6,
       "review_count": 4,
       "vendor_pending_count": 0,
       "excluded_count": 0,
@@ -1160,7 +1229,7 @@
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
-      "declared_subtotal": 1059.61,
+      "declared_subtotal": 1066.11,
       "ambiguity_log": [
         {
           "name": "SYS CLS CHICKEN CVP BRST TENDER JUMBO",
@@ -1183,7 +1252,7 @@
           "file": "receipt_46ad2974-1de8-4a4"
         },
         {
-          "name": "SYS RELS DRINK MIX LEMONADE PINK",
+          "name": "SYS RED DRINK MIX LEMONADE PINK",
           "price": 35.95,
           "total": 35.95,
           "qty_source": "ambiguous",
@@ -1193,7 +1262,7 @@
           "file": "receipt_46ad2974-1de8-4a4"
         },
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI99510000",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D VIDI99510000",
           "price": 20.62,
           "total": 20.62,
           "qty_source": "ambiguous",
@@ -1203,6 +1272,14 @@
           "file": "receipt_46ad2974-1de8-4a4"
         }
       ],
+      "qty_distribution": {
+        "1": 5,
+        "4": 1,
+        "10": 1,
+        "5": 1,
+        "3": 2
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
           "name": "SYS CLS CHICKEN CVP GIZZARD SM",
@@ -1211,13 +1288,13 @@
           "total": 139.8
         },
         {
-          "name": "SYS CLS CHICKEN CVP WING 1ST&2ND JMB",
+          "name": "SYS CLS CHICKEN CVP WING SM",
           "qty": 10.0,
           "price": 49.95,
           "total": 499.5
         },
         {
-          "name": "SYS RELS BUTTER PACKET FOIL",
+          "name": "SYS RELISH PACKET FOIL",
           "qty": 5.0,
           "price": 18.95,
           "total": 94.75
@@ -1229,18 +1306,24 @@
           "total": 117.75
         },
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI88510000",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D VIDI8810000",
           "qty": 3.0,
           "price": 19.5,
           "total": 58.5
+        },
+        {
+          "name": "CHGS FOR FUEL SURCHARGE TOTAL",
+          "qty": 1.0,
+          "price": 6.5,
+          "total": 6.5
         }
       ],
-      "api_time_sec": 24.4,
+      "api_time_sec": 18.9,
       "file_size_kb": 2954
     },
     {
       "file": "receipt_801ef80d-14d3-40ff-a582-a8bdf696258a.jpg",
-      "vendor_detected": "SYSCO",
+      "vendor_detected": "Sysco Jacksonville, Inc.",
       "vendor_class": "Sysco",
       "is_sysco": true,
       "total_items_returned": 13,
@@ -1255,13 +1338,13 @@
         "source_not_column_read": 6
       },
       "merchandise_subtotal": 894.76,
-      "subtotal_match": true,
+      "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
       "declared_subtotal": 894.76,
       "ambiguity_log": [
         {
-          "name": "LEBRS FRI CRAB CAKE BRD O/R KRABBY 3 OZ 073550",
+          "name": "***SEAFOOD***\nFZEN CRAB CAKE BD 6/3 KRABBY 3 OZ",
           "price": 45.99,
           "total": 45.99,
           "qty_source": "ambiguous",
@@ -1271,7 +1354,7 @@
           "file": "receipt_801ef80d-14d3-40f"
         },
         {
-          "name": "SYS CLS CHICKEN CVP LIVER SM 350",
+          "name": "SYS CLS CHICKEN CVP LIVER SM",
           "price": 24.95,
           "total": 24.95,
           "qty_source": "ambiguous",
@@ -1281,7 +1364,7 @@
           "file": "receipt_801ef80d-14d3-40f"
         },
         {
-          "name": "NABISCO COOKIE VANILLA WAFER 10019320007184",
+          "name": "*****CANNED & DRY*****\nMEXISCO COOKIE VANILLA WAFE",
           "price": 20.85,
           "total": 20.85,
           "qty_source": "ambiguous",
@@ -1291,7 +1374,7 @@
           "file": "receipt_801ef80d-14d3-40f"
         },
         {
-          "name": "SYS CLS DRINK MIX LEMONADE 50547",
+          "name": "SYS CLS DRINK MIX LEMONADE",
           "price": 35.95,
           "total": 35.95,
           "qty_source": "ambiguous",
@@ -1301,7 +1384,7 @@
           "file": "receipt_801ef80d-14d3-40f"
         },
         {
-          "name": "SYS CLS DRINK MIX LEMONADE PINK 50561",
+          "name": "SYS CLS SUGAR CANE SYRUP PINK",
           "price": 35.95,
           "total": 35.95,
           "qty_source": "ambiguous",
@@ -1311,7 +1394,7 @@
           "file": "receipt_801ef80d-14d3-40f"
         },
         {
-          "name": "MONACO JUICE LEMON 01758",
+          "name": "MONACO JUICE LEMON",
           "price": 22.99,
           "total": 22.99,
           "qty_source": "ambiguous",
@@ -1321,51 +1404,59 @@
           "file": "receipt_801ef80d-14d3-40f"
         }
       ],
+      "qty_distribution": {
+        "1": 6,
+        "2": 4,
+        "4": 1,
+        "5": 1,
+        "3": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS CHICKEN CVP BRST TENDER JUMBO 14669",
+          "name": "***POULTRY***\nSYS CLS CHICKEN CVP PSRT TENDER JUMB",
           "qty": 2.0,
           "price": 63.2,
           "total": 126.4
         },
         {
-          "name": "SYS CLS CHICKEN CVP GIZZARD SM 329",
+          "name": "SYS CLS CHICKEN CVP GIZZARD SM",
           "qty": 2.0,
           "price": 34.95,
           "total": 69.9
         },
         {
-          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL 32",
+          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
           "qty": 4.0,
           "price": 49.95,
           "total": 199.8
         },
         {
-          "name": "HANOVER OKRA BRD MED 2880029418",
+          "name": "*****FROZEN*****\nFZ BONELESS OPRA BD 20#",
           "qty": 2.0,
           "price": 31.79,
           "total": 63.58
         },
         {
-          "name": "SYS CLS FLOUR ALL PURP H&R BL EN MT 5196154",
+          "name": "SYS CLS FLOUR ALL PURP HAR BL EN VT",
           "qty": 2.0,
           "price": 17.95,
           "total": 35.9
         },
         {
-          "name": "SYS REL KETCHUP PACKET FOIL SYRY57G",
+          "name": "SYS REL KETCHUP PACKET FOIL",
           "qty": 5.0,
           "price": 18.95,
           "total": 94.75
         },
         {
-          "name": "CAJ CHF SAUCE HOT LOUISIANA 12200",
+          "name": "CAJ CHF SAUCE HOT LOUISIANA",
           "qty": 3.0,
           "price": 39.25,
           "total": 117.75
         }
       ],
-      "api_time_sec": 30.7,
+      "api_time_sec": 30.4,
       "file_size_kb": 3969
     },
     {
@@ -1373,26 +1464,25 @@
       "vendor_detected": "SYSCO JACKSONVILLE, INC.",
       "vendor_class": "Sysco",
       "is_sysco": true,
-      "total_items_returned": 12,
-      "extracted_line_items": 12,
+      "total_items_returned": 11,
+      "extracted_line_items": 11,
       "trusted_count": 8,
-      "review_count": 4,
+      "review_count": 3,
       "vendor_pending_count": 0,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "source_not_column_read": 3,
-        "both_wrong": 1
+        "source_not_column_read": 3
       },
       "merchandise_subtotal": 1144.91,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
-      "declared_subtotal": 1203.61,
+      "declared_subtotal": 1144.91,
       "ambiguity_log": [
         {
-          "name": "CHICKEN CVP LIVER SM",
+          "name": "SYS CHS CHICKEN CVP LIVER SM",
           "price": 25.38,
           "total": 25.38,
           "qty_source": "ambiguous",
@@ -1402,7 +1492,7 @@
           "file": "receipt_833003c8-7172-4ec"
         },
         {
-          "name": "SYS CS DRINK MIX LEMONADE PINK",
+          "name": "SYS CHS DRINK MIX LEMONADE PINK",
           "price": 35.95,
           "total": 35.95,
           "qty_source": "ambiguous",
@@ -1422,57 +1512,65 @@
           "file": "receipt_833003c8-7172-4ec"
         }
       ],
+      "qty_distribution": {
+        "3": 4,
+        "1": 3,
+        "10": 1,
+        "2": 2,
+        "6": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "CHICKEN CVP GIZZARD SM",
+          "name": "SYS CHS CHICKEN CVP GIZZARD SM",
           "qty": 3.0,
           "price": 36.25,
           "total": 108.75
         },
         {
-          "name": "CHICKEN CVP WING WHL SM HAL",
+          "name": "SYS CHS CHICKEN CVP WING WHL SM HAL",
           "qty": 10.0,
           "price": 49.95,
           "total": 499.5
         },
         {
-          "name": "HANOVER ORA BRD 1/2 MOON",
+          "name": "HANOVER OKRA B&D CUT",
           "qty": 3.0,
           "price": 31.79,
           "total": 95.37
         },
         {
-          "name": "MIX-SCO COOKIE VANILLA WAFER",
+          "name": "NKE-SCO COOKIE VANILLA WAFER",
           "qty": 2.0,
           "price": 20.49,
           "total": 40.98
         },
         {
-          "name": "CHEF SAUCE HO GOUJAKIA",
+          "name": "CA CHEESE SAUCE HO GOUDA/SMKA",
           "qty": 2.0,
           "price": 39.25,
           "total": 78.5
         },
         {
-          "name": "GENPAK FOAM HNG 16 D",
+          "name": "STERNO CONTAINER FOAM HNG 16 D",
           "qty": 6.0,
           "price": 19.5,
           "total": 117.0
         },
         {
-          "name": "SYS CONTAINER FOAM HNG 1# WTD",
+          "name": "STERNO CONTAINER FOAM HNG 18 D",
           "qty": 3.0,
           "price": 20.62,
           "total": 61.86
         },
         {
-          "name": "LB LYSEROL FOAMING ROSE 90CT FRESH",
+          "name": "OCEANSPRAY CRANMANGO BLEND ROSEH 90CT FRESH",
           "qty": 3.0,
           "price": 19.59,
           "total": 58.77
         }
       ],
-      "api_time_sec": 29.8,
+      "api_time_sec": 29.6,
       "file_size_kb": 3643
     },
     {
@@ -1489,27 +1587,19 @@
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "source_not_column_read": 2,
-        "both_wrong": 2
+        "qty_wrong": 1,
+        "price_wrong": 1,
+        "source_not_column_read": 1,
+        "both_wrong": 1
       },
-      "merchandise_subtotal": 85.81,
-      "subtotal_match": true,
-      "is_partial_page": true,
-      "invoice_completeness": "partial",
-      "declared_subtotal": 987.07,
+      "merchandise_subtotal": 61.86,
+      "subtotal_match": false,
+      "is_partial_page": false,
+      "invoice_completeness": "complete",
+      "declared_subtotal": 480.4,
       "ambiguity_log": [
         {
-          "name": "SYS CLS VINEGAR DISTILLED WHITE 5%",
-          "price": 23.95,
-          "total": 23.95,
-          "qty_source": "ambiguous",
-          "price_source": "column_read",
-          "total_source": "column_read",
-          "review_reason": "Numeric field trust: qty_source=ambiguous",
-          "file": "receipt_a33f716a-bf00-420"
-        },
-        {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI199S10000",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
           "price": 20.62,
           "total": 20.62,
           "qty_source": "ambiguous",
@@ -1519,42 +1609,48 @@
           "file": "receipt_a33f716a-bf00-420"
         }
       ],
+      "qty_distribution": {
+        "0": 2,
+        "2": 2,
+        "1": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI199S10000",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000 SUBST",
           "qty": 2.0,
           "price": 20.62,
           "total": 41.24
         }
       ],
-      "api_time_sec": 20.6,
+      "api_time_sec": 17.2,
       "file_size_kb": 3335
     },
     {
       "file": "receipt_dabe0e27-5924-4ad2-8d53-d20b89001517.jpg",
-      "vendor_detected": "SYSCO",
+      "vendor_detected": "SYSCO Jacksonville, Inc.",
       "vendor_class": "Sysco",
       "is_sysco": true,
-      "total_items_returned": 12,
-      "extracted_line_items": 12,
-      "trusted_count": 5,
-      "review_count": 7,
+      "total_items_returned": 11,
+      "extracted_line_items": 10,
+      "trusted_count": 2,
+      "review_count": 8,
       "vendor_pending_count": 0,
-      "excluded_count": 0,
+      "excluded_count": 1,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "source_not_column_read": 6,
-        "price_wrong": 1
+        "source_not_column_read": 7,
+        "math_mismatch": 1
       },
-      "merchandise_subtotal": 1374.16,
+      "merchandise_subtotal": 440.84,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
-      "declared_subtotal": 1380.66,
+      "declared_subtotal": 824.91,
       "ambiguity_log": [
         {
-          "name": "LSMRS FRI CRAB CAKE BRD O/R KRABBY 3 OZ",
+          "name": "CL SWAS CRAB CAKE BRD O/R KRABY 3 OZ",
           "price": 45.99,
           "total": 45.99,
           "qty_source": "ambiguous",
@@ -1564,7 +1660,7 @@
           "file": "receipt_dabe0e27-5924-4ad"
         },
         {
-          "name": "PORTCLS PANGASIUS FILET IQF 3-5 OZ",
+          "name": "PORT CLS FANGASIUS GRP TOTAL 3-5 OZ",
           "price": 33.99,
           "total": 33.99,
           "qty_source": "ambiguous",
@@ -1574,7 +1670,7 @@
           "file": "receipt_dabe0e27-5924-4ad"
         },
         {
-          "name": "SYS CLS CHICKEN CVP BRST TENDER JUMBO",
+          "name": "CLS CLS CHICKEN CVP BRST TENDER JUMBO",
           "price": 60.95,
           "total": 60.95,
           "qty_source": "ambiguous",
@@ -1594,6 +1690,16 @@
           "file": "receipt_dabe0e27-5924-4ad"
         },
         {
+          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
+          "price": 49.95,
+          "total": 49.95,
+          "qty_source": "ambiguous",
+          "price_source": "column_read",
+          "total_source": "column_read",
+          "review_reason": "Numeric field trust: qty_source=ambiguous",
+          "file": "receipt_dabe0e27-5924-4ad"
+        },
+        {
           "name": "SYS CLS DRINK MIX LEMONADE PINK",
           "price": 35.95,
           "total": 35.95,
@@ -1604,9 +1710,9 @@
           "file": "receipt_dabe0e27-5924-4ad"
         },
         {
-          "name": "SYS CLS SUGAR GRANULATED XFINE CANE",
-          "price": 37.79,
-          "total": 37.79,
+          "name": "SYS REL KETCHUP PACKET FOIL",
+          "price": 18.95,
+          "total": 18.95,
           "qty_source": "ambiguous",
           "price_source": "column_read",
           "total_source": "column_read",
@@ -1614,39 +1720,28 @@
           "file": "receipt_dabe0e27-5924-4ad"
         }
       ],
+      "qty_distribution": {
+        "1": 7,
+        "2": 1,
+        "3": 1,
+        "8": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
-          "qty": 15.0,
-          "price": 49.95,
-          "total": 749.25
-        },
-        {
-          "name": "HANOVER OKRA BRD MED",
-          "qty": 2.0,
-          "price": 31.79,
-          "total": 63.58
-        },
-        {
-          "name": "NABISCO COOKIE VANILLA WAFER",
+          "name": "SYS CLS DIST VITAMIN WATER",
           "qty": 2.0,
           "price": 20.49,
           "total": 40.98
         },
         {
-          "name": "SYS REL KETCHUP PACKET FOIL",
-          "qty": 8.0,
-          "price": 18.95,
-          "total": 151.6
-        },
-        {
-          "name": "CAJ CHF SAUCE HOT LOUISIANA",
+          "name": "CAJ CHEF SAUCE HOT LOUISIANA",
           "qty": 3.0,
           "price": 39.25,
           "total": 117.75
         }
       ],
-      "api_time_sec": 36.3,
+      "api_time_sec": 34.0,
       "file_size_kb": 3647
     },
     {
@@ -1654,8 +1749,8 @@
       "vendor_detected": "SYSCO JACKSONVILLE",
       "vendor_class": "Sysco",
       "is_sysco": true,
-      "total_items_returned": 18,
-      "extracted_line_items": 18,
+      "total_items_returned": 12,
+      "extracted_line_items": 12,
       "trusted_count": 8,
       "review_count": 4,
       "vendor_pending_count": 0,
@@ -1665,12 +1760,22 @@
       "failure_categories": {
         "source_not_column_read": 4
       },
-      "merchandise_subtotal": 1529.88,
+      "merchandise_subtotal": 1213.74,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
-      "declared_subtotal": 1529.88,
+      "declared_subtotal": 1213.74,
       "ambiguity_log": [
+        {
+          "name": "MRS FRI CRAB CAKE BRD O/R KRABBY 3 OZ",
+          "price": 45.99,
+          "total": 45.99,
+          "qty_source": "ambiguous",
+          "price_source": "column_read",
+          "total_source": "column_read",
+          "review_reason": "Numeric field trust: qty_source=ambiguous",
+          "file": "receipt_e50c2bf6-5bd2-4fe"
+        },
         {
           "name": "SYS CLS DRINK MIX LEMONADE",
           "price": 35.95,
@@ -1682,16 +1787,6 @@
           "file": "receipt_e50c2bf6-5bd2-4fe"
         },
         {
-          "name": "MONACO JUICE LEMON",
-          "price": 22.99,
-          "total": 22.99,
-          "qty_source": "ambiguous",
-          "price_source": "column_read",
-          "total_source": "column_read",
-          "review_reason": "Numeric field trust: qty_source=ambiguous",
-          "file": "receipt_e50c2bf6-5bd2-4fe"
-        },
-        {
           "name": "SYS CLS DRINK MIX LEMONADE PINK",
           "price": 35.95,
           "total": 35.95,
@@ -1712,9 +1807,41 @@
           "file": "receipt_e50c2bf6-5bd2-4fe"
         }
       ],
+      "qty_distribution": {
+        "1": 4,
+        "3": 2,
+        "12": 1,
+        "2": 4,
+        "5": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS FLOUR ALL PURP HR BL EN MT",
+          "name": "SYS CLS CHICKEN CVP GIZZARD SM",
+          "qty": 3.0,
+          "price": 34.57,
+          "total": 103.71
+        },
+        {
+          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
+          "qty": 12.0,
+          "price": 49.95,
+          "total": 599.4
+        },
+        {
+          "name": "HANOVER OKRA BRD MED",
+          "qty": 2.0,
+          "price": 31.95,
+          "total": 63.9
+        },
+        {
+          "name": "NABISCO COOKIE VANILLA WAFER",
+          "qty": 2.0,
+          "price": 20.85,
+          "total": 41.7
+        },
+        {
+          "name": "SYS CLS FLOUR ALL PURP H&R BL EN MI",
           "qty": 2.0,
           "price": 16.2,
           "total": 32.4
@@ -1726,65 +1853,42 @@
           "total": 94.75
         },
         {
-          "name": "CAJ CHF SAUCE HOT LOUISIANA",
+          "name": "CAJ CHEF SAUCE HOT FRANK",
           "qty": 2.0,
           "price": 39.25,
           "total": 78.5
         },
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D",
+          "name": "CLS CONTAINER FOAM HNG 1C D YTD188S10000",
           "qty": 3.0,
           "price": 19.5,
           "total": 58.5
-        },
-        {
-          "name": "NABISCO COOKIE VANILLA WAFER",
-          "qty": 2.0,
-          "price": 20.85,
-          "total": 41.7
-        },
-        {
-          "name": "HANOVER OKRA BRD MED",
-          "qty": 2.0,
-          "price": 31.95,
-          "total": 63.9
-        },
-        {
-          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
-          "qty": 12.0,
-          "price": 49.95,
-          "total": 599.4
-        },
-        {
-          "name": "SYS CLS SAUCE BBQ HOT LOUISIANA",
-          "qty": 2.0,
-          "price": 39.25,
-          "total": 78.5
         }
       ],
-      "api_time_sec": 32.3,
+      "api_time_sec": 27.0,
       "file_size_kb": 4093
     },
     {
       "file": "receipt_e5a037b0-8aa1-4537-9687-7a0525491faf.jpg",
-      "vendor_detected": "SYSCO JACKSONVILLE FL 32254",
+      "vendor_detected": "SYSCO JACKSONVILLE",
       "vendor_class": "Sysco",
       "is_sysco": true,
-      "total_items_returned": 8,
-      "extracted_line_items": 8,
+      "total_items_returned": 9,
+      "extracted_line_items": 9,
       "trusted_count": 6,
-      "review_count": 2,
+      "review_count": 3,
       "vendor_pending_count": 0,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "source_not_column_read": 2
+        "source_not_column_read": 2,
+        "both_wrong": 1
       },
       "merchandise_subtotal": 1095.73,
-      "subtotal_match": true,
+      "subtotal_match": false,
       "is_partial_page": false,
-      "invoice_completeness": "partial",
+      "invoice_completeness": "complete",
       "declared_subtotal": 1102.23,
       "ambiguity_log": [
         {
@@ -1808,6 +1912,15 @@
           "file": "receipt_e5a037b0-8aa1-453"
         }
       ],
+      "qty_distribution": {
+        "1": 2,
+        "2": 2,
+        "14": 1,
+        "3": 2,
+        "4": 1,
+        "0": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
           "name": "SYS CLS CHICKEN CVP LIVER SM",
@@ -1822,25 +1935,25 @@
           "total": 699.3
         },
         {
-          "name": "HANGOVER OKRA BRD MED",
+          "name": "HANOVER OKRA BRD MED",
           "qty": 3.0,
           "price": 31.79,
           "total": 95.37
         },
         {
-          "name": "SYS CLS CONTAINER FOAM HNG IC D",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD188S10000",
           "qty": 3.0,
           "price": 19.5,
           "total": 58.5
         },
         {
-          "name": "SYS CLS CONTAINER FOAM HNG IC D",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
           "qty": 2.0,
           "price": 20.62,
           "total": 41.24
         },
         {
-          "name": "IMPTHSH POTATO BAKING RUSSET 90CT FRSH",
+          "name": "IMPFRESH POTATO BAKING RUSSET 90CT FRSH",
           "qty": 4.0,
           "price": 19.59,
           "total": 78.36
@@ -1851,12 +1964,12 @@
     },
     {
       "file": "95ebb38a-6d7e-4606-83f1-ec2a0f2a6d15.jpg",
-      "vendor_detected": "SYSCO JACKSONVILLE",
+      "vendor_detected": "SYSCO JACKSONVILLE, INC.",
       "vendor_class": "Sysco",
       "is_sysco": true,
-      "total_items_returned": 9,
-      "extracted_line_items": 9,
-      "trusted_count": 5,
+      "total_items_returned": 10,
+      "extracted_line_items": 10,
+      "trusted_count": 6,
       "review_count": 4,
       "vendor_pending_count": 0,
       "excluded_count": 0,
@@ -1866,13 +1979,13 @@
         "source_not_column_read": 4
       },
       "merchandise_subtotal": 1059.61,
-      "subtotal_match": true,
+      "subtotal_match": false,
       "is_partial_page": false,
-      "invoice_completeness": "partial",
+      "invoice_completeness": "complete",
       "declared_subtotal": 1066.11,
       "ambiguity_log": [
         {
-          "name": "SYS CLS CHICKEN CVP BRST TENDER JUMBO 14669",
+          "name": "SYS CLS CHICKEN CVP BRST TENDER JUMBO",
           "price": 60.95,
           "total": 60.95,
           "qty_source": "ambiguous",
@@ -1882,7 +1995,7 @@
           "file": "95ebb38a-6d7e-4606-83f1-e"
         },
         {
-          "name": "LE HANOVER OKRA BRD MED",
+          "name": "HANOVER OKRA BRD MED",
           "price": 31.79,
           "total": 31.79,
           "qty_source": "ambiguous",
@@ -1892,7 +2005,7 @@
           "file": "95ebb38a-6d7e-4606-83f1-e"
         },
         {
-          "name": "SYS CLS DRINK MIX LEMONADE PINK 50561",
+          "name": "SYS CLS DRINK MIX LEMONADE PINK",
           "price": 35.95,
           "total": 35.95,
           "qty_source": "ambiguous",
@@ -1902,7 +2015,7 @@
           "file": "95ebb38a-6d7e-4606-83f1-e"
         },
         {
-          "name": "SYS SYSCLS CONTAINER FOAM HNG 1C D YTD199510000",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D",
           "price": 20.62,
           "total": 20.62,
           "qty_source": "ambiguous",
@@ -1912,39 +2025,53 @@
           "file": "95ebb38a-6d7e-4606-83f1-e"
         }
       ],
+      "qty_distribution": {
+        "1": 5,
+        "4": 1,
+        "10": 1,
+        "5": 1,
+        "3": 2
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS CHICKEN CVP GIZZARD SM 329",
+          "name": "SYS CLS CHICKEN CVP GIZZARD SM",
           "qty": 4.0,
           "price": 34.95,
           "total": 139.8
         },
         {
-          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL 32",
+          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
           "qty": 10.0,
           "price": 49.95,
           "total": 499.5
         },
         {
-          "name": "SYS KETCHUP PACKET FOIL",
+          "name": "SYS REL KETCHUP PACKET FOIL",
           "qty": 5.0,
           "price": 18.95,
           "total": 94.75
         },
         {
-          "name": "CAJ CHF SAUCE HOT LOUISIANA",
+          "name": "CAJ CHE SAUCE HOT LOUISIANA",
           "qty": 3.0,
           "price": 39.25,
           "total": 117.75
         },
         {
-          "name": "SYS SYSCLS CONTAINER FOAM HNG 1C D YTD199510000",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D",
           "qty": 3.0,
           "price": 19.5,
           "total": 58.5
+        },
+        {
+          "name": "CHGS FOR FUEL SURCHARGE",
+          "qty": 1.0,
+          "price": 6.5,
+          "total": 6.5
         }
       ],
-      "api_time_sec": 35.5,
+      "api_time_sec": 28.0,
       "file_size_kb": 3623
     },
     {
@@ -1990,6 +2117,15 @@
           "file": "receipt_458ec34d-8deb-44e"
         }
       ],
+      "qty_distribution": {
+        "4": 2,
+        "3": 2,
+        "2": 4,
+        "6": 1,
+        "1": 2,
+        "5": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
           "name": "BEEF GROUND 80/20 CHUB",
@@ -2052,13 +2188,13 @@
           "total": 168.6
         }
       ],
-      "api_time_sec": 12.3,
+      "api_time_sec": 9.8,
       "file_size_kb": 114
     },
     {
       "file": "receipt_aa140bda-813d-455e-ab65-a34422d7fc1e.jpg",
-      "vendor_detected": "Tm Crab",
-      "vendor_class": "Other (Tm Crab)",
+      "vendor_detected": "Tin Crab",
+      "vendor_class": "Other (Tin Crab)",
       "is_sysco": false,
       "total_items_returned": 2,
       "extracted_line_items": 2,
@@ -2077,34 +2213,39 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 2348.5,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "533": 1,
+        "161": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 26.8,
+      "api_time_sec": 24.6,
       "file_size_kb": 2663
     },
     {
       "file": "receipt_c912c288-927c-4aa7-99ad-ac54964c9aa5.jpg",
-      "vendor_detected": null,
-      "vendor_class": "Unknown",
+      "vendor_detected": "SEVILLE SEAFOOD N CHICKEN INC.",
+      "vendor_class": "Other (SEVILLE SEAFOOD N CHICKEN INC.)",
       "is_sysco": false,
-      "total_items_returned": 1,
-      "extracted_line_items": 1,
+      "total_items_returned": 0,
+      "extracted_line_items": 0,
       "trusted_count": 0,
-      "review_count": 1,
-      "vendor_pending_count": 1,
+      "review_count": 0,
+      "vendor_pending_count": 0,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
-      "failure_categories": {
-        "vendor_logic_pending": 1
-      },
+      "failure_categories": {},
       "merchandise_subtotal": 0,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "unknown",
       "declared_subtotal": 0.0,
       "ambiguity_log": [],
+      "qty_distribution": {},
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 22.9,
+      "api_time_sec": 14.7,
       "file_size_kb": 2534
     },
     {
@@ -2127,35 +2268,37 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 0.0,
       "ambiguity_log": [],
+      "qty_distribution": {},
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 2.5,
+      "api_time_sec": 2.2,
       "file_size_kb": 0
     },
     {
       "file": "receipt_0ad1fb34-bbcf-4a9c-a6df-39ecf8ebba35.jpg",
-      "vendor_detected": "Sysco",
+      "vendor_detected": "Sysco Jacksonville, Inc.",
       "vendor_class": "Sysco",
       "is_sysco": true,
       "total_items_returned": 11,
       "extracted_line_items": 11,
-      "trusted_count": 4,
-      "review_count": 7,
+      "trusted_count": 6,
+      "review_count": 5,
       "vendor_pending_count": 0,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "source_not_column_read": 6,
-        "total_missing": 1
+        "source_not_column_read": 4,
+        "price_wrong": 1
       },
-      "merchandise_subtotal": 624.91,
-      "subtotal_match": false,
+      "merchandise_subtotal": 1777.99,
+      "subtotal_match": true,
       "is_partial_page": false,
-      "invoice_completeness": "complete",
-      "declared_subtotal": 624.91,
+      "invoice_completeness": "partial",
+      "declared_subtotal": 1841.99,
       "ambiguity_log": [
         {
-          "name": "MS FRY CRAB CAKE BRD O/R KRABBY 3 OZ",
+          "name": "EXTRA CALA CLAM BRD O/R KABAY 3 OZ",
           "price": 45.99,
           "total": 45.99,
           "qty_source": "ambiguous",
@@ -2165,7 +2308,7 @@
           "file": "receipt_0ad1fb34-bbcf-4a9"
         },
         {
-          "name": "PORTCLS PANGASIUS FILET IQF 3-5 OZ",
+          "name": "PORTC PANGASIUS FILET IQF 3-5 OZ",
           "price": 33.99,
           "total": 33.99,
           "qty_source": "ambiguous",
@@ -2193,31 +2336,25 @@
           "total_source": "column_read",
           "review_reason": "Numeric field trust: qty_source=ambiguous",
           "file": "receipt_0ad1fb34-bbcf-4a9"
-        },
-        {
-          "name": "SYS CLS DRINK MIX LEMONADE PINK",
-          "price": 35.95,
-          "total": 35.95,
-          "qty_source": "ambiguous",
-          "price_source": "column_read",
-          "total_source": "column_read",
-          "review_reason": "Numeric field trust: qty_source=ambiguous",
-          "file": "receipt_0ad1fb34-bbcf-4a9"
-        },
-        {
-          "name": "SYS CLS SUGAR GRANULATED XFINE CANE",
-          "price": 37.79,
-          "total": 37.79,
-          "qty_source": "ambiguous",
-          "price_source": "column_read",
-          "total_source": "column_read",
-          "review_reason": "Numeric field trust: qty_source=ambiguous",
-          "file": "receipt_0ad1fb34-bbcf-4a9"
         }
       ],
+      "qty_distribution": {
+        "1": 5,
+        "15": 1,
+        "2": 2,
+        "8": 2,
+        "4": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "HANOVER OKRA BRD MED",
+          "name": "SYS CLS CHICKEN CROP PSH HAL",
+          "qty": 15.0,
+          "price": 49.95,
+          "total": 749.25
+        },
+        {
+          "name": "MANOTR ORA BRD MED",
           "qty": 2.0,
           "price": 31.79,
           "total": 63.58
@@ -2229,19 +2366,25 @@
           "total": 40.98
         },
         {
-          "name": "SYS REL KETCHUP PACKET FOIL",
+          "name": "SYS CLS DRINK MIX LEMONADE PINK",
           "qty": 8.0,
-          "price": 18.95,
-          "total": 151.6
+          "price": 35.95,
+          "total": 287.6
         },
         {
-          "name": "CAJ CHE SAUCE HOT LOUISIANA",
-          "qty": 3.0,
+          "name": "SYS REL SAUCE HOT LOUISIANA",
+          "qty": 4.0,
           "price": 39.25,
-          "total": 117.75
+          "total": 157.0
+        },
+        {
+          "name": "SYS CLS SUGAR GRANULATED XFING CANE",
+          "qty": 8.0,
+          "price": 37.79,
+          "total": 302.32
         }
       ],
-      "api_time_sec": 32.4,
+      "api_time_sec": 25.7,
       "file_size_kb": 1920
     },
     {
@@ -2266,14 +2409,19 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 125.0,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "5": 1,
+        "3": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 4.3,
+      "api_time_sec": 3.4,
       "file_size_kb": 12
     },
     {
       "file": "receipt_000a71bb-a857-4b2d-bd9e-3ca72161fceb.jpg",
-      "vendor_detected": "Gville Seafood N Chicken",
-      "vendor_class": "Other (Gville Seafood N Chicken)",
+      "vendor_detected": "Grille Seafood N Chicken",
+      "vendor_class": "Other (Grille Seafood N Chicken)",
       "is_sysco": false,
       "total_items_returned": 2,
       "extracted_line_items": 2,
@@ -2292,51 +2440,63 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 1921.0,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "470": 1,
+        "92": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 22.7,
+      "api_time_sec": 18.3,
       "file_size_kb": 2526
     },
     {
       "file": "receipt_e679742e-b319-4d96-8d83-e5fa6468106b.jpg",
-      "vendor_detected": "PERFORMANCE FOODSERVICE",
+      "vendor_detected": "Performance Foodservice Powell",
       "vendor_class": "PFG",
       "is_sysco": false,
-      "total_items_returned": 7,
-      "extracted_line_items": 7,
+      "total_items_returned": 6,
+      "extracted_line_items": 5,
       "trusted_count": 0,
-      "review_count": 7,
-      "vendor_pending_count": 7,
+      "review_count": 5,
+      "vendor_pending_count": 5,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "vendor_logic_pending": 7
+        "vendor_logic_pending": 5
       },
       "merchandise_subtotal": 0,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "unknown",
-      "declared_subtotal": 1229.19,
+      "declared_subtotal": 4896.54,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "15": 1,
+        "25": 1,
+        "10": 2,
+        "18": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 39.5,
+      "api_time_sec": 28.7,
       "file_size_kb": 4045
     },
     {
       "file": "receipt_450d9d1e-1fa4-4d7d-9b9b-49655e959ed4.jpg",
-      "vendor_detected": "Seafood Resources Inc.",
-      "vendor_class": "Other (Seafood Resources Inc.)",
+      "vendor_detected": "AFS American Food Services, Inc.",
+      "vendor_class": "Other (AFS American Food Services, In)",
       "is_sysco": false,
-      "total_items_returned": 1,
-      "extracted_line_items": 1,
+      "total_items_returned": 3,
+      "extracted_line_items": 3,
       "trusted_count": 0,
-      "review_count": 1,
-      "vendor_pending_count": 1,
+      "review_count": 3,
+      "vendor_pending_count": 3,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "vendor_logic_pending": 1
+        "vendor_logic_pending": 3
       },
       "merchandise_subtotal": 0,
       "subtotal_match": false,
@@ -2344,8 +2504,13 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 920.3,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "2": 2,
+        "10": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 17.1,
+      "api_time_sec": 14.0,
       "file_size_kb": 2300
     },
     {
@@ -2353,28 +2518,27 @@
       "vendor_detected": "SYSCO JACKSONVILLE",
       "vendor_class": "Sysco",
       "is_sysco": true,
-      "total_items_returned": 6,
-      "extracted_line_items": 6,
+      "total_items_returned": 5,
+      "extracted_line_items": 5,
       "trusted_count": 1,
-      "review_count": 5,
+      "review_count": 4,
       "vendor_pending_count": 0,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
         "qty_wrong": 1,
-        "price_wrong": 1,
-        "source_not_column_read": 1,
-        "both_wrong": 2
+        "both_wrong": 2,
+        "source_not_column_read": 1
       },
       "merchandise_subtotal": 61.86,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
-      "declared_subtotal": 542.26,
+      "declared_subtotal": 456.45,
       "ambiguity_log": [
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI99S10000",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
           "price": 20.62,
           "total": 20.62,
           "qty_source": "ambiguous",
@@ -2384,15 +2548,21 @@
           "file": "receipt_201c7a1b-3f32-499"
         }
       ],
+      "qty_distribution": {
+        "0": 3,
+        "2": 1,
+        "1": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI99S10000 SUBST",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
           "qty": 2.0,
           "price": 20.62,
           "total": 41.24
         }
       ],
-      "api_time_sec": 22.6,
+      "api_time_sec": 22.3,
       "file_size_kb": 3335
     },
     {
@@ -2415,8 +2585,10 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 0.0,
       "ambiguity_log": [],
+      "qty_distribution": {},
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 2.8,
+      "api_time_sec": 2.3,
       "file_size_kb": 6
     },
     {
@@ -2441,8 +2613,13 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 3089.0,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "652": 1,
+        "269": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 25.6,
+      "api_time_sec": 27.7,
       "file_size_kb": 2483
     },
     {
@@ -2467,8 +2644,15 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 1815.73,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "4": 1,
+        "1": 3,
+        "21": 1,
+        "5": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 28.1,
+      "api_time_sec": 25.4,
       "file_size_kb": 3218
     },
     {
@@ -2493,14 +2677,19 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 776.0,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "168": 1,
+        "157": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 14.2,
+      "api_time_sec": 11.7,
       "file_size_kb": 2845
     },
     {
       "file": "receipt_213ca1ff-4de8-4c8a-9f3a-0a4e8021ba68.jpg",
-      "vendor_detected": "Gville Seafood N Chicken",
-      "vendor_class": "Other (Gville Seafood N Chicken)",
+      "vendor_detected": "Grille Seafood N Chicken",
+      "vendor_class": "Other (Grille Seafood N Chicken)",
       "is_sysco": false,
       "total_items_returned": 2,
       "extracted_line_items": 2,
@@ -2519,8 +2708,13 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 1435.5,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "243": 1,
+        "195": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 25.6,
+      "api_time_sec": 30.3,
       "file_size_kb": 2560
     },
     {
@@ -2528,25 +2722,36 @@
       "vendor_detected": "US Foods Inc.",
       "vendor_class": "US Foods",
       "is_sysco": false,
-      "total_items_returned": 19,
-      "extracted_line_items": 19,
+      "total_items_returned": 15,
+      "extracted_line_items": 15,
       "trusted_count": 0,
-      "review_count": 19,
-      "vendor_pending_count": 19,
+      "review_count": 15,
+      "vendor_pending_count": 15,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "vendor_logic_pending": 19
+        "vendor_logic_pending": 15
       },
       "merchandise_subtotal": 0,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "unknown",
-      "declared_subtotal": 1715.72,
+      "declared_subtotal": 854.67,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "1": 11,
+        "4": 1,
+        "2": 2,
+        "3": 1
+      },
+      "usfoods_detail": {
+        "item_codes_found": 14,
+        "math_pass": 14,
+        "math_fail": 1
+      },
       "trusted_items_detail": [],
-      "api_time_sec": 49.0,
+      "api_time_sec": 41.2,
       "file_size_kb": 2901
     },
     {
@@ -2571,8 +2776,13 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 1262.0,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "322": 1,
+        "45": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 25.9,
+      "api_time_sec": 23.6,
       "file_size_kb": 2498
     },
     {
@@ -2597,61 +2807,87 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 1306.5,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "285": 1,
+        "103": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 27.2,
+      "api_time_sec": 30.5,
       "file_size_kb": 2477
     },
     {
       "file": "receipt_c0ac94f6-8d20-4530-83f1-684324555115.jpg",
-      "vendor_detected": "CHRIS PRESCOTT",
-      "vendor_class": "Other (CHRIS PRESCOTT)",
+      "vendor_detected": null,
+      "vendor_class": "Unknown",
       "is_sysco": false,
       "total_items_returned": 7,
       "extracted_line_items": 7,
       "trusted_count": 0,
       "review_count": 7,
-      "vendor_pending_count": 6,
+      "vendor_pending_count": 7,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "vendor_logic_pending": 6,
-        "qty_wrong": 1
+        "vendor_logic_pending": 7
       },
       "merchandise_subtotal": 0,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "unknown",
-      "declared_subtotal": 1118.61,
+      "declared_subtotal": 2633.67,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "2": 1,
+        "3": 1,
+        "5": 3,
+        "1": 1,
+        "12": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 26.5,
+      "api_time_sec": 33.2,
       "file_size_kb": 3985
     },
     {
       "file": "receipt_70f3ed3f-f7e1-4973-b3c9-fd9c64fd86c0.jpg",
-      "vendor_detected": "US Foods",
+      "vendor_detected": "US Foods, Inc.",
       "vendor_class": "US Foods",
       "is_sysco": false,
-      "total_items_returned": 17,
-      "extracted_line_items": 17,
+      "total_items_returned": 21,
+      "extracted_line_items": 21,
       "trusted_count": 0,
-      "review_count": 17,
-      "vendor_pending_count": 17,
+      "review_count": 21,
+      "vendor_pending_count": 21,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "vendor_logic_pending": 17
+        "vendor_logic_pending": 21
       },
       "merchandise_subtotal": 0,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "unknown",
-      "declared_subtotal": 1706.16,
+      "declared_subtotal": 2282.29,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "2": 5,
+        "1": 6,
+        "12": 1,
+        "3": 5,
+        "8": 1,
+        "4": 2,
+        "10": 1
+      },
+      "usfoods_detail": {
+        "item_codes_found": 21,
+        "math_pass": 20,
+        "math_fail": 1
+      },
       "trusted_items_detail": [],
-      "api_time_sec": 55.2,
+      "api_time_sec": 41.2,
       "file_size_kb": 2629
     },
     {
@@ -2676,8 +2912,12 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 888.0,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "296": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 25.1,
+      "api_time_sec": 23.7,
       "file_size_kb": 2750
     },
     {
@@ -2702,8 +2942,14 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 3284.4,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "5": 1,
+        "4": 1,
+        "3": 2
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 16.9,
+      "api_time_sec": 21.5,
       "file_size_kb": 2273
     },
     {
@@ -2711,30 +2957,37 @@
       "vendor_detected": null,
       "vendor_class": "Unknown",
       "is_sysco": false,
-      "total_items_returned": 4,
-      "extracted_line_items": 4,
+      "total_items_returned": 5,
+      "extracted_line_items": 5,
       "trusted_count": 0,
-      "review_count": 4,
-      "vendor_pending_count": 4,
+      "review_count": 5,
+      "vendor_pending_count": 5,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "vendor_logic_pending": 4
+        "vendor_logic_pending": 5
       },
       "merchandise_subtotal": 0,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "unknown",
-      "declared_subtotal": 1703.56,
+      "declared_subtotal": 5510.37,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "4": 1,
+        "3": 1,
+        "20": 2,
+        "1": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 16.7,
+      "api_time_sec": 16.5,
       "file_size_kb": 3348
     },
     {
       "file": "receipt_93d39617-1550-4055-bfac-793519c49ce2.jpg",
-      "vendor_detected": "SYSCO JACKSONVILLE",
+      "vendor_detected": "SYSCO JACKSONVILLE RSP LLC",
       "vendor_class": "Sysco",
       "is_sysco": true,
       "total_items_returned": 5,
@@ -2750,13 +3003,13 @@
         "both_wrong": 2
       },
       "merchandise_subtotal": 85.81,
-      "subtotal_match": false,
-      "is_partial_page": false,
-      "invoice_completeness": "complete",
-      "declared_subtotal": 92.31,
+      "subtotal_match": true,
+      "is_partial_page": true,
+      "invoice_completeness": "partial",
+      "declared_subtotal": 888.09,
       "ambiguity_log": [
         {
-          "name": "SYS CLS VINEGAR DISTILLED WHITE 5%",
+          "name": "SYS CLS VINEGAR DISTILLED WHITE 5*",
           "price": 23.95,
           "total": 23.95,
           "qty_source": "ambiguous",
@@ -2776,15 +3029,21 @@
           "file": "receipt_93d39617-1550-405"
         }
       ],
+      "qty_distribution": {
+        "1": 2,
+        "0": 2,
+        "2": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000 SUBST",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000\nSUBST",
           "qty": 2.0,
           "price": 20.62,
           "total": 41.24
         }
       ],
-      "api_time_sec": 33.0,
+      "api_time_sec": 36.7,
       "file_size_kb": 3787
     },
     {
@@ -2807,13 +3066,19 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 0.0,
       "ambiguity_log": [],
+      "qty_distribution": {},
+      "usfoods_detail": {
+        "item_codes_found": 0,
+        "math_pass": 0,
+        "math_fail": 0
+      },
       "trusted_items_detail": [],
-      "api_time_sec": 4.6,
+      "api_time_sec": 2.8,
       "file_size_kb": 65
     },
     {
       "file": "receipt_27cdefe4-fbba-45c4-88ad-db1968f5674a.jpg",
-      "vendor_detected": "Sysco",
+      "vendor_detected": "SYSCO JACKSONVILLE, INC.",
       "vendor_class": "Sysco",
       "is_sysco": true,
       "total_items_returned": 12,
@@ -2826,14 +3091,14 @@
       "false_trust_count": 0,
       "failure_categories": {
         "source_not_column_read": 2,
-        "both_wrong": 1,
-        "price_wrong": 1
+        "qty_wrong": 1,
+        "math_mismatch": 1
       },
-      "merchandise_subtotal": 1422.31,
+      "merchandise_subtotal": 1363.81,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
-      "declared_subtotal": 1428.81,
+      "declared_subtotal": 1584.81,
       "ambiguity_log": [
         {
           "name": "MONACO JUICE LEMON",
@@ -2846,7 +3111,7 @@
           "file": "receipt_27cdefe4-fbba-45c"
         },
         {
-          "name": "CAJ CHEF SAUCE HOT LOUISIANA",
+          "name": "CAJ CHEF SAUCE HOT",
           "price": 39.25,
           "total": 39.25,
           "qty_source": "ambiguous",
@@ -2856,6 +3121,16 @@
           "file": "receipt_27cdefe4-fbba-45c"
         }
       ],
+      "qty_distribution": {
+        "5": 2,
+        "2": 3,
+        "16": 1,
+        "1": 3,
+        "4": 1,
+        "0": 1,
+        "3": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
           "name": "SYS CLS CHICKEN CVP GIZZARD SM",
@@ -2870,13 +3145,13 @@
           "total": 49.9
         },
         {
-          "name": "SYS CLS CHICKEN CVP WING WHL SM HAL",
+          "name": "SYS CLS CHICKEN CVP WING FL SM HAL",
           "qty": 16.0,
           "price": 49.95,
           "total": 799.2
         },
         {
-          "name": "HANOVER OKRA BRD MED",
+          "name": "BANDOVER OKRA BRD RED",
           "qty": 2.0,
           "price": 31.79,
           "total": 63.58
@@ -2894,19 +3169,19 @@
           "total": 75.8
         },
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD188S10000",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D YT0188S10000",
           "qty": 5.0,
           "price": 19.5,
           "total": 97.5
         },
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD188S10000 SUBST",
-          "qty": 3.0,
-          "price": 19.5,
-          "total": 58.5
+          "name": "CHGS FOR FUEL SURCHARGE",
+          "qty": 1.0,
+          "price": 6.5,
+          "total": 6.5
         }
       ],
-      "api_time_sec": 37.9,
+      "api_time_sec": 33.4,
       "file_size_kb": 3824
     },
     {
@@ -2914,26 +3189,31 @@
       "vendor_detected": "AFS American Food Services, Inc.",
       "vendor_class": "Other (AFS American Food Services, In)",
       "is_sysco": false,
-      "total_items_returned": 5,
-      "extracted_line_items": 5,
+      "total_items_returned": 4,
+      "extracted_line_items": 4,
       "trusted_count": 0,
-      "review_count": 5,
+      "review_count": 4,
       "vendor_pending_count": 4,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "vendor_logic_pending": 4,
-        "none": 1
+        "vendor_logic_pending": 4
       },
       "merchandise_subtotal": 0,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "unknown",
-      "declared_subtotal": 3247.6,
+      "declared_subtotal": 3284.76,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "5": 1,
+        "4": 1,
+        "3": 2
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 20.1,
+      "api_time_sec": 32.6,
       "file_size_kb": 2225
     },
     {
@@ -2958,8 +3238,12 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 484.77,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "0": 5
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 24.0,
+      "api_time_sec": 17.9,
       "file_size_kb": 2876
     },
     {
@@ -2984,32 +3268,42 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 50.0,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "5": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 3.0,
+      "api_time_sec": 3.3,
       "file_size_kb": 7
     },
     {
       "file": "1600af34-b3e5-4f05-96aa-cf553c777bc4.jpg",
-      "vendor_detected": "Sam's Club",
-      "vendor_class": "Other (Sam's Club)",
+      "vendor_detected": "Sam\u2019s Club",
+      "vendor_class": "Other (Sam\u2019s Club)",
       "is_sysco": false,
-      "total_items_returned": 0,
-      "extracted_line_items": 0,
+      "total_items_returned": 1,
+      "extracted_line_items": 1,
       "trusted_count": 0,
-      "review_count": 0,
-      "vendor_pending_count": 0,
+      "review_count": 1,
+      "vendor_pending_count": 1,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
-      "failure_categories": {},
+      "failure_categories": {
+        "vendor_logic_pending": 1
+      },
       "merchandise_subtotal": 0,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "unknown",
       "declared_subtotal": 25.66,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "2": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 28.2,
+      "api_time_sec": 30.1,
       "file_size_kb": 1288
     },
     {
@@ -3017,30 +3311,35 @@
       "vendor_detected": "Performance Foodservice Powell",
       "vendor_class": "PFG",
       "is_sysco": false,
-      "total_items_returned": 6,
-      "extracted_line_items": 5,
+      "total_items_returned": 5,
+      "extracted_line_items": 4,
       "trusted_count": 0,
-      "review_count": 5,
-      "vendor_pending_count": 5,
+      "review_count": 4,
+      "vendor_pending_count": 4,
       "excluded_count": 0,
       "false_trusts": [],
       "false_trust_count": 0,
       "failure_categories": {
-        "vendor_logic_pending": 5
+        "vendor_logic_pending": 4
       },
       "merchandise_subtotal": 0,
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "unknown",
-      "declared_subtotal": 5170.14,
+      "declared_subtotal": 1181.68,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "10": 2,
+        "25": 2
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 39.2,
+      "api_time_sec": 29.6,
       "file_size_kb": 4068
     },
     {
       "file": "receipt_5ff63026-250a-43bb-bd7e-7b8f331df374.jpg",
-      "vendor_detected": "SYSCO JACKSONVILLE",
+      "vendor_detected": "SYSCO JACKSONVILLE, INC.",
       "vendor_class": "Sysco",
       "is_sysco": true,
       "total_items_returned": 5,
@@ -3059,10 +3358,10 @@
       "subtotal_match": false,
       "is_partial_page": false,
       "invoice_completeness": "complete",
-      "declared_subtotal": 480.4,
+      "declared_subtotal": 473.9,
       "ambiguity_log": [
         {
-          "name": "41 GAL SYS CLS VINEGAR DISTILLED WHITE 5%",
+          "name": "SYS CLS VINEGAR DISTILLED WHITE 5%",
           "price": 23.95,
           "total": 23.95,
           "qty_source": "ambiguous",
@@ -3072,7 +3371,7 @@
           "file": "receipt_5ff63026-250a-43b"
         },
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D",
           "price": 20.62,
           "total": 20.62,
           "qty_source": "ambiguous",
@@ -3082,38 +3381,84 @@
           "file": "receipt_5ff63026-250a-43b"
         }
       ],
+      "qty_distribution": {
+        "1": 2,
+        "0": 2,
+        "2": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [
         {
-          "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000 SUBST",
+          "name": "SYS CLS CONTAINER FOAM HNG 1C D",
           "qty": 2.0,
           "price": 20.62,
           "total": 41.24
         }
       ],
-      "api_time_sec": 30.2,
+      "api_time_sec": 22.2,
       "file_size_kb": 3091
     },
     {
       "file": "15f89c02-de1d-470c-9d1a-a4f22918db32.jpg",
-      "error": "HTTP 502: The preview environment is not responding. It may be starting up.\n",
-      "api_time_sec": 60.3,
+      "vendor_detected": "A/S American Food Services, Inc.",
+      "vendor_class": "Other (A/S American Food Services, In)",
+      "is_sysco": false,
+      "total_items_returned": 3,
+      "extracted_line_items": 3,
+      "trusted_count": 0,
+      "review_count": 3,
+      "vendor_pending_count": 3,
+      "excluded_count": 0,
+      "false_trusts": [],
+      "false_trust_count": 0,
+      "failure_categories": {
+        "vendor_logic_pending": 3
+      },
+      "merchandise_subtotal": 0,
+      "subtotal_match": false,
+      "is_partial_page": false,
+      "invoice_completeness": "unknown",
+      "declared_subtotal": 3393.1,
+      "ambiguity_log": [],
+      "qty_distribution": {
+        "5": 1,
+        "4": 1,
+        "14": 1
+      },
+      "usfoods_detail": null,
+      "trusted_items_detail": [],
+      "api_time_sec": 37.7,
       "file_size_kb": 2279
     },
     {
-      "file": "15f89c02-de1d-470c-9d1a-a4f22918db32.jpg",
-      "error": "'is_sysco'",
-      "api_time_sec": 60.3
-    },
-    {
       "file": "receipt_5287cf4a-5328-408a-af27-2749e0bba90d.jpg",
-      "error": "HTTP 502: The preview environment is not responding. It may be starting up.\n",
-      "api_time_sec": 60.3,
+      "vendor_detected": "STIRLING FOOD SYSTEMS",
+      "vendor_class": "Other (STIRLING FOOD SYSTEMS)",
+      "is_sysco": false,
+      "total_items_returned": 3,
+      "extracted_line_items": 3,
+      "trusted_count": 0,
+      "review_count": 3,
+      "vendor_pending_count": 3,
+      "excluded_count": 0,
+      "false_trusts": [],
+      "false_trust_count": 0,
+      "failure_categories": {
+        "vendor_logic_pending": 3
+      },
+      "merchandise_subtotal": 0,
+      "subtotal_match": false,
+      "is_partial_page": false,
+      "invoice_completeness": "unknown",
+      "declared_subtotal": 225.0,
+      "ambiguity_log": [],
+      "qty_distribution": {
+        "1": 3
+      },
+      "usfoods_detail": null,
+      "trusted_items_detail": [],
+      "api_time_sec": 25.2,
       "file_size_kb": 2958
-    },
-    {
-      "file": "receipt_5287cf4a-5328-408a-af27-2749e0bba90d.jpg",
-      "error": "'is_sysco'",
-      "api_time_sec": 60.3
     },
     {
       "file": "receipt_cfd74e65-2ac6-44fe-b982-49e57c25e26a.jpg",
@@ -3137,8 +3482,12 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 932.0,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "1": 4
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 34.8,
+      "api_time_sec": 14.6,
       "file_size_kb": 2412
     },
     {
@@ -3163,8 +3512,13 @@
       "invoice_completeness": "unknown",
       "declared_subtotal": 1691.75,
       "ambiguity_log": [],
+      "qty_distribution": {
+        "90": 1,
+        "271": 1
+      },
+      "usfoods_detail": null,
       "trusted_items_detail": [],
-      "api_time_sec": 23.0,
+      "api_time_sec": 18.2,
       "file_size_kb": 2649
     }
   ]

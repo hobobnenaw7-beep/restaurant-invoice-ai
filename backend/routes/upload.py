@@ -711,6 +711,95 @@ def _apply_sysco_math_first_gate(extracted: dict) -> None:
 
 
 
+# ── US Foods Row Classification Keywords ──
+_USFOODS_EXCLUDE_PATTERNS = re.compile(
+    r'\b(subtotal|sub\s*total|total|invoice\s*total|amount\s*due|'
+    r'sales\s*tax|tax|fuel\s*surcharge|delivery\s*fee|service\s*charge|'
+    r'credit|adjustment|balance\s*due|payment|remit)\b',
+    re.IGNORECASE,
+)
+
+_USFOODS_CATEGORY_HEADERS = re.compile(
+    r'\b(frozen|dairy|produce|bakery|beverages?|paper|chemical|'
+    r'meat|deli|grocery|dry\s*goods?|canned|seafood|poultry)\b',
+    re.IGNORECASE,
+)
+
+
+def _validate_usfoods_extraction(items: list) -> None:
+    """
+    US Foods post-extraction validation.
+    Structural field mapping + row classification + math gate.
+    All items remain as 'vendor_logic_pending' (no trust granted).
+    """
+    if not items:
+        return
+
+    for it in items:
+        if it.get("row_type") not in ("line_item", "fee"):
+            continue
+
+        name = (it.get("raw_name") or "").strip()
+        name_lower = name.lower()
+        qty = float(it.get("quantity", 0) or 0)
+        price = float(it.get("unit_price", 0) or 0)
+        total = float(it.get("total", 0) or 0)
+
+        # Row classification: catch misclassified summary/header rows
+        if _USFOODS_EXCLUDE_PATTERNS.search(name_lower):
+            name_words = name_lower.split()
+            if len(name_words) <= 4:
+                it["row_type"] = "summary"
+                it["confidence_level"] = "excluded"
+                it["needs_review"] = False
+                it["review_reason"] = f"US Foods summary row: '{name}'"
+                continue
+
+        if _USFOODS_CATEGORY_HEADERS.search(name_lower):
+            name_words = name_lower.split()
+            if len(name_words) <= 3 and qty == 0 and price == 0 and total == 0:
+                it["row_type"] = "header"
+                it["confidence_level"] = "excluded"
+                it["needs_review"] = False
+                it["review_reason"] = f"US Foods category header: '{name}'"
+                continue
+
+        # Math validation (same $0.01 tolerance as Sysco)
+        if qty > 0 and price > 0 and total > 0:
+            computed = round(qty * price, 2)
+            diff = abs(computed - total)
+            it["valid_calc"] = diff <= 0.01
+            if not it["valid_calc"]:
+                it.setdefault("validation_errors", []).append(
+                    f"usfoods_math: {qty}x{price}={computed} != {total}"
+                )
+        else:
+            it["valid_calc"] = False
+            missing = []
+            if qty <= 0:
+                missing.append("qty")
+            if price <= 0:
+                missing.append("price")
+            if total <= 0:
+                missing.append("total")
+            it.setdefault("validation_errors", []).append(
+                f"usfoods_missing: {','.join(missing)}"
+            )
+
+        # Item code validation
+        item_code = (it.get("item_code") or "").strip()
+        if item_code and not any(c.isdigit() for c in item_code):
+            it.setdefault("validation_errors", []).append(
+                f"usfoods_bad_item_code: '{item_code}' (no digits)"
+            )
+
+        # All US Foods items stay as vendor_logic_pending
+        it["vendor_status"] = "pending"
+        it["extraction_source"] = "gpt_vision"
+
+
+
+
 def _normalize_date(raw: str) -> str:
     """Try to parse various date formats and return YYYY-MM-DD."""
     if not raw or not raw.strip():
@@ -1034,55 +1123,67 @@ CRITICAL PFG RULES:
             elif "sysco" in dv_lower:
                 builtin_vendor_hint = """
 
-SYSCO INVOICE — SEMANTIC EXTRACTION GUIDE:
-You are reading a Sysco restaurant supply invoice. Use your understanding of the document structure to extract data accurately, even from camera phone photos with noise, skew, or shadows.
+SYSCO INVOICE — HORIZONTAL ANCHORING GUIDE:
+You are reading a Sysco restaurant supply invoice. The table has a consistent grid layout.
 
-COLUMN LAYOUT (dynamically identify — do NOT rely on fixed positions):
-- ITEM/CODE: product code (numeric, usually 6-7 digits)
-- DESCRIPTION: product name (e.g., "BEEF GROUND 80/20 CHUB", "CHICKEN WING 1ST&2ND JMB")
-- PACK: pack specification like "6/#10", "4/5 LB", "24 CT". This is NOT the quantity.
-- QTY/ORDERED/SHIP: the quantity ordered/shipped. THIS IS the correct quantity to extract.
-- PRICE: unit price per case
-- AMOUNT/TOTAL/EXT: extended total for the line
+COLUMN ORDER (left to right):
+ITEM/CODE | DESCRIPTION | PACK | QTY | PRICE | AMOUNT/TOTAL
+
+ANCHORING STRATEGY:
+- The PRICE column and AMOUNT/TOTAL column are the WIDEST and most LEGIBLE columns (right side of the grid)
+- For each row, first read the PRICE (second from right) and AMOUNT/TOTAL (rightmost dollar column)
+- Then trace LEFT along that same horizontal line to find the QTY value
+- QTY is a small integer (typically 1-15) in a narrow column between PACK and PRICE
+- PACK contains descriptors like "6/#10", "4/5 LB" — these are NOT quantities
 
 SUB-CATEGORY HEADERS (do NOT treat as line items):
-- Lines like ***POULTRY***, ***SEAFOOD***, ***FROZEN***, ***DAIRY***, ***CANNED & DRY*** are section headers
-- Lines containing "GROUP TOTAL" are section subtotals — extract with row_type "group_total"
-- Lines containing "SUBTOTAL", "ORDER TOTAL", "INVOICE TOTAL" are summary lines
+- Lines like ***POULTRY***, ***SEAFOOD***, ***FROZEN***, ***DAIRY***, ***CANNED & DRY*** are section headers — SKIP them
+- "GROUP TOTAL" lines are section subtotals — SKIP them
+- "SUBTOTAL", "ORDER TOTAL", "INVOICE TOTAL" are summary lines — SKIP them
 
-CRITICAL SYSCO RULES:
-1. quantity comes from the QTY or ORDERED or SHIP column — scan the header row to find it
-2. Pack values are descriptors (e.g., "6/#10" = 6 cans of #10 size), NOT quantities
-3. "FUEL SURCHARGE", "DELIVERY", "SERVICE CHARGE" lines are service items — extract with quantity=1
-4. Some packs use dimension format (e.g., "1508X8X3") or metric weight (e.g., "10007 GM") — copy verbatim
-5. Identify columns by their HEADER TEXT, not by fixed pixel positions
-6. If the image is rotated, skewed, or has shadows — still read the content semantically"""
+CRITICAL RULES:
+1. quantity comes from the QTY column — it is a small integer, NOT a dollar amount and NOT a pack descriptor
+2. If you can see a number at the QTY position, report qty_source="column_read" even if it's small/narrow
+3. If the QTY position is truly unreadable (blurry, cut off, shadowed), use quantity=0 and qty_source="ambiguous"
+4. NEVER default quantity to 1 — use 0 if unreadable
+5. Pack values like "6/#10" are case descriptors, not quantities
+6. "FUEL SURCHARGE", "DELIVERY", "SERVICE CHARGE" are service items — extract with quantity=1, qty_source="column_read"
+7. Identify columns by their HEADER TEXT, not by fixed pixel positions"""
 
             elif "us foods" in dv_lower or "usfoods" in dv_lower or "us food" in dv_lower:
                 builtin_vendor_hint = """
 
-US FOODS INVOICE — SEMANTIC EXTRACTION GUIDE:
-You are reading a US Foods restaurant supply invoice. Use semantic understanding to extract data accurately from camera phone photos.
+US FOODS INVOICE — STRUCTURAL FIELD MAPPING:
+You are reading a US Foods restaurant supply invoice. Extract field values by reading the document grid structure.
 
-COLUMN LAYOUT (dynamically identify from header row):
-- ITEM NUMBER: 7-digit product code (e.g., "1234567"). MUST be extracted separately from description.
-- BRAND: brand name (e.g., "SYSCO CLASSIC", "CHEF'S LINE")
-- DESCRIPTION: product name. May run into adjacent columns when text density is high.
-- PACK/SIZE: pack specification (e.g., "4/5 LB", "6/10 CT"). NOT the quantity.
+COLUMN LAYOUT (identify from the HEADER ROW):
+- NUMBER/ITEM#: 7-digit product code (e.g., "1234567", "9876543"). Extract this as item_code — it is SEPARATE from the description.
+- BRAND: brand name (e.g., "MONARCH", "CHEF'S LINE", "METRO DELI")
+- DESCRIPTION: product name (may merge with adjacent columns when text is dense)
+- PACK/SIZE: pack specification (e.g., "4/5 LB", "6/10 CT", "1/15 LB"). This is NOT the quantity.
 - ORDERED: quantity ordered (integer)
-- SHIPPED: quantity shipped. THIS IS the correct quantity to extract.
-- WEIGHT: total weight (decimal LBs). NOT the quantity.
-- PRICE: unit price per case
-- EXTENSION: extended total for the line
+- SHIPPED: quantity actually delivered. THIS IS the correct quantity to extract.
+- WEIGHT: total weight in pounds (decimal). This is NOT the quantity.
+- PRICE/UNIT PRICE: unit price per case ($-prefixed)
+- EXTENSION/EXT PRICE: extended total for the line ($-prefixed)
+
+ROW CLASSIFICATION:
+- Product line items: rows with item code + description + numeric values → extract normally
+- "SUBTOTAL" or "SUB-TOTAL": merchandise subtotal → put in "subtotal" field, do NOT extract as line item
+- "TAX" or "SALES TAX": tax amount → put in "tax" field, do NOT extract as line item
+- "TOTAL" or "INVOICE TOTAL" or "AMOUNT DUE": full total → put in "total" field, do NOT extract as line item
+- "FUEL SURCHARGE" or "DELIVERY FEE" or "SERVICE CHARGE": service charges → do NOT include in subtotal
+- Section headers (category names like "FROZEN", "DAIRY") → SKIP entirely
+- Credit/return lines (negative amounts): extract with negative total
 
 CRITICAL US FOODS RULES:
-1. ALWAYS separate the ITEM NUMBER from the DESCRIPTION — they are distinct columns even if visually close
-2. quantity MUST come from SHIPPED column, NOT from ORDERED or WEIGHT
-3. Pack values like "4/5 LB" are specifications, NOT quantities
+1. ALWAYS extract item_code from the NUMBER column — it is the 7-digit code at the start of each row
+2. quantity MUST come from SHIPPED column, NOT from ORDERED, PACK, or WEIGHT
+3. If SHIPPED is 0 but ORDERED > 0, the item was not delivered — use quantity=0
 4. WEIGHT column shows total pounds — do NOT use as quantity
-5. If text density is high and columns blur together, use the HEADER ROW to determine boundaries
-6. Lines with "FUEL" or "SURCHARGE" or "FEE" are service charges, not products
-7. Sub-headers or category dividers should not be treated as line items"""
+5. NEVER default quantity to 1 if SHIPPED column is not readable — use 0 with qty_source="ambiguous"
+6. Description and Brand may appear merged — extract the full text as raw_name
+7. Pack values like "4/5 LB" mean "4 bags of 5 LB each" — copy verbatim as pack_size"""
 
             elif "performance" in dv_lower or "pfg" in dv_lower:
                 # Override the existing PFG hint with enhanced version
@@ -1145,21 +1246,32 @@ CRITICAL: Produce ONE unified result. If the same line item appears in multiple 
                 is_sysco_vendor = "sysco" in (detected_vendor or "").lower()
 
                 if is_sysco_vendor:
-                    # ── SYSCO STRICT READ-ONLY PROMPT ──
+                    # ── SYSCO STRICT READ-ONLY PROMPT WITH HORIZONTAL ANCHORING ──
                     # LLM Vision extracts candidate rows ONLY. No math. No inference. No defaults.
+                    # Horizontal anchoring: use Price/Total columns (wider, more legible) to locate the Qty column.
                     prompt = f"""You are reading a Sysco restaurant purchase invoice from a camera phone photo. READ the document exactly as printed. Do NOT compute or infer any numbers.
 
 Extract into this exact JSON format:
 {{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":"","item_code":""}}],"subtotal":0,"tax":0,"total":0}}
 
+HORIZONTAL ANCHORING TECHNIQUE:
+Sysco invoices have a consistent columnar grid. The PRICE and AMOUNT/TOTAL columns are on the right side and contain wider, more legible dollar values. Use them as anchors:
+1. First, identify the PRICE column and AMOUNT/TOTAL column — these are the two rightmost numeric columns with dollar values
+2. For each row where you can clearly read the PRICE and AMOUNT/TOTAL values, trace horizontally LEFT along that same row
+3. The QTY column is typically a narrow column between PACK and PRICE containing a small integer (usually 1-15 for restaurant orders)
+4. Look carefully at the QTY column position for that row — the number should be a small integer
+5. If you can see a number at the QTY column position for that row, report it with qty_source="column_read"
+6. If the QTY area is obscured, blurry, or the number is not visually distinct, use qty_source="ambiguous" and quantity=0
+
 STRICT READING RULES:
 - Scan the HEADER ROW to dynamically identify column positions (QTY, PACK, DESCRIPTION, PRICE, AMOUNT, etc.)
 - For each line item, READ quantity, unit_price, and total DIRECTLY from their respective columns
 - If you CANNOT clearly read a number from its column, use 0 — do NOT calculate it from other fields
-- Do NOT compute total from qty × price
+- Do NOT compute total from qty x price
 - Do NOT compute qty from total / price
 - Do NOT compute price from total / qty
-- Do NOT default quantity to 1 when you cannot see it
+- Do NOT default quantity to 1 when you cannot see it — use 0 with qty_source="ambiguous"
+- NEVER assume quantity is 1. If you cannot see the number, it is 0 with source "ambiguous"
 - Read pack_size verbatim from the PACK column. Leave "" if not visible.
 - Extract item_code from the ITEM/CODE column if visible
 - Dates must be in YYYY-MM-DD format
@@ -1176,7 +1288,7 @@ NON-PRODUCT ROWS — Extract these separately if visible:
 - Do NOT include fuel surcharge, delivery fees, or service charges in the subtotal
 
 FIELD SOURCE (for each item):
-- qty_source: "column_read" if you clearly see the number in the QTY/ORDERED column, "ambiguous" if uncertain or partially obscured
+- qty_source: "column_read" if you can see a distinct number at the QTY column position for this row, "ambiguous" if the QTY area is obscured/blurry/uncertain
 - price_source: "column_read" if you clearly see it in the PRICE column, "ambiguous" if uncertain
 - total_source: "column_read" if you clearly see it in the AMOUNT/TOTAL column, "ambiguous" if uncertain
 - NEVER use "inferred" — you are not allowed to infer any values
@@ -1462,6 +1574,19 @@ Rules:
                             it["review_reason"] = "Review Required (Vendor Logic Pending) — PFG trust gate not yet implemented"
                         it["vendor_status"] = "pending"
                         it["extraction_source"] = "gpt_vision"
+
+                elif "us foods" in dv_lower or "usfoods" in dv_lower or "us food" in dv_lower:
+                    # ── US FOODS: Structural mapping + math gate, NO trust ──
+                    _validate_usfoods_extraction(extracted["items"])
+                    for it in extracted.get("items", []):
+                        if it.get("row_type") in ("line_item", "fee"):
+                            it["confidence_level"] = "vendor_logic_pending"
+                            it["needs_review"] = True
+                            if not it.get("review_reason"):
+                                math_status = "PASS" if it.get("valid_calc") else "FAIL"
+                                it["review_reason"] = f"Review Required (Vendor Logic Pending) — US Foods math gate: {math_status}"
+                            it["vendor_status"] = "pending"
+                            it["extraction_source"] = "gpt_vision_usfoods"
 
                 elif "sysco" in dv_lower:
                     # ── SYSCO STRICT MATH-FIRST VALIDATION ──

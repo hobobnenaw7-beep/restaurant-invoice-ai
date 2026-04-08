@@ -152,8 +152,13 @@ def analyze_result(fname, result):
 
     # Ambiguity pattern log (qty=1 items with source_not_column_read)
     ambiguity_log = []
-    for it in review:
+    # Full qty distribution for audit
+    qty_distribution = {}
+    for it in line_items:
         qty = float(it.get("quantity", 0) or 0)
+        qty_key = str(int(qty)) if qty == int(qty) else str(qty)
+        qty_distribution[qty_key] = qty_distribution.get(qty_key, 0) + 1
+
         if qty == 1.0 and it.get("numeric_failure_category") == "source_not_column_read":
             ambiguity_log.append({
                 "name": (it.get("raw_name") or "")[:50],
@@ -185,6 +190,12 @@ def analyze_result(fname, result):
         "invoice_completeness": data.get("_invoice_completeness", "unknown"),
         "declared_subtotal": float(data.get("subtotal", 0) or 0),
         "ambiguity_log": ambiguity_log,
+        "qty_distribution": qty_distribution,
+        "usfoods_detail": {
+            "item_codes_found": sum(1 for it in line_items if (it.get("item_code") or "").strip()),
+            "math_pass": sum(1 for it in line_items if it.get("valid_calc")),
+            "math_fail": sum(1 for it in line_items if not it.get("valid_calc") and it.get("row_type") in ("line_item", "fee")),
+        } if is_usfoods else None,
         "trusted_items_detail": [
             {"name": it.get("raw_name", "")[:50], "qty": it.get("quantity"), "price": it.get("unit_price"), "total": it.get("total")}
             for it in trusted
@@ -298,7 +309,24 @@ def run_phase2():
         print(f"  Trusted (should be 0): {ns_trusted}")
         for r in non_sysco:
             v = r.get("vendor_class", "?")
-            print(f"    {r['file'][:30]:<32} {v:<15} {r.get('extracted_line_items',0)} items, {r.get('vendor_pending_count',0)} pending")
+            usf = ""
+            if r.get("usfoods_detail"):
+                d = r["usfoods_detail"]
+                usf = f" | codes={d['item_codes_found']} math_pass={d['math_pass']} math_fail={d['math_fail']}"
+            print(f"    {r['file'][:30]:<32} {v:<15} {r.get('extracted_line_items',0)} items, {r.get('vendor_pending_count',0)} pending{usf}")
+
+    # ── SYSCO QTY VALUE DISTRIBUTION AUDIT ──
+    print(f"\n{'─'*40}")
+    print(f"SYSCO QTY VALUE DISTRIBUTION")
+    print(f"{'─'*40}")
+    all_qty_dist = {}
+    for r in sysco:
+        for k, v in r.get("qty_distribution", {}).items():
+            all_qty_dist[k] = all_qty_dist.get(k, 0) + v
+    for k in sorted(all_qty_dist.keys(), key=lambda x: float(x)):
+        pct = all_qty_dist[k] / sum(all_qty_dist.values()) * 100
+        bar = "#" * int(pct / 2)
+        print(f"  qty={k:>4}: {all_qty_dist[k]:>4} items ({pct:>5.1f}%) {bar}")
 
     # ── AMBIGUITY PATTERN LOG ──
     print(f"\n{'─'*40}")
