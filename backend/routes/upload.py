@@ -1456,14 +1456,11 @@ Rules:
                 if "performance" in dv_lower or "pfg" in dv_lower:
                     _validate_pfg_extraction(extracted["items"])
                     for it in extracted.get("items", []):
-                        it["confidence_level"] = "vendor_unsupported"
+                        it["confidence_level"] = "vendor_logic_pending"
                         it["needs_review"] = True
                         if not it.get("review_reason"):
-                            it["review_reason"] = "PFG extraction limited: $/LB and EXT PRICE columns cannot be reliably separated. Manual review required."
-                        it.setdefault("validation_errors", []).append(
-                            "pfg_limited_mode: column separation not yet implemented"
-                        )
-                        it["vendor_status"] = "limited"
+                            it["review_reason"] = "Review Required (Vendor Logic Pending) — PFG trust gate not yet implemented"
+                        it["vendor_status"] = "pending"
                         it["extraction_source"] = "gpt_vision"
 
                 elif "sysco" in dv_lower:
@@ -1475,24 +1472,35 @@ Rules:
                             it["vendor_status"] = "controlled_operational"
                             it["extraction_source"] = "gpt_vision_strict"
 
-                    # ── Subtotal validation — only line_item and fee rows ──
-                    line_items_for_sum = [it for it in extracted.get("items", [])
-                                          if it.get("row_type") in ("line_item", "fee")]
-                    items_sum = round(sum(float(it.get("total", 0) or 0) for it in line_items_for_sum), 2)
-                    if not extracted.get("subtotal") and items_sum > 0:
-                        extracted["subtotal"] = items_sum
-                    if not extracted.get("total") and items_sum > 0:
-                        extracted["total"] = round(items_sum + float(extracted.get("tax", 0) or 0), 2)
+                else:
+                    # ── ALL OTHER VENDORS: Vendor Logic Pending ──
+                    # Run math validation but do NOT grant Trusted status
+                    for it in extracted.get("items", []):
+                        if it.get("row_type") in ("line_item", "fee"):
+                            it["confidence_level"] = "vendor_logic_pending"
+                            it["needs_review"] = True
+                            vendor_label = detected_vendor if detected_vendor.upper() != "UNKNOWN" else "Unknown vendor"
+                            if not it.get("review_reason"):
+                                it["review_reason"] = f"Review Required (Vendor Logic Pending) — {vendor_label} trust gate not yet implemented"
+                            it["vendor_status"] = "pending"
+                            it["extraction_source"] = "gpt_vision"
 
+                # ── Subtotal validation (all vendors) ──
+                line_items_for_sum = [it for it in extracted.get("items", [])
+                                      if it.get("row_type") in ("line_item", "fee")]
+                items_sum = round(sum(float(it.get("total", 0) or 0) for it in line_items_for_sum), 2)
+                if not extracted.get("subtotal") and items_sum > 0:
+                    extracted["subtotal"] = items_sum
+                if not extracted.get("total") and items_sum > 0:
+                    extracted["total"] = round(items_sum + float(extracted.get("tax", 0) or 0), 2)
+
+                if "sysco" in dv_lower:
+                    # Sysco-specific subtotal validation with partial-page awareness
                     subtotal = float(extracted.get("subtotal", 0) or 0)
                     if items_sum > 0 and subtotal > 0 and abs(items_sum - subtotal) > 0.10:
                         pct_diff = abs(items_sum - subtotal) / subtotal if subtotal else 0
 
                         if items_sum < subtotal:
-                            # ── PARTIAL PAGE: items sum is LESS than declared subtotal ──
-                            # This means the photo only captured part of the invoice.
-                            # Row-level math already validated — keep trusted items trusted.
-                            # Flag invoice as partial so user knows totals are incomplete.
                             extracted["_invoice_completeness"] = "partial"
                             extracted["_partial_reason"] = (
                                 f"Items sum ${items_sum:.2f} is {pct_diff:.0%} below declared subtotal "
@@ -1504,9 +1512,6 @@ Rules:
                             )
                             extracted["_subtotal_warning"] = True
                         else:
-                            # ── OVER-EXTRACTION: items sum EXCEEDS declared subtotal ──
-                            # This could mean duplicate items or non-product rows leaked in.
-                            # Downgrade trusted items to review.
                             extracted["_invoice_completeness"] = "over_extracted"
                             warnings.append(f"Items sum ({items_sum}) EXCEEDS subtotal ({subtotal})")
                             extracted["_subtotal_warning"] = True
@@ -1533,20 +1538,20 @@ Rules:
                             warnings.append(f"subtotal+tax={expected_total} but total={total}")
                             extracted["_total_warning"] = True
 
-                    raw_date = extracted.get("invoice_date", "")
-                    if raw_date:
-                        normalized = _normalize_date(raw_date)
-                        if normalized != raw_date:
-                            extracted["invoice_date"] = normalized
-                            if not normalized:
-                                warnings.append(f"Could not parse date: {raw_date}")
-                                extracted["_date_warning"] = True
+                raw_date = extracted.get("invoice_date", "")
+                if raw_date:
+                    normalized = _normalize_date(raw_date)
+                    if normalized != raw_date:
+                        extracted["invoice_date"] = normalized
+                        if not normalized:
+                            warnings.append(f"Could not parse date: {raw_date}")
+                            extracted["_date_warning"] = True
 
-                    extracted["_warnings"] = warnings
-                    extracted["_has_warnings"] = len(warnings) > 0
+                extracted["_warnings"] = warnings
+                extracted["_has_warnings"] = len(warnings) > 0
 
-                    # Cross-item validation
-                    validate_purchase_items(extracted["items"])
+                # Cross-item validation
+                validate_purchase_items(extracted["items"])
 
                 # Compute invoice-level extraction quality (both paths)
                 extraction_meta = compute_extraction_meta(extracted["items"], extracted)
