@@ -1052,12 +1052,13 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
         )
 
         from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+        from services.llm_rate_limiter import rate_limited_llm_call
 
         vendor_hint = ""
         vendor_pattern = None
         detect_chat = LlmChat(api_key=LLM_KEY, session_id=f"detect-{uuid.uuid4()}", system_message="You read receipts. Return ONLY the vendor/supplier company name, nothing else. If unclear, return UNKNOWN.").with_model("openai", "gpt-5.2")
         detect_msg = UserMessage(text="What is the vendor/supplier name on this receipt?", file_contents=[ImageContent(image_base64=images_b64[0])])
-        detected_vendor = (await detect_chat.send_message(detect_msg)).strip().strip('"').strip("'")
+        detected_vendor = (await rate_limited_llm_call(detect_chat, detect_msg, label="vendor_detect")).strip().strip('"').strip("'")
         logger.info(f"Detected vendor: {detected_vendor}")
 
         if detected_vendor and detected_vendor.upper() != "UNKNOWN":
@@ -1387,7 +1388,7 @@ Rules:
         chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately by reading the document. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
         file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
         user_msg = UserMessage(text=prompt, file_contents=file_contents)
-        response = await chat.send_message(user_msg)
+        response = await rate_limited_llm_call(chat, user_msg, label="extract_invoice")
 
         json_match = re.search(r'\{[\s\S]*\}', response)
         if json_match:
@@ -1761,3 +1762,10 @@ Rules:
     except Exception as e:
         logger.error(f"Extraction error: {e}")
         raise HTTPException(500, f"Extraction failed: {str(e)}")
+
+
+@router.get("/llm-stats")
+async def get_llm_stats_endpoint():
+    """Return LLM rate limiter statistics."""
+    from services.llm_rate_limiter import get_llm_stats
+    return get_llm_stats()

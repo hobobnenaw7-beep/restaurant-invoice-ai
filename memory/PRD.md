@@ -6,205 +6,75 @@ Build a robust, rule-based Invoice Review and Correction Pipeline for restaurant
 ## Architecture
 - **Frontend**: React + Shadcn/UI
 - **Backend**: FastAPI + MongoDB
-- **OCR**: Tesseract + OpenCV (proven unreliable — kept only for synthetic tests)
 - **LLM**: OpenAI GPT-5.2 via Emergent LLM Key (primary extraction — vision-based)
-- **Validation**: Deterministic rule-based pipeline (system-enforced, no LLM math)
+- **Rate Limiter**: Custom async request queue with retry logic (`services/llm_rate_limiter.py`)
+- **Validation**: Deterministic math-first pipeline (system-enforced, no LLM math)
 
 ## Vendor-Separated Pipeline Strategy
 
-**Three separate failure classes. Do NOT treat as one pipeline problem.**
+| Vendor | Status | Trust Gate | Input Support | Trust Rate |
+|--------|--------|-----------|---------------|------------|
+| **Sysco** | **Controlled Operational** | Math-first ($0.01 tolerance) + source validation | Camera photos + scans | **52% (0 false trusts)** |
+| **US Foods** | **Structural Mapping Done** | Math gate runs, all items → vendor_logic_pending | Camera photos | N/A (no trust yet) |
+| **PFG** | **Pending** | All items → vendor_logic_pending | Camera photos | N/A |
+| **Other** | **Pending** | All items → vendor_logic_pending | Any | N/A |
 
-| Vendor | Failure Class | Status | Input | Next Phase |
-|--------|--------------|--------|-------|------------|
-| **Sysco** | Refinement/Validation | **Controlled Operational** (guarded, scanned only) | Scanned PDF | Operational testing with usability metrics |
-| **PFG** | Column Separation | **Limited Mode** (all items → needs_review) | Any | Dedicated PFG Column Separation Phase |
-| **US Foods** | Extraction/Reading | **Parked** | — | Dedicated extraction phase later |
+## Sysco Math-First Trust Gate
 
-## Usability Metrics (Silent Collection)
+A row is Trusted ONLY if ALL conditions pass:
+1. vendor = Sysco
+2. row_type = line_item or fee
+3. Text is structurally readable (≥3 alpha chars)
+4. qty > 0, unit_price > 0, total > 0
+5. qty × unit_price = total (tolerance: $0.01)
+6. All field sources are "column_read" (not "inferred" or "ambiguous")
+7. No inferred/hallucinated values
 
-4 dimensions tracked per invoice — no user-facing UI:
-1. **Time saved** — upload-to-save vs 5-min manual baseline (configurable)
-2. **Review burden** — trusted vs needs_review vs manually corrected
-3. **Error detection value** — system-flagged items: confirmed vs overridden
-4. **User friction** — edits count, fields corrected, review time
+### Known Pattern: qty=1 Trap
+- GPT marks qty_source as "ambiguous" when QTY column is narrow/unreadable
+- These items get qty=1 by default → `1 × price = total` trivially passes
+- Trust gate CORRECTLY rejects these (source not column_read)
+- This accounts for ~65% of review items
 
-Endpoints:
-- `POST /api/metrics/invoice-lifecycle` — Log per-invoice lifecycle data
-- `GET /api/metrics/invoice-summary` — Aggregated stats for internal analysis
+## Horizontal Anchoring (Sysco)
+GPT Vision uses Price and Total columns (wider, more legible) as horizontal anchors to trace left and locate the QTY column. Improved trust rate from 47% → 52%.
 
-## Strict Decision Gate (Deterministic)
+## Partial Page Handling
+- If items_sum < declared_subtotal → partial page (common with camera photos of multi-page invoices)
+- Row-level trusted items preserved; invoice flagged as "partial"
+- If items_sum > declared_subtotal → over-extraction; trusted items downgraded
 
-No row becomes "trusted" unless ALL conditions pass:
-1. qty from defined column (qty > 0)
-2. unit_price from defined column (price > 0)
-3. total from defined column (total > 0)
-4. item name present
-5. math validated (qty × price ≈ total within 2% or $0.50)
-6. no hard failures
-7. subtotal validates (items sum within 5% of declared total)
+## LLM Rate Limiter
+- Min 3s interval between requests (prevents proxy burst limits)
+- Max 2 retries with exponential backoff (8s, 16s)
+- Handles webhook.site rate limits from Emergent proxy
+- Stats endpoint: GET /api/llm-stats
 
-## Review Status Taxonomy
+## Stress Test Results (Phase 2.1 — 50 files)
 
-| Status | Meaning | Action |
-|--------|---------|--------|
-| `trusted` | All gates passed, no ambiguity | Auto-accepted |
-| `needs_review_light` | Minor issues (pack format, name quality) but math OK | User review recommended |
-| `needs_review_numeric` | Math mismatch or missing qty/price/total | User review required |
-| `extraction_failed` | Critical fields missing or garbled | Manual entry needed |
-| `vendor_unsupported` | Vendor not yet fully supported (PFG, US Foods) | Manual entry needed |
+### Sysco (20 invoices)
+- 184 line items extracted
+- 96 trusted (52%), 88 review, 1 excluded
+- **0 false trusts**
+- 17 complete, 2 partial, 1 over-extracted
 
-### Sysco (Controlled Operational — Guarded Mode)
-Usable for real-world testing. NOT fully trusted. Validation gates all output.
-1. Group total / subtotal text in item name → needs_review
-2. Missing or unreadable qty (qty=0 with total>0) → needs_review
-3. Math validation: qty × price ≠ total by >10% → needs_review
-4. Service row classification (fuel surcharge, delivery)
-5. Subtotal mismatch >5% → ALL items downgraded to review
+### Non-Sysco (30 invoices)
+- 110 line items extracted
+- 0 trusted (correct — vendor logic pending)
+- US Foods: 97% item code extraction, 94% math pass
 
-### PFG (Limited Mode)
-1. ALL items → needs_review: "$/LB and EXT PRICE cannot be reliably separated"
-2. All-qty-1 detection, pack-in-name, weight-as-qty, service rows
+## Key API Endpoints
+- `POST /api/upload/extract` — Main extraction pipeline
+- `GET /api/llm-stats` — Rate limiter statistics
+- `POST /api/auth/login` — Authentication
 
-## Critical Findings (Spike Testing V1-V3)
-
-- Tesseract OCR: unusable on both camera photos AND scanned PDFs
-- GPT-5.2 Vision: primary reading layer, stable on scanned Sysco, unstable on PFG column separation
-- Hybrid architecture (GPT reads → system enforces): structurally sound
-
-## Code Structure
-```
-/app/backend/
-├── routes/
-│   ├── upload.py               (Pipeline, vendor prompts, PFG/Sysco post-validation)
-│   ├── purchases.py            (PATCH for inline edits)
-│   ├── metrics.py              (Legacy review session tracking)
-│   ├── usability_metrics.py    (4-dimension silent lifecycle tracking)
-├── services/
-│   ├── layout_parser.py        (OCR extraction — kept for synthetic tests)
-│   ├── semantic_validator.py   (Row classification, trust levels, vendor patterns)
-├── preprocessing.py            (Pack parsing, item validation, score computation, SCAN MODE)
-├── tests/
-│   ├── test_pfg_parser.py           (18 tests)
-│   ├── test_sysco_validation.py     (32 tests)
-│   ├── test_sysco_preprocessing.py  (12 tests)
-│   ├── test_pfg_post_extraction.py  (7 tests)
-│   ├── test_vendor_guardrails.py    (9 tests)
-│   ├── test_scan_mode.py            (25 tests — edge detection, perspective, pipeline)
-│   ├── spike_hybrid*.py            (Spike V1-V3 evidence)
-```
-
-## Scan Mode (Always ON — Feb 2026)
-Automatic image preprocessing for camera photos:
-1. **Edge detection**: OpenCV Canny + contour detection to find document boundaries
-2. **Perspective correction**: 4-point transform to flatten angled photos
-3. **Camera photo detection**: Border brightness analysis (dark borders = camera photo)
-4. **4-way orientation fix**: Compares OCR readability at 0°/90°/180°/270° — picks best (fixes upside-down and sideways documents)
-5. **Fallback**: CLAHE adaptive contrast for photos where edges can't be found
-6. **Clean scan passthrough**: No-op for scanned PDFs (already full-frame)
-7. **Preprocessing evidence**: Every upload returns step-by-step metadata + before/after artifacts
-Pipeline: Scan Mode → EXIF rotate → 4-way Orientation fix → Deskew → Crop margins → Enhancement
-
-**Requires**: `tesseract-ocr` + `tesseract-ocr-eng` system packages (for OSD + readability scoring)
-
-## Testing: 140/140 backend tests pass
-
-## Sysco Table Reconstruction Pipeline (Apr 2026)
-**New architecture**: OCR-based table reconstruction replaces GPT for Sysco.
-No LLM involved in Sysco extraction — all deterministic.
-
-### Pipeline Flow
-```
-upload → preprocess (scan mode) → Tesseract OCR → table reconstruction → row classification → numeric extraction → validation → trust gate
-```
-
-### Architecture (`/app/backend/services/sysco_pipeline.py`)
-1. **OCR**: Tesseract `image_to_data` → word-level bounding boxes with confidence
-2. **Row Segmentation**: Y-position clustering groups words into rows (dynamic threshold)
-3. **Column Detection**: Data-driven x-position clustering finds QTY, PRICE, TOTAL columns from where numbers actually appear (not from headers)
-4. **Row Classification**: Each row → `line_item`, `group_total`, `subtotal`, `tax`, `fee`, `header`, `unknown`
-5. **Footer Trimming**: All rows after last group_total/subtotal → excluded (legal/signature text)
-6. **Numeric Extraction**: Parse numbers from column-assigned cells
-7. **Math Validation**: qty × price ≈ total (2% or $0.50 tolerance)
-8. **Trust Gate**: Trusted ONLY if all 3 sources = column_read + math validates
-
-### Integration with Upload Flow
-- Sysco vendors → `run_sysco_pipeline()` (OCR-based, no GPT)
-- Non-Sysco vendors → GPT path (unchanged)
-- Sysco pipeline items bypass per-item re-scoring (already validated)
-
-### Results on Real Invoice
-- 10 items extracted, 6 trusted, 4 review
-- Trusted items: all have correct math (qty × price = total)
-- Review items: OCR misread (1), missing qty (2), missing price (1) — all correctly flagged
-
-### Legacy Code (preserved)
-- GPT extraction: preserved for non-Sysco vendors
-- Math infill: wrapped with `if not is_sysco` guard
-- `validate_and_score_item()`: runs for GPT path only
-
-## Numeric Field Trust System (Apr 2026)
-Eliminates false trust on numeric fields (qty, price, total):
-
-### Row Type Classification
-Every row classified BEFORE any validation:
-- `line_item` — actual product line (participates in trust evaluation + subtotal sum)
-- `group_total` — section/group subtotal (excluded from all evaluation)
-- `subtotal` — invoice subtotal line (excluded)
-- `tax` — tax line (excluded)
-- `fee` — service fee (participates in trust evaluation)
-- `header` — section header text (excluded)
-- `unknown` — can't determine (excluded)
-
-### Field-Level Source Tracking
-GPT returns per-field source hints (`column_read`, `inferred`, `ambiguous`).
-System heuristics OVERRIDE GPT when patterns indicate false confidence:
-1. **All-qty-1 pattern**: If all line_items have qty=1 → all qty_source → ambiguous
-2. **Price==total with qty=1**: For non-fee items → qty_source → ambiguous
-3. **Math mismatch**: qty×price ≠ total → all sources → ambiguous
-4. **Zero-field infill**: If a field was 0 and computed → source = inferred
-5. **Unrealistic values**: qty>500 or price>5000 → ambiguous
-
-### Numeric Trust Gate
-Row trusted ONLY if ALL conditions met:
-- qty_source == column_read
-- price_source == column_read
-- total_source == column_read
-- Math validates
-- No numeric failure category
-
-### Failure Categories
-Each non-trusted row gets a category:
-- `qty_wrong` — quantity not reliably sourced
-- `price_wrong` — price not reliably sourced
-- `both_wrong` — both qty and price unreliable
-- `total_wrong_due_to_upstream` — total inferred from wrong inputs
-
-### Results
-**Before**: ~40% false trust rate (10/10 trusted, 4 had wrong qty)
-**After**: 0% false trust rate (5/10 trusted — all verified; 5/10 needs_review_numeric — all correctly flagged)
-
-## Prioritized Backlog
-
-### P0 — Immediate
-- Real-world Sysco testing (20-30 invoices)
-- Success criteria: ≥70% fully trusted invoices, ≥85% trusted rows, <2 min correction time
-- Identify top 3 failure patterns from real usage → fix those
-
-### P0 — Next Dedicated Phase
-- PFG Column Separation Phase ($/LB vs EXT PRICE separation)
-
-### P1
-- US Foods dedicated extraction phase
-- Vendor comparison with loose match keys
-
-### P2 (Paused)
-- AI Chat Assistant Polish
-- Salaries OCR, pack size preview
-- bcrypt / pytest fixes (parked)
-
-## System Dependencies
-- `tesseract-ocr` + `tesseract-ocr-eng` (for orientation detection + readability scoring)
-- Install script: `/app/backend/install_deps.sh`
+## Files of Reference
+- `/app/backend/routes/upload.py` — Pipeline flow, vendor routing, trust gates
+- `/app/backend/services/llm_rate_limiter.py` — Rate limiting + retry logic
+- `/app/backend/services/sysco_pipeline.py` — Legacy OCR pipeline (bypassed)
+- `/app/backend/preprocessing.py` — Image preprocessing
+- `/app/backend/tests/phase2_stress_test.py` — 50-file stress test
+- `/app/backend/tests/phase2_stress_report.json` — Latest results
 
 ## Credentials
 - Demo: demo@test.com / testpassword
