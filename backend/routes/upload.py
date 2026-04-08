@@ -628,6 +628,7 @@ def _apply_sysco_math_first_gate(extracted: dict) -> None:
 
     # ── Phase 3: Invoice-level merchandise subtotal validation ──
     # Sum validated line items and compare to declared subtotal
+    # This phase only computes the match — Phase 4 uses it for trust decisions
     validated_items = [it for it in line_items
                        if it.get("valid_calc") is True
                        and it.get("row_type") == "line_item"]  # Fees excluded from merchandise subtotal
@@ -635,6 +636,7 @@ def _apply_sysco_math_first_gate(extracted: dict) -> None:
 
     declared_subtotal = float(extracted.get("subtotal", 0) or 0)
     subtotal_match = False
+    is_partial_page = False
 
     if items_sum > 0 and declared_subtotal > 0:
         subtotal_diff = abs(items_sum - declared_subtotal)
@@ -643,24 +645,17 @@ def _apply_sysco_math_first_gate(extracted: dict) -> None:
         if subtotal_diff <= 0.01:
             subtotal_match = True
         elif subtotal_pct <= 0.05:
-            # Within 5% — acceptable (some items may be on other pages)
             subtotal_match = True
-        else:
-            # Subtotal mismatch — downgrade all trusted items
-            for it in validated_items:
-                if it.get("confidence_level") == "trusted":
-                    it["confidence_level"] = "needs_review_numeric"
-                    it["needs_review"] = True
-                    it["review_reason"] = (
-                        f"Merchandise subtotal mismatch: items sum ${items_sum:.2f} "
-                        f"vs declared ${declared_subtotal:.2f} ({subtotal_pct:.0%} off)"
-                    )
-                    it.setdefault("validation_errors", []).append(
-                        f"sysco_subtotal_mismatch: sum={items_sum}, declared={declared_subtotal}"
-                    )
+        elif items_sum < declared_subtotal:
+            # Partial page: we captured fewer items than the full invoice
+            # Row-level math is still valid — this is not an extraction error
+            is_partial_page = True
+            subtotal_match = True  # Allow trust for partial pages
+        # else: items_sum > declared_subtotal → over-extraction, subtotal_match stays False
 
     extracted["_sysco_merchandise_subtotal"] = items_sum
     extracted["_sysco_subtotal_match"] = subtotal_match
+    extracted["_sysco_is_partial_page"] = is_partial_page
 
     # ── Phase 4: Trust assignment ──
     # A row is trusted ONLY if ALL conditions pass
@@ -1491,18 +1486,44 @@ Rules:
 
                     subtotal = float(extracted.get("subtotal", 0) or 0)
                     if items_sum > 0 and subtotal > 0 and abs(items_sum - subtotal) > 0.10:
-                        warnings.append(f"Items sum ({items_sum}) differs from subtotal ({subtotal})")
-                        extracted["_subtotal_warning"] = True
                         pct_diff = abs(items_sum - subtotal) / subtotal if subtotal else 0
-                        if pct_diff > 0.05:
-                            for it in extracted.get("items", []):
-                                if it.get("confidence_level") == "trusted" and it.get("row_type") in ("line_item", "fee"):
-                                    it["confidence_level"] = "needs_review_numeric"
-                                    it["needs_review"] = True
-                                    it["review_reason"] = f"Subtotal mismatch: items sum ${items_sum} vs declared ${subtotal} ({pct_diff:.0%} off)"
-                                    it.setdefault("validation_errors", []).append(
-                                        f"subtotal_mismatch: sum={items_sum}, declared={subtotal}"
-                                    )
+
+                        if items_sum < subtotal:
+                            # ── PARTIAL PAGE: items sum is LESS than declared subtotal ──
+                            # This means the photo only captured part of the invoice.
+                            # Row-level math already validated — keep trusted items trusted.
+                            # Flag invoice as partial so user knows totals are incomplete.
+                            extracted["_invoice_completeness"] = "partial"
+                            extracted["_partial_reason"] = (
+                                f"Items sum ${items_sum:.2f} is {pct_diff:.0%} below declared subtotal "
+                                f"${subtotal:.2f} — likely a partial page photo"
+                            )
+                            warnings.append(
+                                f"Partial page: items sum (${items_sum:.2f}) < subtotal (${subtotal:.2f}). "
+                                f"Row-level trust preserved; invoice-level subtotal unverified."
+                            )
+                            extracted["_subtotal_warning"] = True
+                        else:
+                            # ── OVER-EXTRACTION: items sum EXCEEDS declared subtotal ──
+                            # This could mean duplicate items or non-product rows leaked in.
+                            # Downgrade trusted items to review.
+                            extracted["_invoice_completeness"] = "over_extracted"
+                            warnings.append(f"Items sum ({items_sum}) EXCEEDS subtotal ({subtotal})")
+                            extracted["_subtotal_warning"] = True
+                            if pct_diff > 0.05:
+                                for it in extracted.get("items", []):
+                                    if it.get("confidence_level") == "trusted" and it.get("row_type") in ("line_item", "fee"):
+                                        it["confidence_level"] = "needs_review_numeric"
+                                        it["needs_review"] = True
+                                        it["review_reason"] = (
+                                            f"Over-extraction: items sum ${items_sum} exceeds "
+                                            f"declared subtotal ${subtotal} ({pct_diff:.0%} over)"
+                                        )
+                                        it.setdefault("validation_errors", []).append(
+                                            f"subtotal_over_extracted: sum={items_sum}, declared={subtotal}"
+                                        )
+                    else:
+                        extracted["_invoice_completeness"] = "complete" if subtotal > 0 else "unknown"
 
                     total = float(extracted.get("total", 0) or 0)
                     tax = float(extracted.get("tax", 0) or 0)

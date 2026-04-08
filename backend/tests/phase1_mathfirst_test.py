@@ -140,6 +140,9 @@ def analyze_result(fname, result):
         "failure_categories": failure_cats,
         "merchandise_subtotal": data.get("_sysco_merchandise_subtotal", 0),
         "subtotal_match": data.get("_sysco_subtotal_match", False),
+        "is_partial_page": data.get("_sysco_is_partial_page", False),
+        "invoice_completeness": data.get("_invoice_completeness", "unknown"),
+        "partial_reason": data.get("_partial_reason", ""),
         "declared_subtotal": float(data.get("subtotal", 0) or 0),
         "declared_total": float(data.get("total", 0) or 0),
         "declared_tax": float(data.get("tax", 0) or 0),
@@ -207,7 +210,7 @@ def run_phase1():
             print(f"  Vendor: {analysis.get('vendor_detected', '?')}")
             print(f"  Items: {analysis['extracted_line_items']} line | {analysis['trusted_count']} trusted | {analysis['review_count']} review | {analysis['excluded_count']} excluded")
             print(f"  False trusts: {analysis['false_trust_count']}")
-            print(f"  Subtotal: merch=${analysis.get('merchandise_subtotal',0):.2f} vs declared=${analysis.get('declared_subtotal',0):.2f} | match={analysis.get('subtotal_match', False)}")
+            print(f"  Subtotal: merch=${analysis.get('merchandise_subtotal',0):.2f} vs declared=${analysis.get('declared_subtotal',0):.2f} | match={analysis.get('subtotal_match', False)} | completeness={analysis.get('invoice_completeness', '?')}")
 
             if analysis.get("failure_categories"):
                 cats = analysis["failure_categories"]
@@ -275,13 +278,14 @@ def run_phase1():
 
     # Per-invoice table
     print(f"\n{'─'*110}")
-    hdr = f"{'File':<28} {'Vendor':<10} {'Line':>5} {'Trust':>6} {'Revw':>5} {'Excl':>5} {'False':>6} {'SubM':>5} {'Time':>6}"
+    hdr = f"{'File':<28} {'Vendor':<10} {'Line':>5} {'Trust':>6} {'Revw':>5} {'Excl':>5} {'False':>6} {'SubM':>5} {'Compl':<12} {'Time':>6}"
     print(hdr)
     print(f"{'─'*110}")
     for r in successful:
         f = r["file"][:27]
         v = (r.get("vendor_detected") or "")[:9]
-        print(f"{f:<28} {v:<10} {r.get('extracted_line_items',0):>5} {r.get('trusted_count',0):>6} {r.get('review_count',0):>5} {r.get('excluded_count',0):>5} {r.get('false_trust_count',0):>6} {'Y' if r.get('subtotal_match') else 'N':>5} {r.get('api_time_sec',0):>5.1f}s")
+        compl = (r.get("invoice_completeness") or "?")[:11]
+        print(f"{f:<28} {v:<10} {r.get('extracted_line_items',0):>5} {r.get('trusted_count',0):>6} {r.get('review_count',0):>5} {r.get('excluded_count',0):>5} {r.get('false_trust_count',0):>6} {'Y' if r.get('subtotal_match') else 'N':>5} {compl:<12} {r.get('api_time_sec',0):>5.1f}s")
 
     # Timing
     times = [r.get("api_time_sec", 0) for r in successful if r.get("api_time_sec", 0) > 0]
