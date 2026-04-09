@@ -1,0 +1,85 @@
+{
+  "phase": "phase2.2_validation",
+  "baseline": {
+    "sysco_invoices": 21,
+    "total_line_items": 185,
+    "trusted": 82,
+    "memory_support": 0,
+    "review": 103,
+    "false_trusts": 0,
+    "trust_rate": 0.4432
+  },
+  "root_cause": {
+    "db_storage_gap": true,
+    "purchases_has_test_data": true,
+    "receipt_extractions_missing_vendor": true,
+    "extraction_results_not_persisted_correctly": true
+  },
+  "simulation": {
+    "cross_invoice_memory_size": 82,
+    "cross_invoice_unique_products": 49,
+    "ambiguous_items_tested": 62,
+    "upgrade_eligible": 0,
+    "inconsistencies": 6,
+    "insufficient_data": 8,
+    "no_match": 48,
+    "upgrades_detail": [],
+    "inconsistencies_detail": [
+      {
+        "name": "SYS CLS CHICKEN CVP LIVER SM",
+        "price": 25.38,
+        "total": 25.38,
+        "stable_qty": 2.0,
+        "calc_qty": 1.0
+      },
+      {
+        "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI99S10000",
+        "price": 20.62,
+        "total": 20.62,
+        "stable_qty": 2.0,
+        "calc_qty": 1.0
+      },
+      {
+        "name": "HANOVER OKRA BRD MED",
+        "price": 31.79,
+        "total": 31.79,
+        "stable_qty": 3.0,
+        "calc_qty": 1.0
+      },
+      {
+        "name": "SYS CLS CONTAINER FOAM HNG 1C D YTDI99S10000",
+        "price": 20.62,
+        "total": 20.62,
+        "stable_qty": 2.0,
+        "calc_qty": 1.0
+      },
+      {
+        "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
+        "price": 20.62,
+        "total": 20.62,
+        "stable_qty": 2.0,
+        "calc_qty": 1.0
+      },
+      {
+        "name": "SYS CLS CONTAINER FOAM HNG 1C D YTD199S10000",
+        "price": 20.62,
+        "total": 20.62,
+        "stable_qty": 2.0,
+        "calc_qty": 1.0
+      }
+    ]
+  },
+  "ocr_fragmentation": {
+    "container_foam_variants": 6,
+    "lemonade_variants": 5,
+    "crab_cake_variants": 6
+  },
+  "conclusion": {
+    "memory_produces_upgrades": false,
+    "trust_rate_improved": false,
+    "blocking_issues": [
+      "DB_STORAGE: Extraction results not saved with detected_vendor or confidence_level",
+      "OCR_FRAGMENTATION: Same product generates multiple normalized keys due to OCR typos"
+    ]
+  }
+}
