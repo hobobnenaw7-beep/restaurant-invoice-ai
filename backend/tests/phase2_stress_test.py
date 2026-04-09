@@ -120,6 +120,7 @@ def analyze_result(fname, result):
     line_items = [it for it in items if it.get("row_type") in ("line_item", "fee")]
     excluded = [it for it in items if it.get("confidence_level") == "excluded"]
     trusted = [it for it in line_items if it.get("confidence_level") == "trusted"]
+    memory_support = [it for it in line_items if it.get("confidence_level") == "review_with_memory_support"]
     review = [it for it in line_items if it.get("needs_review", False)]
     vendor_pending = [it for it in line_items if it.get("confidence_level") == "vendor_logic_pending"]
 
@@ -178,6 +179,7 @@ def analyze_result(fname, result):
         "total_items_returned": len(items),
         "extracted_line_items": len(line_items),
         "trusted_count": len(trusted),
+        "memory_support_count": len(memory_support),
         "review_count": len(review),
         "vendor_pending_count": len(vendor_pending),
         "excluded_count": len(excluded),
@@ -196,6 +198,19 @@ def analyze_result(fname, result):
             "math_pass": sum(1 for it in line_items if it.get("valid_calc")),
             "math_fail": sum(1 for it in line_items if not it.get("valid_calc") and it.get("row_type") in ("line_item", "fee")),
         } if is_usfoods else None,
+        "product_memory_stats": data.get("_product_memory_stats", {}) if is_sysco else None,
+        "memory_support_detail": [
+            {
+                "name": (it.get("raw_name") or "")[:50],
+                "qty": it.get("quantity"),
+                "price": it.get("unit_price"),
+                "total": it.get("total"),
+                "stable_qty": it.get("_memory_stable_qty"),
+                "calc_qty": it.get("_memory_calc_qty"),
+                "review_reason": (it.get("review_reason") or "")[:100],
+            }
+            for it in memory_support
+        ] if is_sysco else None,
         "trusted_items_detail": [
             {"name": it.get("raw_name", "")[:50], "qty": it.get("quantity"), "price": it.get("unit_price"), "total": it.get("total")}
             for it in trusted
@@ -233,7 +248,7 @@ def run_phase2():
             results.append(a)
 
             v = a.get("vendor_class", "?")
-            trust_label = f"{a['trusted_count']}T" if a["is_sysco"] else f"{a['vendor_pending_count']}VP"
+            trust_label = f"{a['trusted_count']}T/{a.get('memory_support_count',0)}M" if a["is_sysco"] else f"{a['vendor_pending_count']}VP"
             print(f"  {elapsed:.0f}s | {v:<12} | {a['extracted_line_items']} items | {trust_label} | {a['review_count']}R | {a['excluded_count']}X | compl={a.get('invoice_completeness','?')}")
 
             if a.get("false_trusts"):
@@ -272,16 +287,19 @@ def run_phase2():
     print(f"{'─'*40}")
     s_items = sum(r.get("extracted_line_items", 0) for r in sysco)
     s_trusted = sum(r.get("trusted_count", 0) for r in sysco)
+    s_memory = sum(r.get("memory_support_count", 0) for r in sysco)
     s_review = sum(r.get("review_count", 0) for r in sysco)
     s_excluded = sum(r.get("excluded_count", 0) for r in sysco)
     s_false = sum(r.get("false_trust_count", 0) for r in sysco)
     print(f"  Line items: {s_items}")
     print(f"  TRUSTED:    {s_trusted}")
+    print(f"  MEMORY_SUPPORT: {s_memory}")
     print(f"  REVIEW:     {s_review}")
     print(f"  EXCLUDED:   {s_excluded}")
     print(f"  FALSE TRUST:{s_false}")
     if s_items > 0:
         print(f"  Trust rate: {s_trusted}/{s_items} = {s_trusted/s_items:.0%}")
+        print(f"  Trust+Memory rate: {s_trusted+s_memory}/{s_items} = {(s_trusted+s_memory)/s_items:.0%}")
 
     # Completeness
     compl = Counter(r.get("invoice_completeness", "?") for r in sysco)
@@ -314,6 +332,35 @@ def run_phase2():
                 d = r["usfoods_detail"]
                 usf = f" | codes={d['item_codes_found']} math_pass={d['math_pass']} math_fail={d['math_fail']}"
             print(f"    {r['file'][:30]:<32} {v:<15} {r.get('extracted_line_items',0)} items, {r.get('vendor_pending_count',0)} pending{usf}")
+
+    # ── PRODUCT MEMORY ANALYSIS ──
+    print(f"\n{'─'*40}")
+    print(f"PRODUCT MEMORY CROSS-VALIDATION")
+    print(f"{'─'*40}")
+    total_mem_matches = 0
+    total_mem_upgrades = 0
+    all_inconsistencies = []
+    for r in sysco:
+        ms = r.get("product_memory_stats") or {}
+        total_mem_matches += ms.get("matches_found", 0)
+        total_mem_upgrades += ms.get("upgraded_to_memory_support", 0)
+        for inc in ms.get("inconsistencies", []):
+            inc["file"] = r["file"][:25]
+            all_inconsistencies.append(inc)
+    print(f"  Memory matches found: {total_mem_matches}")
+    print(f"  Upgraded to review_with_memory_support: {total_mem_upgrades}")
+    print(f"  Inconsistencies detected: {len(all_inconsistencies)}")
+
+    if total_mem_upgrades > 0:
+        print(f"\n  MEMORY-SUPPORTED ITEMS:")
+        for r in sysco:
+            for m in (r.get("memory_support_detail") or []):
+                print(f"    {m['name']:<45} qty={m['qty']} price=${m['price']} total=${m['total']} stable_qty={m.get('stable_qty')}")
+
+    if all_inconsistencies:
+        print(f"\n  INCONSISTENCIES:")
+        for inc in all_inconsistencies:
+            print(f"    {inc['file']} | {inc['product']:<35} price=${inc['price']} total=${inc['total']} memory_qty={inc['memory_stable_qty']} calc_qty={inc['calculated_qty']}")
 
     # ── SYSCO QTY VALUE DISTRIBUTION AUDIT ──
     print(f"\n{'─'*40}")
@@ -374,13 +421,13 @@ def run_phase2():
 
     # ── PER-INVOICE TABLE ──
     print(f"\n{'─'*120}")
-    print(f"{'File':<28} {'Vendor':<13} {'Line':>5} {'Trust':>6} {'Revw':>5} {'VP':>4} {'Excl':>5} {'FT':>4} {'Compl':<10} {'Time':>6}")
+    print(f"{'File':<28} {'Vendor':<13} {'Line':>5} {'Trust':>6} {'MemS':>5} {'Revw':>5} {'VP':>4} {'Excl':>5} {'FT':>4} {'Compl':<10} {'Time':>6}")
     print(f"{'─'*120}")
     for r in successful:
         f = r["file"][:27]
         v = r.get("vendor_class", "?")[:12]
         c = (r.get("invoice_completeness") or "?")[:9]
-        print(f"{f:<28} {v:<13} {r.get('extracted_line_items',0):>5} {r.get('trusted_count',0):>6} {r.get('review_count',0):>5} {r.get('vendor_pending_count',0):>4} {r.get('excluded_count',0):>5} {r.get('false_trust_count',0):>4} {c:<10} {r.get('api_time_sec',0):>5.1f}s")
+        print(f"{f:<28} {v:<13} {r.get('extracted_line_items',0):>5} {r.get('trusted_count',0):>6} {r.get('memory_support_count',0):>5} {r.get('review_count',0):>5} {r.get('vendor_pending_count',0):>4} {r.get('excluded_count',0):>5} {r.get('false_trust_count',0):>4} {c:<10} {r.get('api_time_sec',0):>5.1f}s")
 
     # Timing
     times = [r.get("api_time_sec", 0) for r in successful if r.get("api_time_sec", 0) > 0]
@@ -398,12 +445,19 @@ def run_phase2():
             "invoices": len(sysco),
             "line_items": s_items,
             "trusted": s_trusted,
+            "memory_support": s_memory,
             "review": s_review,
             "excluded": s_excluded,
             "false_trusts": s_false,
             "trust_rate": round(s_trusted / s_items, 4) if s_items > 0 else 0,
+            "trust_plus_memory_rate": round((s_trusted + s_memory) / s_items, 4) if s_items > 0 else 0,
             "completeness": dict(compl),
             "failure_categories": s_cats,
+            "product_memory": {
+                "matches_found": total_mem_matches,
+                "upgraded_to_memory_support": total_mem_upgrades,
+                "inconsistencies": len(all_inconsistencies),
+            },
         },
         "non_sysco_summary": {
             "invoices": len(non_sysco),

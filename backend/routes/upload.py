@@ -502,7 +502,7 @@ _SYSCO_CATEGORY_HEADERS = re.compile(
 )
 
 
-def _apply_sysco_math_first_gate(extracted: dict) -> None:
+async def _apply_sysco_math_first_gate(extracted: dict) -> None:
     """
     Sysco math-first trust gate.
 
@@ -708,6 +708,104 @@ def _apply_sysco_math_first_gate(extracted: dict) -> None:
                 it["numeric_failure_category"] = "source_not_column_read"
             else:
                 it["numeric_failure_category"] = "unknown"
+
+    # ── Phase 5: Product Memory Cross-Validation (support layer) ──
+    # Build memory from trusted items in THIS invoice, then check ambiguous rows.
+    # Does NOT promote to trusted. Only upgrades to review_with_memory_support.
+    from services.product_memory import ProductMemory
+
+    memory = ProductMemory()
+
+    # Build from DB history (past trusted Sysco extractions)
+    try:
+        from core.database import db as mongo_db
+        await memory.build_from_db(mongo_db)
+    except Exception as e:
+        logger.debug(f"Product memory: skipped DB build: {e}")
+
+    # Build from current invoice's trusted items
+    memory.build_from_trusted_items(items, source_label="current_invoice")
+
+    memory_stats = {
+        "memory_size": memory.size,
+        "unique_products": memory.unique_products,
+        "matches_found": 0,
+        "upgraded_to_memory_support": 0,
+        "inconsistencies": [],
+    }
+
+    # Check ambiguous rows against memory
+    for it in line_items:
+        if it.get("confidence_level") == "excluded":
+            continue
+        if it.get("numeric_failure_category") != "source_not_column_read":
+            continue
+
+        # Only apply to the specific pattern: qty=ambiguous, price=column_read, total=column_read
+        qty_src = (it.get("qty_source") or "").lower()
+        price_src = (it.get("price_source") or "").lower()
+        total_src = (it.get("total_source") or "").lower()
+
+        if qty_src != "ambiguous" or price_src != "column_read" or total_src != "column_read":
+            continue
+
+        raw_name = (it.get("raw_name") or "").strip()
+        price = float(it.get("unit_price", 0) or 0)
+        total = float(it.get("total", 0) or 0)
+        qty = float(it.get("quantity", 0) or 0)
+
+        if price <= 0 or total <= 0:
+            continue
+
+        match = memory.lookup(raw_name, price)
+
+        if not match.get("matched"):
+            continue
+
+        memory_stats["matches_found"] += 1
+        it["_memory_match"] = match
+
+        # Calculated qty (consistency check only — NOT used as source of truth)
+        calc_qty = round(total / price, 2) if price > 0 else 0
+
+        if match["consistency"] == "stable" and match["stable_qty"] is not None:
+            stable_qty = match["stable_qty"]
+
+            if calc_qty == stable_qty:
+                # Strong memory match: product+price seen before, calculated qty matches stable pattern
+                # Upgrade from needs_review_numeric to review_with_memory_support
+                it["confidence_level"] = "review_with_memory_support"
+                it["review_reason"] = (
+                    f"Memory match: '{raw_name[:30]}' at ${price:.2f} has stable qty={int(stable_qty)} "
+                    f"({match['price_matches']} prior occurrences). "
+                    f"Calculated qty ({calc_qty}) matches. Structural confirmation still needed."
+                )
+                it["_memory_stable_qty"] = stable_qty
+                it["_memory_calc_qty"] = calc_qty
+                memory_stats["upgraded_to_memory_support"] += 1
+            else:
+                # Inconsistency: memory says one qty, math says another
+                inconsistency = {
+                    "product": raw_name[:40],
+                    "price": price,
+                    "total": total,
+                    "memory_stable_qty": stable_qty,
+                    "calculated_qty": calc_qty,
+                    "current_qty": qty,
+                }
+                memory_stats["inconsistencies"].append(inconsistency)
+                it["_memory_inconsistency"] = True
+                it["review_reason"] = (
+                    f"Memory inconsistency: '{raw_name[:30]}' at ${price:.2f} — "
+                    f"memory expects qty={int(stable_qty)} but total/price suggests qty={calc_qty}"
+                )
+
+        elif match["consistency"] == "insufficient":
+            # Product seen but not enough data for stable pattern
+            it["_memory_match_weak"] = True
+            # Keep as needs_review_numeric — don't upgrade
+
+    extracted["_product_memory_stats"] = memory_stats
 
 
 
@@ -1592,7 +1690,7 @@ Rules:
                 elif "sysco" in dv_lower:
                     # ── SYSCO STRICT MATH-FIRST VALIDATION ──
                     _validate_sysco_extraction(extracted["items"])
-                    _apply_sysco_math_first_gate(extracted)
+                    await _apply_sysco_math_first_gate(extracted)
                     for it in extracted.get("items", []):
                         if it.get("row_type") in ("line_item", "fee"):
                             it["vendor_status"] = "controlled_operational"
@@ -1646,6 +1744,7 @@ Rules:
                                     if it.get("confidence_level") == "trusted" and it.get("row_type") in ("line_item", "fee"):
                                         it["confidence_level"] = "needs_review_numeric"
                                         it["needs_review"] = True
+                                        it["numeric_failure_category"] = "subtotal_over_extracted"
                                         it["review_reason"] = (
                                             f"Over-extraction: items sum ${items_sum} exceeds "
                                             f"declared subtotal ${subtotal} ({pct_diff:.0%} over)"
