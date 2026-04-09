@@ -6,6 +6,7 @@ import { StableErrorBoundary } from "@/components/StableErrorBoundary";
 import Layout from "@/components/Layout";
 import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
+import ProfitDashboard from "@/pages/ProfitDashboard";
 import ExpensesPage from "@/pages/ExpensesPage";
 import SalesPage from "@/pages/SalesPage";
 import VendorsPage from "@/pages/VendorsPage";
@@ -42,7 +43,8 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
-          <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/dashboard" element={<ProtectedRoute><ProfitDashboard /></ProtectedRoute>} />
+          <Route path="/dashboard-legacy" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/expenses" element={<ProtectedRoute><ExpensesPage /></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute><SalesPage /></ProtectedRoute>} />
           <Route path="/vendors" element={<ProtectedRoute><VendorsPage /></ProtectedRoute>} />

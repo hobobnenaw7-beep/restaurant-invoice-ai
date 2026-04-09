@@ -1857,6 +1857,51 @@ Rules:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 })
 
+            # ── Save review items for Review Queue ──
+            review_items_for_queue = []
+            for it in items_to_store:
+                cl = it.get("confidence_level", "")
+                if cl in ("trusted", "excluded", "review_with_memory_support"):
+                    continue
+                if it.get("needs_review") or cl in ("needs_review_numeric", "needs_review"):
+                    nfc = it.get("numeric_failure_category", "")
+                    reason_label = "Review Required"
+                    if cl == "review_with_memory_support":
+                        reason_label = "Memory Supported (Qty=1)"
+                    elif nfc == "source_not_column_read":
+                        reason_label = "Qty Ambiguous"
+                    elif nfc == "math_mismatch":
+                        reason_label = "Price Mismatch"
+                    elif nfc == "qty_wrong":
+                        reason_label = "Qty Missing"
+                    elif nfc == "price_wrong":
+                        reason_label = "Price Missing"
+                    elif nfc == "both_wrong":
+                        reason_label = "Qty & Price Missing"
+                    elif nfc == "total_missing":
+                        reason_label = "Total Missing"
+
+                    review_items_for_queue.append({
+                        "id": str(uuid.uuid4()),
+                        "extraction_id": extraction_id,
+                        "raw_name": (it.get("raw_name") or "").strip(),
+                        "item_code": (it.get("item_code") or "").strip(),
+                        "quantity": float(it.get("quantity", 0) or 0),
+                        "unit_price": float(it.get("unit_price", 0) or 0),
+                        "total": float(it.get("total", 0) or 0),
+                        "vendor": detected_vendor or "Unknown",
+                        "invoice_number": extracted.get("invoice_number", ""),
+                        "invoice_date": extracted.get("invoice_date", ""),
+                        "confidence_level": cl,
+                        "numeric_failure_category": nfc,
+                        "reason_label": reason_label,
+                        "review_reason": (it.get("review_reason") or "")[:200],
+                        "status": "review",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    })
+            if review_items_for_queue:
+                await db.sysco_review_items.insert_many(review_items_for_queue)
+
         if isinstance(extracted.get("items"), list) and document_type != "purchase_invoice":
             from preprocessing import validate_purchase_items
             validate_purchase_items(extracted["items"])
