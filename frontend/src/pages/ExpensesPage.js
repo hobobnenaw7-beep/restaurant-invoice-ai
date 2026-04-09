@@ -497,7 +497,18 @@ function RawMaterialsTab({ api }) {
       // Store receipt tracking info
       if (res.data?.receipt_id) setReceiptId(res.data.receipt_id);
       if (res.data?.parsing_method) setParsingMethod(res.data.parsing_method);
-    } catch (err) { toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.')); }
+    } catch (err) {
+      const detail = err.response?.data?.detail || err.message || 'Unknown error';
+      const status = err.response?.status;
+      console.error('Extraction error:', { status, detail, err });
+      if (status === 500 && detail.includes('Rate')) {
+        toast.error(`Model rate limited — please wait 30s and retry. (${detail.slice(0, 120)})`);
+      } else if (status === 500 && detail.includes('Budget')) {
+        toast.error(`LLM budget exceeded — contact admin. (${detail.slice(0, 120)})`);
+      } else {
+        toast.error(`Extraction failed (${status || 'timeout'}): ${detail.slice(0, 150)}`);
+      }
+    }
     finally { setExtracting(false); extractingRef.current = false; }
   };
 
@@ -1273,7 +1284,18 @@ function OtherExpensesTab({ api }) {
       if (res.data?.receipt_id) setReceiptId(res.data.receipt_id);
       if (res.data?.parsing_method) setParsingMethod(res.data.parsing_method);
       toast.success(res.data.message || 'Data extracted! Review and save.');
-    } catch (err) { toast.error('Extraction failed: ' + (err.response?.data?.detail || 'Try again.')); }
+    } catch (err) {
+      const detail = err.response?.data?.detail || err.message || 'Unknown error';
+      const status = err.response?.status;
+      console.error('Extraction error:', { status, detail, err });
+      if (status === 500 && detail.includes('Rate')) {
+        toast.error(`Model rate limited — please wait 30s and retry. (${detail.slice(0, 120)})`);
+      } else if (status === 500 && detail.includes('Budget')) {
+        toast.error(`LLM budget exceeded — contact admin. (${detail.slice(0, 120)})`);
+      } else {
+        toast.error(`Extraction failed (${status || 'timeout'}): ${detail.slice(0, 150)}`);
+      }
+    }
     finally { setExtracting(false); extractingRef.current = false; }
   };
 
