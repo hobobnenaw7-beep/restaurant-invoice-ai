@@ -710,8 +710,9 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
                 it["numeric_failure_category"] = "unknown"
 
     # ── Phase 5: Product Memory Cross-Validation (support layer) ──
-    # Build memory from trusted items in THIS invoice, then check ambiguous rows.
+    # Build memory from trusted items in THIS invoice + DB history.
     # Does NOT promote to trusted. Only upgrades to review_with_memory_support.
+    # V2: Item code-first matching, fuzzy description fallback, controlled qty=1 support.
     from services.product_memory import ProductMemory
 
     memory = ProductMemory()
@@ -729,9 +730,11 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
     memory_stats = {
         "memory_size": memory.size,
         "unique_products": memory.unique_products,
+        "unique_item_codes": memory.unique_item_codes,
         "matches_found": 0,
         "upgraded_to_memory_support": 0,
         "inconsistencies": [],
+        "match_methods": {"item_code": 0, "exact_key": 0, "fuzzy": 0},
     }
 
     # Check ambiguous rows against memory
@@ -753,16 +756,20 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
         price = float(it.get("unit_price", 0) or 0)
         total = float(it.get("total", 0) or 0)
         qty = float(it.get("quantity", 0) or 0)
+        item_code = (it.get("item_code") or "").strip()
 
         if price <= 0 or total <= 0:
             continue
 
-        match = memory.lookup(raw_name, price)
+        match = memory.lookup(raw_name, price, item_code=item_code)
 
         if not match.get("matched"):
             continue
 
         memory_stats["matches_found"] += 1
+        match_method = match.get("match_method", "unknown")
+        if match_method in memory_stats["match_methods"]:
+            memory_stats["match_methods"][match_method] += 1
         it["_memory_match"] = match
 
         # Calculated qty (consistency check only — NOT used as source of truth)
@@ -773,10 +780,10 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
 
             if calc_qty == stable_qty:
                 # Strong memory match: product+price seen before, calculated qty matches stable pattern
-                # Upgrade from needs_review_numeric to review_with_memory_support
                 it["confidence_level"] = "review_with_memory_support"
+                it["needs_review"] = True
                 it["review_reason"] = (
-                    f"Memory match: '{raw_name[:30]}' at ${price:.2f} has stable qty={int(stable_qty)} "
+                    f"Memory match ({match_method}): '{raw_name[:30]}' at ${price:.2f} has stable qty={int(stable_qty)} "
                     f"({match['price_matches']} prior occurrences). "
                     f"Calculated qty ({calc_qty}) matches. Structural confirmation still needed."
                 )
@@ -792,6 +799,7 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
                     "memory_stable_qty": stable_qty,
                     "calculated_qty": calc_qty,
                     "current_qty": qty,
+                    "match_method": match_method,
                 }
                 memory_stats["inconsistencies"].append(inconsistency)
                 it["_memory_inconsistency"] = True
@@ -800,10 +808,30 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
                     f"memory expects qty={int(stable_qty)} but total/price suggests qty={calc_qty}"
                 )
 
+        elif calc_qty == 1.0 and match.get("seen_at_this_price"):
+            # ── Controlled qty=1 memory support ──
+            # Product+price has been seen before (at any qty), and calc suggests qty=1.
+            # Ordering 1 case is valid. Upgrade to review_with_memory_support (NOT trusted).
+            it["confidence_level"] = "review_with_memory_support"
+            it["needs_review"] = True
+            it["review_reason"] = (
+                f"Memory support ({match_method}): '{raw_name[:30]}' at ${price:.2f} recognized "
+                f"({match['price_matches']} prior at this price, {match['occurrences']} total). "
+                f"Qty=1 is plausible. Human review recommended."
+            )
+            it["_memory_stable_qty"] = None
+            it["_memory_calc_qty"] = calc_qty
+            it["_memory_qty1_support"] = True
+            memory_stats["upgraded_to_memory_support"] += 1
+
+        elif calc_qty == 1.0 and match.get("seen_at_any_price") and not match.get("seen_at_this_price"):
+            # Product known but at a different price — weaker signal
+            it["_memory_match_weak"] = True
+            it["_memory_note"] = f"Product known but price ${price:.2f} not seen before (known prices: {match.get('qty_pattern', {})})"
+
         elif match["consistency"] == "insufficient":
             # Product seen but not enough data for stable pattern
             it["_memory_match_weak"] = True
-            # Keep as needs_review_numeric — don't upgrade
 
     extracted["_product_memory_stats"] = memory_stats
 
@@ -1806,6 +1834,34 @@ Rules:
                     "total": float(it.get("total", 0) or it.get("revenue", 0) or 0),
                 })
             await db.extracted_items.insert_many(item_docs)
+
+        # ── Persist Sysco trusted extraction for Product Memory ──
+        if document_type == "purchase_invoice" and detected_vendor and "sysco" in (detected_vendor or "").lower():
+            trusted_items_for_memory = []
+            for it in items_to_store:
+                if it.get("confidence_level") == "trusted" or it.get("confidence_level") == "review_with_memory_support":
+                    trusted_items_for_memory.append({
+                        "raw_name": (it.get("raw_name") or "").strip(),
+                        "item_code": (it.get("item_code") or "").strip(),
+                        "quantity": float(it.get("quantity", 0) or 0),
+                        "unit_price": float(it.get("unit_price", 0) or 0),
+                        "total": float(it.get("total", 0) or 0),
+                        "pack_size": (it.get("pack_size") or "").strip(),
+                        "confidence_level": it.get("confidence_level", ""),
+                        "row_type": it.get("row_type", ""),
+                        "qty_source": it.get("qty_source", ""),
+                        "price_source": it.get("price_source", ""),
+                        "total_source": it.get("total_source", ""),
+                    })
+            if trusted_items_for_memory:
+                await db.sysco_trusted_extractions.insert_one({
+                    "detected_vendor": detected_vendor,
+                    "supplier_name": extracted.get("supplier_name", ""),
+                    "invoice_number": extracted.get("invoice_number", ""),
+                    "extraction_id": extraction_id,
+                    "items": trusted_items_for_memory,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
 
         if isinstance(extracted.get("items"), list) and document_type != "purchase_invoice":
             from preprocessing import validate_purchase_items

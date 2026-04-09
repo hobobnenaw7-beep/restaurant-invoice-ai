@@ -205,9 +205,12 @@ def analyze_result(fname, result):
                 "qty": it.get("quantity"),
                 "price": it.get("unit_price"),
                 "total": it.get("total"),
+                "item_code": (it.get("item_code") or "")[:15],
                 "stable_qty": it.get("_memory_stable_qty"),
                 "calc_qty": it.get("_memory_calc_qty"),
-                "review_reason": (it.get("review_reason") or "")[:100],
+                "qty1_support": it.get("_memory_qty1_support", False),
+                "match_method": (it.get("_memory_match") or {}).get("match_method", "?"),
+                "review_reason": (it.get("review_reason") or "")[:120],
             }
             for it in memory_support
         ] if is_sysco else None,
@@ -243,21 +246,33 @@ def run_phase2():
             raw = extract_invoice(fpath, token)
             elapsed = time.time() - t0
             a = analyze_result(fname, raw)
+
+            if "error" in a:
+                print(f"  ERROR ({elapsed:.0f}s): {a['error']}")
+                a["api_time_sec"] = round(elapsed, 1)
+                results.append(a)
+                continue
+
             a["api_time_sec"] = round(elapsed, 1)
             a["file_size_kb"] = fsize_kb
             results.append(a)
 
             v = a.get("vendor_class", "?")
-            trust_label = f"{a['trusted_count']}T/{a.get('memory_support_count',0)}M" if a["is_sysco"] else f"{a['vendor_pending_count']}VP"
+            trust_label = f"{a['trusted_count']}T/{a.get('memory_support_count',0)}M" if a.get("is_sysco") else f"{a.get('vendor_pending_count',0)}VP"
             print(f"  {elapsed:.0f}s | {v:<12} | {a['extracted_line_items']} items | {trust_label} | {a['review_count']}R | {a['excluded_count']}X | compl={a.get('invoice_completeness','?')}")
 
             if a.get("false_trusts"):
                 for ft in a["false_trusts"]:
                     print(f"  *** FALSE TRUST: {ft['name']}: {ft['reason']}")
 
+            # Show memory upgrades
+            if a.get("memory_support_count", 0) > 0:
+                for m in (a.get("memory_support_detail") or []):
+                    print(f"  >> MEMORY SUPPORT: {m['name'][:40]} qty1={m.get('qty1_support')} method={m.get('match_method')}")
+
         except Exception as e:
             elapsed = time.time() - t0
-            print(f"  ERROR ({elapsed:.0f}s): {e}")
+            print(f"  EXCEPTION ({elapsed:.0f}s): {e}")
             results.append({"file": fname, "error": str(e), "api_time_sec": round(elapsed, 1)})
 
     # ═════════════════════════════════════════════════════════════════
