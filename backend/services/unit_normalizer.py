@@ -1,0 +1,445 @@
+"""
+Unit Normalization Layer for Sysco Invoice Items.
+
+Converts all items into a consistent unit (lb or piece) and calculates price_per_unit.
+Runs after extraction, before saving data.
+
+Pack size patterns (Sysco):
+- "40 LB" → 40 lb per case
+- "4/5 LB" → 4 bags × 5 lb = 20 lb per case
+- "150LB" → 150 lb per case
+- "1/22 LB" → 1 × 22 lb = 22 lb per case
+- "4/1GAL" → 4 gallons per case (convert gal → lb using product-specific density)
+- "CS1000 EA" → 1000 pieces per case
+- "25 EA" → 25 pieces per case
+- "120-4.5#" → 120 pieces × 4.5 lb each? → flag ambiguous
+- "1508X8X3" → container dimensions → piece-based, 150 count
+
+Rules:
+1. All weight-based items normalize to LB
+2. All count-based items normalize to PIECE
+3. Ambiguous items get unit_status = "review"
+4. Fees/surcharges are excluded from normalization
+"""
+import re
+import logging
+
+logger = logging.getLogger("restaurant_ai")
+
+# ── Regex patterns for parsing pack_size ──
+
+# "40 LB", "150LB", "85LBS", "150#", "25/#", "12.0LB"
+_SIMPLE_LB = re.compile(
+    r'^(\d+(?:\.\d+)?)\s*(?:LBS?|#|POUND)$', re.IGNORECASE
+)
+
+# "4/5 LB", "2/10 LB", "1/22 LB", "8/5#", "12/1#", "2X1#"
+_FRACTION_LB = re.compile(
+    r'^(\d+)\s*[/X]\s*(\d+(?:\.\d+)?)\s*(?:LBS?|#|POUND)$', re.IGNORECASE
+)
+
+# "CS 40.0 LB", "CS 150 LB", "CS 12.0 LB", "1 CS 120 LB", "2 CS 120 LB"
+_CS_LB = re.compile(
+    r'^(?:(\d+)\s*)?CS\s+(\d+(?:\.\d+)?)\s*(?:LBS?|#)$', re.IGNORECASE
+)
+
+# "1 CS 150/8X8X3" → 150 count containers
+_CS_COUNT = re.compile(
+    r'^(?:(\d+)\s*)?CS\s*(\d+)\s*/\s*\d+', re.IGNORECASE
+)
+
+# "4/1GAL", "4 GAL", "4/1 GAL", "1GAL", "41GAL"
+_GAL = re.compile(
+    r'^(\d+)\s*[/X]?\s*(\d*)\s*GAL', re.IGNORECASE
+)
+
+# "CS1000 EA", "25 EA", "1 EA", "CS1000"
+_EA = re.compile(
+    r'^(?:CS)?(\d+)\s*(?:EA|CT|COUNT|PCS?)?\s*$', re.IGNORECASE
+)
+
+# Container dimensions like "1508X8X3", "150X8X3NSYS", "1509X9X2"
+_CONTAINER_DIM = re.compile(
+    r'^(?:CS)?(\d{2,4})\s*[X×]\s*\d+', re.IGNORECASE
+)
+
+# "120-4.5#" → count × weight
+_COUNT_WEIGHT = re.compile(
+    r'^(\d+)\s*[-]\s*(\d+(?:\.\d+)?)\s*#$', re.IGNORECASE
+)
+
+# "25/#" → 25 lb (# = pounds)
+_SIMPLE_HASH = re.compile(
+    r'^(\d+)\s*/?\s*#$', re.IGNORECASE
+)
+
+# "41OLB" → OCR misread of "410LB" or "41.0LB" (O→0 substitution)
+_OCR_LB = re.compile(
+    r'^(\d+)[O](\d*)(?:LBS?|#)$', re.IGNORECASE
+)
+
+# "150/CS" → 150 pieces per case
+_COUNT_CS = re.compile(
+    r'^(\d+)\s*/\s*CS$', re.IGNORECASE
+)
+
+# "1 CS1000 EA" → 1000 pieces
+_N_CS_COUNT_EA = re.compile(
+    r'^(\d+)\s*CS\s*(\d+)\s*(?:EA|CT)?$', re.IGNORECASE
+)
+
+# "2 CS 1509X9X3NSYS" or "2 CS 150X9X9X2 SYS" → container dim with CS prefix
+_N_CS_DIM = re.compile(
+    r'^(\d+)\s*CS\s+(\d{2,4})\s*[X×/]', re.IGNORECASE
+)
+
+# "CS 1508X8X3NSYS" or "CS 1509X9X3 SYS" or "CS 1509X9X3" → container dims
+_CS_DIM = re.compile(
+    r'^CS\s+(\d{2,4})\s*[X×]', re.IGNORECASE
+)
+
+# "3 CS 1500CT" → count-based
+_N_CS_CT = re.compile(
+    r'^(\d+)\s*CS\s+(\d+)\s*CT$', re.IGNORECASE
+)
+
+# "8/1.5" → 8 × 1.5 lb = 12 lb (fractional without unit = assume lb)
+_FRACTION_BARE = re.compile(
+    r'^(\d+)\s*/\s*(\d+(?:\.\d+))$', re.IGNORECASE
+)
+
+# "CS10007 GM" or "CS1007 GM" → count + grams
+_CS_GM = re.compile(
+    r'^CS\s*(\d+)\s*(?:/?\s*\d+\s*)?GM$', re.IGNORECASE
+)
+
+# "CS-150..." → OCR-damaged container packs, extract leading count
+_CS_DASH = re.compile(
+    r'^CS\s*[-]\s*(\d+)', re.IGNORECASE
+)
+
+# Common liquid → lb conversion (approximate, by product category)
+_GAL_TO_LB = 8.34  # water baseline; sauces ~8.5-9, oils ~7.5
+
+
+def parse_pack_size(pack_str: str) -> dict:
+    """
+    Parse a pack_size string into normalized weight/count.
+
+    Returns:
+        {
+            "parsed": True/False,
+            "total_weight_lb": float or None,
+            "total_pieces": int or None,
+            "unit_type": "lb" | "piece" | "gallon" | None,
+            "parse_method": str,
+            "raw": str,
+        }
+    """
+    raw = (pack_str or "").strip()
+    if not raw:
+        return {"parsed": False, "unit_type": None, "raw": raw, "parse_method": "empty"}
+
+    cleaned = raw.upper().strip()
+
+    # Remove trailing SYS/NSYS noise
+    cleaned = re.sub(r'\s*(N?SYS)\s*$', '', cleaned)
+
+    # OCR correction: "4/0#" → "4/10#", "12/0 LB" → "12/10 LB" (0 is OCR-damaged 10)
+    cleaned = re.sub(r'^(\d+)\s*/\s*0\s*(#|LBS?)$', r'\g<1>/10\2', cleaned)
+
+    # ── Simple LB: "40 LB", "150LB", "85LBS", "150#" ──
+    m = _SIMPLE_LB.match(cleaned)
+    if m:
+        lb = float(m.group(1))
+        return {"parsed": True, "total_weight_lb": lb, "total_pieces": None,
+                "unit_type": "lb", "parse_method": "simple_lb", "raw": raw}
+
+    # ── Fraction LB: "4/5 LB", "2/10 LB", "8/5#" ──
+    m = _FRACTION_LB.match(cleaned)
+    if m:
+        count = int(m.group(1))
+        weight = float(m.group(2))
+        total_lb = count * weight
+        return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": None,
+                "unit_type": "lb", "parse_method": "fraction_lb", "raw": raw}
+
+    # ── CS + LB: "CS 40.0 LB", "2 CS 120 LB" ──
+    m = _CS_LB.match(cleaned)
+    if m:
+        cs_count = int(m.group(1) or 1)
+        lb = float(m.group(2))
+        total_lb = cs_count * lb
+        return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": None,
+                "unit_type": "lb", "parse_method": "cs_lb", "raw": raw}
+
+    # ── Count-weight: "120-4.5#" ──
+    m = _COUNT_WEIGHT.match(cleaned)
+    if m:
+        count = int(m.group(1))
+        weight = float(m.group(2))
+        total_lb = count * weight
+        return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": count,
+                "unit_type": "lb", "parse_method": "count_weight", "raw": raw}
+
+    # ── OCR misread LB: "41OLB" → 410 lb ──
+    m = _OCR_LB.match(cleaned)
+    if m:
+        part1 = m.group(1)
+        part2 = m.group(2) or "0"
+        lb = float(part1 + part2)
+        return {"parsed": True, "total_weight_lb": lb, "total_pieces": None,
+                "unit_type": "lb", "parse_method": "ocr_lb", "raw": raw}
+
+    # ── Simple hash: "25/#" → 25 lb ──
+    m = _SIMPLE_HASH.match(cleaned)
+    if m:
+        lb = float(m.group(1))
+        return {"parsed": True, "total_weight_lb": lb, "total_pieces": None,
+                "unit_type": "lb", "parse_method": "simple_hash", "raw": raw}
+
+    # ── N CS + count EA: "1 CS1000 EA" → 1000 pcs ──
+    m = _N_CS_COUNT_EA.match(cleaned)
+    if m:
+        cs_count = int(m.group(1))
+        ea_count = int(m.group(2))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": cs_count * ea_count,
+                "unit_type": "piece", "parse_method": "n_cs_count_ea", "raw": raw}
+
+    # ── Count/CS: "150/CS" → 150 pieces ──
+    m = _COUNT_CS.match(cleaned)
+    if m:
+        count = int(m.group(1))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": count,
+                "unit_type": "piece", "parse_method": "count_cs", "raw": raw}
+
+    # ── N CS + container dims: "2 CS 1509X9X3NSYS" ──
+    m = _N_CS_DIM.match(cleaned)
+    if m:
+        cs_count = int(m.group(1))
+        piece_count = int(m.group(2))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": cs_count * piece_count,
+                "unit_type": "piece", "parse_method": "n_cs_dim", "raw": raw}
+
+    # ── N CS + CT: "3 CS 1500CT" → 3 × 1500 ──
+    m = _N_CS_CT.match(cleaned)
+    if m:
+        cs_count = int(m.group(1))
+        ct = int(m.group(2))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": cs_count * ct,
+                "unit_type": "piece", "parse_method": "n_cs_ct", "raw": raw}
+
+    # ── CS + container dims: "CS 1508X8X3NSYS", "CS 1509X9X3" ──
+    m = _CS_DIM.match(cleaned)
+    if m:
+        count = int(m.group(1))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": count,
+                "unit_type": "piece", "parse_method": "cs_dim", "raw": raw}
+
+    # ── CS + GM: "CS10007 GM", "CS1007 GM" → count-based ──
+    m = _CS_GM.match(cleaned)
+    if m:
+        count = int(m.group(1))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": count,
+                "unit_type": "piece", "parse_method": "cs_gm", "raw": raw}
+
+    # ── CS-dash: "CS-150?23 X?5" → extract leading count ──
+    m = _CS_DASH.match(cleaned)
+    if m:
+        count = int(m.group(1))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": count,
+                "unit_type": "piece", "parse_method": "cs_dash", "raw": raw}
+
+    # ── Fraction bare: "8/1.5" → 8 × 1.5 lb ──
+    m = _FRACTION_BARE.match(cleaned)
+    if m:
+        count = int(m.group(1))
+        weight = float(m.group(2))
+        total_lb = count * weight
+        return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": None,
+                "unit_type": "lb", "parse_method": "fraction_bare", "raw": raw}
+
+    # ── Gallon: "4/1GAL", "4 GAL", "1GAL" ──
+    m = _GAL.match(cleaned)
+    if m:
+        outer = int(m.group(1) or 1)
+        inner = int(m.group(2)) if m.group(2) else 1
+        total_gal = outer * inner if inner > 0 else outer
+        total_lb = round(total_gal * _GAL_TO_LB, 1)
+        return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": None,
+                "unit_type": "gallon", "parse_method": "gallon",
+                "total_gallons": total_gal, "raw": raw}
+
+    # ── Container dimensions: "1508X8X3", "150X8X3NSYS" → piece count ──
+    m = _CONTAINER_DIM.match(cleaned)
+    if m:
+        count = int(m.group(1))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": count,
+                "unit_type": "piece", "parse_method": "container_dim", "raw": raw}
+
+    # ── CS count: "CS1000 EA", "CS1000", "1 CS 150/8X8X3" ──
+    m = _CS_COUNT.match(cleaned)
+    if m:
+        count = int(m.group(2))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": count,
+                "unit_type": "piece", "parse_method": "cs_count", "raw": raw}
+
+    # ── Simple EA/count: "25 EA", "1 EA" ──
+    m = _EA.match(cleaned)
+    if m:
+        count = int(m.group(1))
+        if count > 0:
+            return {"parsed": True, "total_weight_lb": None, "total_pieces": count,
+                    "unit_type": "piece", "parse_method": "ea_count", "raw": raw}
+
+    # ── Just a number: "1", "2", "4", "6" → ambiguous case count ──
+    if re.match(r'^\d{1,2}$', cleaned):
+        return {"parsed": False, "unit_type": None, "raw": raw,
+                "parse_method": "bare_number_ambiguous"}
+
+    # ── CS only: "CS" ──
+    if cleaned == "CS":
+        return {"parsed": False, "unit_type": None, "raw": raw,
+                "parse_method": "cs_only_ambiguous"}
+
+    return {"parsed": False, "unit_type": None, "raw": raw,
+            "parse_method": "unrecognized"}
+
+
+def _is_fee_item(raw_name: str) -> bool:
+    """Check if item is a fee/surcharge (not a product)."""
+    name = (raw_name or "").upper()
+    fee_keywords = ("FUEL", "SURCHARGE", "FEE", "DELIVERY", "CHARGE", "MISC CHARGE")
+    return any(kw in name for kw in fee_keywords)
+
+
+def normalize_item(item: dict) -> dict:
+    """
+    Add normalized unit fields to an extracted item.
+
+    Adds:
+        - normalized_quantity: total weight in lb or total pieces
+        - normalized_unit: "lb" | "piece" | "gallon" | None
+        - price_per_unit: price per lb or per piece
+        - unit_status: "normalized" | "review" | "excluded"
+        - unit_parse_method: how pack_size was parsed
+    """
+    raw_name = (item.get("raw_name") or "").strip()
+    pack_size = (item.get("pack_size") or "").strip()
+    qty = float(item.get("quantity", 0) or 0)
+    unit_price = float(item.get("unit_price", 0) or 0)
+    total = float(item.get("total", 0) or 0)
+
+    # Fees/surcharges: exclude from normalization
+    if _is_fee_item(raw_name):
+        item["normalized_quantity"] = None
+        item["normalized_unit"] = None
+        item["price_per_unit"] = None
+        item["unit_status"] = "excluded"
+        item["unit_parse_method"] = "fee_item"
+        return item
+
+    # Parse pack_size
+    parsed = parse_pack_size(pack_size)
+
+    if not parsed["parsed"]:
+        # Could not parse → flag for review
+        item["normalized_quantity"] = None
+        item["normalized_unit"] = None
+        item["price_per_unit"] = None
+        item["unit_status"] = "review"
+        item["unit_parse_method"] = parsed["parse_method"]
+        return item
+
+    # Calculate normalized quantity (qty × pack_weight or qty × pack_count)
+    unit_type = parsed["unit_type"]
+
+    if unit_type == "lb" and parsed.get("total_weight_lb"):
+        weight_per_case = parsed["total_weight_lb"]
+        norm_qty = round(qty * weight_per_case, 2) if qty > 0 else weight_per_case
+        ppu = round(unit_price / weight_per_case, 4) if weight_per_case > 0 else None
+        item["normalized_quantity"] = norm_qty
+        item["normalized_unit"] = "lb"
+        item["price_per_unit"] = ppu
+        item["unit_status"] = "normalized"
+        item["unit_parse_method"] = parsed["parse_method"]
+        item["_pack_weight_lb"] = weight_per_case
+
+    elif unit_type == "gallon" and parsed.get("total_weight_lb"):
+        weight_per_case = parsed["total_weight_lb"]
+        norm_qty = round(qty * weight_per_case, 2) if qty > 0 else weight_per_case
+        ppu = round(unit_price / weight_per_case, 4) if weight_per_case > 0 else None
+        item["normalized_quantity"] = norm_qty
+        item["normalized_unit"] = "lb"
+        item["price_per_unit"] = ppu
+        item["unit_status"] = "normalized"
+        item["unit_parse_method"] = parsed["parse_method"]
+        item["_pack_weight_lb"] = weight_per_case
+        item["_pack_gallons"] = parsed.get("total_gallons")
+
+    elif unit_type == "piece" and parsed.get("total_pieces"):
+        pieces_per_case = parsed["total_pieces"]
+        norm_qty = round(qty * pieces_per_case, 2) if qty > 0 else float(pieces_per_case)
+        ppu = round(unit_price / pieces_per_case, 4) if pieces_per_case > 0 else None
+        item["normalized_quantity"] = norm_qty
+        item["normalized_unit"] = "piece"
+        item["price_per_unit"] = ppu
+        item["unit_status"] = "normalized"
+        item["unit_parse_method"] = parsed["parse_method"]
+        item["_pack_pieces"] = pieces_per_case
+
+    else:
+        item["normalized_quantity"] = None
+        item["normalized_unit"] = None
+        item["price_per_unit"] = None
+        item["unit_status"] = "review"
+        item["unit_parse_method"] = parsed["parse_method"]
+
+    return item
+
+
+def normalize_items(items: list) -> dict:
+    """
+    Normalize all items in an extraction result.
+    Returns stats about normalization.
+    """
+    stats = {
+        "total": 0,
+        "normalized_lb": 0,
+        "normalized_piece": 0,
+        "review": 0,
+        "excluded": 0,
+        "parse_methods": {},
+    }
+
+    for it in items:
+        if it.get("confidence_level") == "excluded":
+            continue
+        if it.get("row_type") not in ("line_item", "fee", None):
+            continue
+
+        stats["total"] += 1
+        normalize_item(it)
+
+        status = it.get("unit_status", "review")
+        unit = it.get("normalized_unit")
+
+        if status == "normalized" and unit == "lb":
+            stats["normalized_lb"] += 1
+        elif status == "normalized" and unit == "piece":
+            stats["normalized_piece"] += 1
+        elif status == "excluded":
+            stats["excluded"] += 1
+        else:
+            stats["review"] += 1
+
+        method = it.get("unit_parse_method", "unknown")
+        stats["parse_methods"][method] = stats["parse_methods"].get(method, 0) + 1
+
+    total_normalizable = stats["total"] - stats["excluded"]
+    stats["normalization_rate"] = (
+        round((stats["normalized_lb"] + stats["normalized_piece"]) / total_normalizable, 4)
+        if total_normalizable > 0 else 0
+    )
+
+    return stats

@@ -834,6 +834,13 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
 
     extracted["_product_memory_stats"] = memory_stats
 
+    # ── Phase 6: Unit Normalization ──
+    # Converts pack_size into normalized quantity (lb or piece) and price_per_unit.
+    # Runs after all validation. Does NOT affect trust status.
+    from services.unit_normalizer import normalize_items as _normalize_items
+    unit_stats = _normalize_items(items)
+    extracted["_unit_normalization_stats"] = unit_stats
+
 
 
 # ── US Foods Row Classification Keywords ──
@@ -1846,6 +1853,10 @@ Rules:
                         "qty_source": it.get("qty_source", ""),
                         "price_source": it.get("price_source", ""),
                         "total_source": it.get("total_source", ""),
+                        "normalized_quantity": it.get("normalized_quantity"),
+                        "normalized_unit": it.get("normalized_unit"),
+                        "price_per_unit": it.get("price_per_unit"),
+                        "unit_status": it.get("unit_status"),
                     })
             if trusted_items_for_memory:
                 await db.sysco_trusted_extractions.insert_one({
