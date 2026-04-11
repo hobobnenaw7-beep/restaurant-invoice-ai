@@ -168,6 +168,7 @@ def analyze_result(fname, result):
                 "qty_source": it.get("qty_source", "?"),
                 "price_source": it.get("price_source", "?"),
                 "total_source": it.get("total_source", "?"),
+                "qty_column_visible": it.get("qty_column_visible", "?"),
                 "review_reason": (it.get("review_reason") or "")[:80],
             })
 

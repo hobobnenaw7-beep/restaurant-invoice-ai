@@ -186,8 +186,11 @@ def _validate_numeric_field_sources(items: list) -> None:
 
 def _detect_all_qty_one_pattern(items: list) -> None:
     """
-    If all line_item rows have qty=1, downgrade ALL qty_source
-    to 'ambiguous' — strong signal GPT defaulted quantities.
+    If all line_item rows have qty=1 AND none of them have qty_column_visible=true,
+    downgrade ALL qty_source to 'ambiguous' — strong signal GPT defaulted quantities.
+
+    If ANY item has qty_column_visible=true, skip this bulk downgrade — the LLM
+    confirmed visual presence of digits in the QTY column, so qty=1 is likely real.
     """
     product_items = [it for it in items if it.get("row_type") == "line_item"]
 
@@ -195,12 +198,25 @@ def _detect_all_qty_one_pattern(items: list) -> None:
         return  # Too few items to detect pattern
 
     all_qty_one = all(float(it.get("quantity", 0) or 0) == 1.0 for it in product_items)
-    if all_qty_one:
+    if not all_qty_one:
+        return
+
+    # Check if ANY item has qty_column_visible=true — if so, the QTY column exists
+    any_visible = any(it.get("qty_column_visible") is True for it in product_items)
+    if any_visible:
+        # LLM confirmed QTY column visibility on at least one row — don't bulk-downgrade
         for it in product_items:
-            it["qty_source"] = "ambiguous"
             it.setdefault("_source_overrides", []).append(
-                "system: all-qty-1 pattern detected — qty column likely not read"
+                "system: all-qty-1 pattern detected, but qty_column_visible confirmed — keeping sources"
             )
+        return
+
+    # No item has qty_column_visible=true → likely GPT defaulted all to 1
+    for it in product_items:
+        it["qty_source"] = "ambiguous"
+        it.setdefault("_source_overrides", []).append(
+            "system: all-qty-1 pattern detected, no qty_column_visible — qty column likely not read"
+        )
 
 
 def _validate_single_item_sources(item: dict) -> None:
@@ -216,14 +232,23 @@ def _validate_single_item_sources(item: dict) -> None:
 
     # Check 1: price == total AND qty == 1 → qty likely defaulted
     # (GPT often defaults qty to 1 when it can't find the QTY column)
+    # BUT: if GPT explicitly confirmed qty_column_visible=true, trust it —
+    # the LLM visually saw a digit in the QTY column position.
     if qty == 1.0 and price > 0 and total > 0 and abs(price - total) < 0.01:
         if item.get("qty_source") == "column_read":
             # Don't override for fee rows — qty=1 is legitimate for service charges
             if item.get("row_type") != "fee":
-                item["qty_source"] = "ambiguous"
-                overrides.append(
-                    "system: price==total with qty=1 — qty may be defaulted"
-                )
+                qty_visible = item.get("qty_column_visible")
+                if qty_visible is True:
+                    # LLM confirmed it visually saw a digit in the QTY column — trust it
+                    overrides.append(
+                        "system: price==total with qty=1, but qty_column_visible=true — keeping column_read"
+                    )
+                else:
+                    item["qty_source"] = "ambiguous"
+                    overrides.append(
+                        "system: price==total with qty=1, qty_column_visible not confirmed — downgrading"
+                    )
 
     # Check 2: If a field was zero and could be inferred — mark source, but do NOT modify the value
     # The source tracking is informational only.
@@ -1276,12 +1301,13 @@ SUB-CATEGORY HEADERS (do NOT treat as line items):
 
 CRITICAL RULES:
 1. quantity comes from the QTY column — it is a small integer, NOT a dollar amount and NOT a pack descriptor
-2. If you can see a number at the QTY position, report qty_source="column_read" even if it's small/narrow
-3. If the QTY position is truly unreadable (blurry, cut off, shadowed), use quantity=0 and qty_source="ambiguous"
+2. If you can see a number at the QTY position, report qty_source="column_read" AND qty_column_visible=true, even if that number is 1
+3. If the QTY position is truly unreadable (blurry, cut off, shadowed), use quantity=0, qty_source="ambiguous", qty_column_visible=false
 4. NEVER default quantity to 1 — use 0 if unreadable
 5. Pack values like "6/#10" are case descriptors, not quantities
-6. "FUEL SURCHARGE", "DELIVERY", "SERVICE CHARGE" are service items — extract with quantity=1, qty_source="column_read"
-7. Identify columns by their HEADER TEXT, not by fixed pixel positions"""
+6. "FUEL SURCHARGE", "DELIVERY", "SERVICE CHARGE" are service items — extract with quantity=1, qty_source="column_read", qty_column_visible=true
+7. Identify columns by their HEADER TEXT, not by fixed pixel positions
+8. qty_column_visible is about whether you can SEE a printed digit in the QTY column area — true even when that digit is 1"""
 
             elif "us foods" in dv_lower or "usfoods" in dv_lower or "us food" in dv_lower:
                 builtin_vendor_hint = """
@@ -1385,7 +1411,7 @@ CRITICAL: Produce ONE unified result. If the same line item appears in multiple 
                     prompt = f"""You are reading a Sysco restaurant purchase invoice from a camera phone photo. READ the document exactly as printed. Do NOT compute or infer any numbers.
 
 Extract into this exact JSON format:
-{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":"","item_code":""}}],"subtotal":0,"tax":0,"total":0}}
+{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":"","item_code":"","qty_column_visible":false}}],"subtotal":0,"tax":0,"total":0}}
 
 HORIZONTAL ANCHORING TECHNIQUE:
 Sysco invoices have a consistent columnar grid. The PRICE and AMOUNT/TOTAL columns are on the right side and contain wider, more legible dollar values. Use them as anchors:
@@ -1425,6 +1451,12 @@ FIELD SOURCE (for each item):
 - price_source: "column_read" if you clearly see it in the PRICE column, "ambiguous" if uncertain
 - total_source: "column_read" if you clearly see it in the AMOUNT/TOTAL column, "ambiguous" if uncertain
 - NEVER use "inferred" — you are not allowed to infer any values
+
+QTY COLUMN VISIBILITY (critical for qty=1 items):
+- qty_column_visible: Set to true if you can VISUALLY SEE a number printed in the QTY column position for this row, even if that number is "1". Set to false if the QTY column area is blank, obscured, cut off, or you cannot distinguish any printed digit there.
+- This field is about VISUAL PRESENCE of a digit in the QTY column, NOT about whether you are confident in the value.
+- Example: If you see a printed "1" in the QTY column → qty_column_visible=true, quantity=1, qty_source="column_read"
+- Example: If the QTY column area is blank or unreadable → qty_column_visible=false, quantity=0, qty_source="ambiguous"
 
 - Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
                 else:

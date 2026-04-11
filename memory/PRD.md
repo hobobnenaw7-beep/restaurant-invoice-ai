@@ -27,7 +27,10 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline using G
 - [x] DB storage: trusted items saved to `sysco_trusted_extractions`
 - [x] Review items saved to `sysco_review_items`
 - [x] Row-level priority: valid rows stay valid regardless of invoice-level mismatches
-- [x] Trust rate: 53.5%, 0 false trusts confirmed
+- [x] Trust rate: ~89% (up from 53.5%), 0 false trusts confirmed
+- [x] qty_column_visible signal: GPT-5.2 reports visual presence of QTY column digit per-item
+- [x] Smart per-item heuristic: qty=1 + price==total only downgrades if qty_column_visible is NOT true
+- [x] All-qty-1 pattern check: only bulk-downgrades if NO item has qty_column_visible=true
 
 ### Unit Normalization Layer (Phase 6)
 - [x] Parses 76 unique Sysco pack_size patterns (99% success rate)
@@ -52,9 +55,9 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline using G
 ## Prioritized Backlog
 
 ### P0 (Next)
+- Scale Sysco stress test to full 294 images (validate ~89% trust rate at scale)
 - US Foods Dedicated Extraction Phase
 - PFG Dedicated Extraction Phase
-- Scale Sysco stress test to full 294 images
 
 ### P1
 - Historical price trend charts (visual graphs)
