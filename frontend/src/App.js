@@ -43,8 +43,8 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
-          <Route path="/dashboard" element={<ProtectedRoute><ProfitDashboard /></ProtectedRoute>} />
-          <Route path="/dashboard-legacy" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/profit-center" element={<ProtectedRoute><ProfitDashboard /></ProtectedRoute>} />
           <Route path="/expenses" element={<ProtectedRoute><ExpensesPage /></ProtectedRoute>} />
           <Route path="/sales" element={<ProtectedRoute><SalesPage /></ProtectedRoute>} />
           <Route path="/vendors" element={<ProtectedRoute><VendorsPage /></ProtectedRoute>} />

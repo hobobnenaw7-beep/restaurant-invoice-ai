@@ -18,6 +18,7 @@ import {
   Plus, DollarSign, GitCompare, FileBarChart, Clock, Zap, ArrowRight, ShieldAlert, Calendar
 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import SmartMarketInsights from '@/components/profit/SmartMarketInsights';
 
 /* ─── helpers ─── */
 function fmt(n) {
@@ -1028,6 +1029,8 @@ export default function DashboardPage() {
       </div>
 
       <BestOpportunityCard opportunities={bestOpps} navigate={navigate} />
+
+      <SmartMarketInsights api={api} />
 
       <DrillDownSheet
         open={!!drillDown}
