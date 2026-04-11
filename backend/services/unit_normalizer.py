@@ -59,8 +59,10 @@ _EA = re.compile(
 )
 
 # Container dimensions like "1508X8X3", "150X8X3NSYS", "1509X9X2"
+# Sysco format: count + dimensions (e.g., "150 8X8X3" = 150 containers of 8×8×3 inches)
+# OCR often squashes the space: "1508X8X3" → need to separate count from dimension
 _CONTAINER_DIM = re.compile(
-    r'^(?:CS)?(\d{2,4})\s*[X×]\s*\d+', re.IGNORECASE
+    r'^(?:CS\s*)?(\d{2,4})\s*[X×]\s*(\d+)\s*[X×]\s*(\d+)', re.IGNORECASE
 )
 
 # "120-4.5#" → count × weight
@@ -73,9 +75,17 @@ _SIMPLE_HASH = re.compile(
     r'^(\d+)\s*/?\s*#$', re.IGNORECASE
 )
 
-# "41OLB" → OCR misread of "410LB" or "41.0LB" (O→0 substitution)
+# "41GAL" → OCR misread of "410LB" or "41.0LB" (O→0 substitution)
 _OCR_LB = re.compile(
     r'^(\d+)[O](\d*)(?:LBS?|#)$', re.IGNORECASE
+)
+
+# Ounce patterns: "1224 OZ", "1232OZ", "12/24 OZ", "12/24OZ"
+_FRACTION_OZ = re.compile(
+    r'^(\d+)\s*[/]?\s*(\d+)\s*OZ$', re.IGNORECASE
+)
+_SIMPLE_OZ = re.compile(
+    r'^(\d+(?:\.\d+)?)\s*OZ$', re.IGNORECASE
 )
 
 # "150/CS" → 150 pieces per case
@@ -198,6 +208,39 @@ def parse_pack_size(pack_str: str) -> dict:
         return {"parsed": True, "total_weight_lb": lb, "total_pieces": None,
                 "unit_type": "lb", "parse_method": "simple_hash", "raw": raw}
 
+    # ── Ounce patterns: "12/24 OZ", "1224 OZ", "1232OZ" ──
+    # Sysco: "12/24 OZ" = 12 × 24oz. OCR strips slash → "1224 OZ"
+    # Try with explicit slash first
+    oz_slash = re.match(r'^(\d+)\s*/\s*(\d+)\s*OZ$', cleaned, re.IGNORECASE)
+    if oz_slash:
+        count = int(oz_slash.group(1))
+        oz_each = int(oz_slash.group(2))
+        total_oz = count * oz_each
+        total_lb = round(total_oz / 16, 2)
+        return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": None,
+                "unit_type": "lb", "parse_method": "fraction_oz", "raw": raw}
+
+    # No-slash: "1224 OZ" → split digits into count + oz
+    oz_bare = re.match(r'^(\d{3,4})\s*OZ$', cleaned, re.IGNORECASE)
+    if oz_bare:
+        digits = oz_bare.group(1)
+        mid = len(digits) // 2
+        count = int(digits[:mid])
+        oz_each = int(digits[mid:])
+        if count > 0 and oz_each > 0:
+            total_oz = count * oz_each
+            total_lb = round(total_oz / 16, 2)
+            return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": None,
+                    "unit_type": "lb", "parse_method": "fraction_oz_split", "raw": raw}
+
+    # Simple OZ: "24OZ", "16 OZ"
+    oz_simple = re.match(r'^(\d{1,2})\s*OZ$', cleaned, re.IGNORECASE)
+    if oz_simple:
+        oz = float(oz_simple.group(1))
+        total_lb = round(oz / 16, 2)
+        return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": None,
+                "unit_type": "lb", "parse_method": "simple_oz", "raw": raw}
+
     # ── N CS + count EA: "1 CS1000 EA" → 1000 pcs ──
     m = _N_CS_COUNT_EA.match(cleaned)
     if m:
@@ -217,7 +260,14 @@ def parse_pack_size(pack_str: str) -> dict:
     m = _N_CS_DIM.match(cleaned)
     if m:
         cs_count = int(m.group(1))
-        piece_count = int(m.group(2))
+        leading = m.group(2)
+        piece_count = int(leading)
+        if len(leading) >= 4:
+            last1 = int(leading[-1])
+            if 0 <= last1 <= 12 and len(leading) > 1:
+                candidate = int(leading[:-1])
+                if 10 <= candidate <= 2000:
+                    piece_count = candidate
         return {"parsed": True, "total_weight_lb": None, "total_pieces": cs_count * piece_count,
                 "unit_type": "piece", "parse_method": "n_cs_dim", "raw": raw}
 
@@ -232,7 +282,14 @@ def parse_pack_size(pack_str: str) -> dict:
     # ── CS + container dims: "CS 1508X8X3NSYS", "CS 1509X9X3" ──
     m = _CS_DIM.match(cleaned)
     if m:
-        count = int(m.group(1))
+        leading = m.group(1)
+        count = int(leading)
+        if len(leading) >= 4:
+            last1 = int(leading[-1])
+            if 0 <= last1 <= 12 and len(leading) > 1:
+                candidate_count = int(leading[:-1])
+                if 10 <= candidate_count <= 2000:
+                    count = candidate_count
         return {"parsed": True, "total_weight_lb": None, "total_pieces": count,
                 "unit_type": "piece", "parse_method": "cs_dim", "raw": raw}
 
@@ -271,9 +328,28 @@ def parse_pack_size(pack_str: str) -> dict:
                 "total_gallons": total_gal, "raw": raw}
 
     # ── Container dimensions: "1508X8X3", "150X8X3NSYS" → piece count ──
+    # Sysco: "150 8X8X3" = 150 containers, OCR squashes to "1508X8X3"
+    # Strategy: the digits before the first X are "count + first_dim_digit" merged.
+    # Container dims are small (2-12 inches), so we try splitting the leading number.
     m = _CONTAINER_DIM.match(cleaned)
     if m:
-        count = int(m.group(1))
+        leading = m.group(1)  # e.g., "1508" or "150" or "1500"
+        dim2 = int(m.group(2))  # second dimension
+        dim3 = int(m.group(3))  # third dimension
+
+        # Try to infer where the count ends and the first dimension starts.
+        # Container dimensions are single digits (2-12). Check if last 1-2 chars
+        # of leading number form a valid dimension.
+        count = int(leading)  # fallback: entire number is count (e.g., "150X8X3")
+        if len(leading) >= 4:
+            # Try last 1 char as dim: "1508" → count=150, dim1=8
+            last1 = int(leading[-1])
+            if 0 <= last1 <= 12 and len(leading) > 1:
+                candidate_count = int(leading[:-1])
+                # Sanity: container counts are typically 25-1000
+                if 10 <= candidate_count <= 2000:
+                    count = candidate_count
+
         return {"parsed": True, "total_weight_lb": None, "total_pieces": count,
                 "unit_type": "piece", "parse_method": "container_dim", "raw": raw}
 
