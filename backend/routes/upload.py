@@ -1910,6 +1910,9 @@ HOW TO DETECT THE FORMAT:
 6. WEIGHT is always a separate column — do NOT use it as quantity
 
 STRICT READING RULES:
+- ONLY extract items that are FULLY VISIBLE in this image — all columns (qty, price, total) must be readable
+- If you can see an item name but CANNOT see its price or total columns, DO NOT include that item
+- This image may be one page of a multi-page invoice — only extract items from THIS page
 - For each line item, READ quantity, unit_price, and total DIRECTLY from their respective columns
 - If you CANNOT clearly read a number from its column, use 0 — do NOT calculate it
 - Do NOT compute total from qty x price
@@ -1957,6 +1960,9 @@ CRITICAL RULES:
 7. "FUEL SURCHARGE" or "SURCHARGE" lines are fees — extract with quantity=1
 
 STRICT READING RULES:
+- ONLY extract items that are FULLY VISIBLE in this image — all columns (qty, price, total) must be readable
+- If you can see an item name but CANNOT see its price or total columns, DO NOT include that item
+- This image may be one page of a multi-page invoice — only extract items from THIS page
 - READ quantity, unit_price, and total DIRECTLY from columns
 - Do NOT compute or infer any values
 - Do NOT default quantity to 1 — use 0 if SHIP column is unreadable
@@ -2308,6 +2314,28 @@ Rules:
 
                 # ── Row Type Classification (FIRST) ──
                 _classify_all_row_types(extracted["items"])
+
+                # ── Hallucination filter ──
+                # Multi-page invoices: GPT may produce items from pages not in the image.
+                # Signature: name/item_code present but price=0 AND total=0.
+                # These are not extraction failures — the items simply aren't visible.
+                filtered_items = []
+                hallucinated_count = 0
+                for it in extracted["items"]:
+                    if it.get("row_type") in ("line_item",):
+                        price = float(it.get("unit_price", 0) or 0)
+                        total = float(it.get("total", 0) or 0)
+                        has_name = bool((it.get("raw_name") or "").strip())
+                        if has_name and price == 0 and total == 0:
+                            hallucinated_count += 1
+                            continue  # Drop this row
+                    filtered_items.append(it)
+                if hallucinated_count > 0:
+                    logger.info(
+                        f"Hallucination filter: removed {hallucinated_count} items "
+                        f"with name but price=0 AND total=0 (likely from unseen pages)"
+                    )
+                extracted["items"] = filtered_items
 
                 # ── System-level numeric source validation ──
                 scoreable_items = [it for it in extracted["items"]
