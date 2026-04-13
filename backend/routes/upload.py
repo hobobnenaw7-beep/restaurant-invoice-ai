@@ -1875,28 +1875,127 @@ QTY COLUMN VISIBILITY (critical for qty=1 items):
 - Example: If the QTY column area is blank or unreadable → qty_column_visible=false, quantity=0, qty_source="ambiguous"
 
 - Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
+
+                elif "us food" in (detected_vendor or "").lower() or "usfoods" in (detected_vendor or "").lower():
+                    # ── US FOODS STRICT READ-ONLY PROMPT ──
+                    prompt = f"""You are reading a US Foods restaurant purchase invoice from a camera phone photo. READ the document exactly as printed. Do NOT compute or infer any numbers.
+
+Extract into this exact JSON format:
+{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":"","item_code":"","qty_column_visible":false}}],"subtotal":0,"tax":0,"total":0}}
+
+US FOODS COLUMN IDENTIFICATION:
+US Foods invoices have varying column layouts. You MUST first identify the HEADER ROW and map columns:
+
+FORMAT A (most common):
+  Product# | Brand | Description | Pack/Size | Ordered | Shipped | Weight | Unit Price | Extended Price
+  - quantity = value from SHIPPED column (NOT Ordered, NOT Weight)
+  - item_code = value from Product# column (7-digit number)
+
+FORMAT B:
+  Quantity | Unit | Product Number | Description | ... | Unit Price | Extended Price
+  - quantity = value from the Quantity column (first numeric column)
+  - item_code = value from Product Number column
+
+FORMAT C:
+  Item# | Description | Qty | Unit | Price | Extension
+  - quantity = value from the Qty column
+  - item_code = value from Item# column
+
+HOW TO DETECT THE FORMAT:
+1. Read the header row text carefully
+2. If you see "Shipped" in the header → use Shipped column for quantity
+3. If you see "Quantity" or "Qty" as the first column → use that column for quantity
+4. The rightmost dollar column is always Extended Price (total for the line)
+5. The second-to-rightmost dollar column is always Unit Price
+6. WEIGHT is always a separate column — do NOT use it as quantity
+
+STRICT READING RULES:
+- For each line item, READ quantity, unit_price, and total DIRECTLY from their respective columns
+- If you CANNOT clearly read a number from its column, use 0 — do NOT calculate it
+- Do NOT compute total from qty x price
+- Do NOT compute qty from total / price
+- Do NOT default quantity to 1 — use 0 if unreadable
+- NEVER assume quantity is 1
+- Read pack_size verbatim from the Pack/Size column if present
+- Extract item_code from the Product Number / Item# column
+- "FUEL SURCHARGE", "DELIVERY FEE", "SERVICE CHARGE" are fee rows — extract with quantity=1
+
+ROW EXCLUSION — Do NOT extract:
+- Summary rows: "SUBTOTAL", "TOTAL", "INVOICE TOTAL", "AMOUNT DUE"
+- Section headers or category dividers
+- The "Pieces Ordered / Shipped / Received" summary box at the bottom
+
+FIELD SOURCE (for each item):
+- qty_source: "column_read" if you see a number in the quantity column, "ambiguous" if not
+- price_source: "column_read" if you see a number in the unit price column, "ambiguous" if not
+- total_source: "column_read" if you see a number in the extended price column, "ambiguous" if not
+- NEVER use "inferred"
+
+QTY COLUMN VISIBILITY:
+- qty_column_visible: true if you can SEE a printed number in the quantity column for this row (even if it is 1), false if blank/unreadable
+
+- Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
+
+                elif "performance" in (detected_vendor or "").lower() or "pfg" in (detected_vendor or "").lower():
+                    # ── PFG STRICT READ-ONLY PROMPT ──
+                    prompt = f"""You are reading a Performance Food Group (PFG) restaurant purchase invoice from a camera phone photo. READ the document exactly as printed. Do NOT compute or infer any numbers.
+
+Extract into this exact JSON format:
+{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":"","item_code":"","qty_column_visible":false}}],"subtotal":0,"tax":0,"total":0}}
+
+PFG COLUMN IDENTIFICATION:
+PFG invoices typically have these columns:
+  ITEM# | ORD | SHIP | PK | SIZE | DESCRIPTION | BRAND | $/LB or UNIT PRC | EXT TOTAL
+
+CRITICAL RULES:
+1. quantity MUST come from the SHIP column (NOT ORD, NOT PACK, NOT WEIGHT)
+2. If SHIP=0 but ORD>0, the item was not delivered — use quantity=0
+3. unit_price comes from the $/LB or UNIT PRC column
+4. total comes from the EXT TOTAL column (rightmost dollar column)
+5. pack_size: copy the PK and SIZE columns together (e.g., "6/4 LB", "1/25 LB")
+6. item_code from the ITEM# column
+7. "FUEL SURCHARGE" or "SURCHARGE" lines are fees — extract with quantity=1
+
+STRICT READING RULES:
+- READ quantity, unit_price, and total DIRECTLY from columns
+- Do NOT compute or infer any values
+- Do NOT default quantity to 1 — use 0 if SHIP column is unreadable
+- The WEIGHT column shows total weight — it is NOT the quantity
+- SHIP column values are always small integers (1-50)
+
+ROW EXCLUSION — Do NOT extract:
+- Summary rows: "SUBTOTAL", "TOTAL", "INVOICE TOTAL"
+- Section headers or category dividers
+
+FIELD SOURCE (for each item):
+- qty_source: "column_read" if visible in SHIP column, "ambiguous" if not
+- price_source: "column_read" if visible in UNIT PRC column, "ambiguous" if not
+- total_source: "column_read" if visible in EXT TOTAL column, "ambiguous" if not
+- NEVER use "inferred"
+
+QTY COLUMN VISIBILITY:
+- qty_column_visible: true if you can SEE a printed number in the SHIP column for this row, false if blank/unreadable
+
+- Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
+
                 else:
                     # ── GENERIC PROMPT (non-Sysco vendors) ──
                     prompt = f"""You are an expert at reading restaurant purchase invoices from camera phone photos. Use semantic understanding to interpret the document structure even if the image has noise, skew, shadows, or perspective distortion.
 
 Extract ALL data into this exact JSON format:
-{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":"","item_code":""}}],"subtotal":0,"tax":0,"total":0}}
+{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":"","item_code":"","qty_column_visible":false}}],"subtotal":0,"tax":0,"total":0}}
 
 CRITICAL rules for line items:
 - Scan the HEADER ROW to dynamically identify column positions
-- Look for patterns like: "2 x 5.00", "5.00 x 2", "2 @ 5.00", "Qty 2 Price 5.00"
 - In columnar layouts, match quantity + unit price + total from the same row
 - total = quantity * unit_price for each line item
-- If unit_price is missing but total and quantity are known: unit_price = total / quantity
-- If quantity is missing but total and unit_price are known: quantity = total / unit_price
-- subtotal = sum of all item totals
-- total = subtotal + tax
 - Dates must be in YYYY-MM-DD format. Convert any date format you see.
 - Use 0 for any truly missing numeric values
 - Extract item_code from the ITEM/CODE column if visible
 - pack_size: The pack/case size EXACTLY as shown on the invoice. Common formats: "10/4 LB" (10 packs of 4 LB), "6/5 LB", "BAG 50 LB", "150 EA", "1 GAL", "2/17.5 LB", "1/25 LB", "12/1 QT", "50 LB", "10#". Copy this field verbatim. Leave empty string "" if not visible.
 - Do NOT treat section headers or category dividers as line items
 - Do NOT default quantity to 1 when uncertain — read the QTY column
+- NEVER infer values — only report numbers you can visually read from the document
 
 NUMERIC FIELD SOURCE (for each item):
 - qty_source: How was this quantity determined?
@@ -1905,13 +2004,13 @@ NUMERIC FIELD SOURCE (for each item):
   "ambiguous" = number exists but uncertain which column it belongs to
 - price_source: How was this unit_price determined?
   "column_read" = clearly visible number in the PRICE/UNIT PRICE column
-  "inferred" = calculated from other fields (e.g. total / quantity)
   "ambiguous" = number exists but uncertain which column it belongs to
 - total_source: How was this total determined?
   "column_read" = clearly visible number in the TOTAL/AMOUNT/EXT PRICE column
-  "inferred" = calculated from other fields (e.g. quantity * unit_price)
   "ambiguous" = number exists but uncertain which column it belongs to
+- qty_column_visible: true if you can SEE a printed number in the QTY/SHIPPED column for this row, false if that column area is blank/unreadable. This is about VISUAL PRESENCE of a digit, even if that digit is 1.
 
+- NEVER use "inferred" for any source — only report numbers you visually read
 - Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
             elif document_type == "salary_document":
                 prompt = f"""You are reading a payroll document, salary slip, or payment record for restaurant staff. Extract data into this exact JSON format:
@@ -1982,6 +2081,85 @@ Rules:
             from preprocessing import salvage_partial_extraction
             extracted = salvage_partial_extraction(response)
             logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
+
+        # ── Extraction quality check + retry for purchase invoices ──
+        # GPT-5.2 vision is non-deterministic — the same image can return perfect
+        # data on one call and all-zeros on the next. If the extraction looks like
+        # a failure, retry ONCE.
+        if document_type == "purchase_invoice" and extracted.get("items"):
+            items_raw = extracted["items"]
+            line_items_raw = [it for it in items_raw
+                              if not any(kw in (it.get("raw_name") or "").lower()
+                                         for kw in ("subtotal", "total", "tax", "amount due"))]
+            if len(line_items_raw) >= 3:
+                # Check for extraction failures: items with critical fields at 0
+                zero_count = sum(
+                    1 for it in line_items_raw
+                    if (float(it.get("unit_price", 0) or 0) == 0
+                        and float(it.get("total", 0) or 0) == 0)
+                    or (float(it.get("quantity", 0) or 0) == 0
+                        and float(it.get("total", 0) or 0) > 0)  # qty missing but total present
+                )
+                failure_rate = zero_count / len(line_items_raw)
+                should_retry = failure_rate > 0.5
+            elif len(line_items_raw) <= 2 and len(items_raw) <= 3:
+                # Very few items extracted — likely GPT truncated or failed
+                # Check if any item has all zeros
+                all_zero = all(
+                    float(it.get("unit_price", 0) or 0) == 0
+                    and float(it.get("total", 0) or 0) == 0
+                    for it in line_items_raw
+                )
+                should_retry = all_zero and len(line_items_raw) >= 1
+                failure_rate = 1.0 if should_retry else 0.0
+            else:
+                should_retry = False
+                failure_rate = 0.0
+
+            if should_retry:
+                    item_count = len(line_items_raw)
+                    logger.warning(
+                        f"Extraction quality check: {item_count} items with "
+                        f"{failure_rate:.0%} failure rate. Retrying extraction..."
+                    )
+                    retry_chat = LlmChat(
+                        api_key=LLM_KEY,
+                        session_id=f"extract-retry-{uuid.uuid4()}",
+                        system_message="You are an expert at reading restaurant invoices. Read every number carefully from the correct column. Return valid JSON only."
+                    ).with_model("openai", "gpt-5.2")
+                    retry_msg = UserMessage(text=prompt, file_contents=file_contents)
+                    retry_response = await rate_limited_llm_call(
+                        retry_chat, retry_msg, label="extract_invoice_retry"
+                    )
+                    retry_match = re.search(r'\{[\s\S]*\}', retry_response)
+                    if retry_match:
+                        try:
+                            retry_extracted = json.loads(retry_match.group())
+                            retry_items = retry_extracted.get("items", [])
+                            retry_line_items = [it for it in retry_items
+                                                if not any(kw in (it.get("raw_name") or "").lower()
+                                                           for kw in ("subtotal", "total", "tax", "amount due"))]
+                            if len(retry_line_items) >= 1:
+                                retry_zero = sum(
+                                    1 for it in retry_line_items
+                                    if (float(it.get("unit_price", 0) or 0) == 0
+                                        and float(it.get("total", 0) or 0) == 0)
+                                    or (float(it.get("quantity", 0) or 0) == 0
+                                        and float(it.get("total", 0) or 0) > 0)
+                                )
+                                retry_failure = retry_zero / len(retry_line_items) if retry_line_items else 1
+                                if retry_failure < failure_rate:
+                                    logger.info(
+                                        f"Retry improved extraction: {retry_zero}/{len(retry_line_items)} "
+                                        f"zeros ({retry_failure:.0%}) vs original {failure_rate:.0%}. Using retry."
+                                    )
+                                    extracted = retry_extracted
+                                else:
+                                    logger.info(
+                                        f"Retry did not improve ({retry_failure:.0%} vs {failure_rate:.0%}). Keeping original."
+                                    )
+                        except json.JSONDecodeError:
+                            logger.warning("Retry JSON parse failed, keeping original extraction")
 
         receipt_id = str(uuid.uuid4())
 
@@ -2060,14 +2238,15 @@ Rules:
                         tot = float(item.get("total", 0) or 0)
                         item_warnings = []
 
-                        # ── Math infill — DISABLED for Sysco (strict read-only) ──
-                        if is_sysco:
+                        # ── Math infill — DISABLED for vendors with trust gates (strict read-only) ──
+                        is_trusted_vendor = is_sysco or "us food" in (detected_vendor or "").lower() or "pfg" in (detected_vendor or "").lower() or "performance" in (detected_vendor or "").lower()
+                        if is_trusted_vendor:
                             if tot == 0 and (qty > 0 or up > 0):
-                                item_warnings.append("total is zero (not infilled — Sysco strict mode)")
+                                item_warnings.append("total is zero (not infilled — strict read-only)")
                             if up == 0 and tot > 0:
-                                item_warnings.append("unit_price is zero (not infilled — Sysco strict mode)")
+                                item_warnings.append("unit_price is zero (not infilled — strict read-only)")
                             if qty == 0 and tot > 0:
-                                item_warnings.append("quantity is zero (not infilled — Sysco strict mode)")
+                                item_warnings.append("quantity is zero (not infilled — strict read-only)")
                         else:
                             if tot == 0 and qty > 0 and up > 0:
                                 item["total"] = round(qty * up, 2)

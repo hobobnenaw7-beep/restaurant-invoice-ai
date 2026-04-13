@@ -12,90 +12,88 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 │   │   ├── profit_dashboard.py (AI insights & decision engine APIs)
 │   ├── services/
 │   │   ├── unit_normalizer.py (pack_size → lb/piece, computes price_per_unit)
-│   │   ├── product_memory.py (Cross-row historic validation — currently disabled per user direction)
+│   │   ├── product_memory.py (Cross-row historic validation — disabled per user direction)
+│   │   ├── llm_rate_limiter.py (Rate limiting for GPT-5.2 calls)
 │   ├── tests/
-│   │   ├── test_qty_visible_logic.py (9 tests — qty_column_visible logic)
-│   │   ├── test_pipeline_correctness.py (12 tests — fee handling, column checks)
+│   │   ├── test_qty_visible_logic.py (9 unit tests)
+│   │   ├── test_pipeline_correctness.py (12 unit tests)
 │   │   ├── trust_gate_results.py (Multi-vendor trust gate validation)
-│   │   ├── multi_vendor_results.py (Before/after comparison script)
+│   │   ├── usfoods_raw_diagnostic.py (Raw GPT extraction diagnostic)
 │   │   ├── phase2_stress_test.py (Large-scale batch test)
 ├── frontend/src/
-│   ├── pages/DashboardPage.js (Dashboard with SmartMarketInsights)
-│   ├── components/profit/SmartMarketInsights.js (AI actionable cards)
+│   ├── pages/DashboardPage.js
+│   ├── components/profit/SmartMarketInsights.js
 ```
 
-## Pipeline Flow (per row)
+## Pipeline Flow (per invoice)
 ```
-GPT-5.2 Vision Extract → Row Classification → Source Validation → Vendor-Specific Gate → Trust Decision Audit → DB Save
+Image → GPT-5.2 Vision (vendor-specific prompt) → Quality Check + Retry
+    → Per-Item Sanitize → Row Classification → Source Validation
+    → Vendor-Specific Trust Gate → trust_decision Audit → DB Save
 ```
 
-### Stage 1: Row Classification
-- `line_item`: product rows
-- `fee`: fuel surcharge, delivery, service charges
-- `group_total`, `subtotal`, `tax`: excluded from scoring
-- `header`: category headers (excluded)
+### Vendor-Specific Prompts (3 dedicated + 1 generic)
+- **Sysco**: Strict read-only with horizontal column anchoring, qty_column_visible
+- **US Foods**: Multi-format detection (Format A/B/C), strict read-only, qty_column_visible
+- **PFG**: SHIP column focus, WEIGHT/PACK confusion guards, strict read-only, qty_column_visible
+- **Generic**: For unrecognized vendors, read-only mode, qty_column_visible
 
-### Stage 2: Source Validation
-- Per-item: checks qty_source, price_source, total_source
-- qty=1 + price==total: only downgrades if qty_column_visible is NOT true
-- Fee rows: skip product math, normalize qty=1, price=total
-- All-qty-1 pattern: only bulk-downgrades if no qty_column_visible=true
+### Extraction Quality Check + Retry
+GPT-5.2 vision is non-deterministic. If >50% of items have critical fields at 0 (price=0 AND total=0, or qty=0 with total present), or if only 1-2 items extracted with all zeros, the system retries once and keeps the better result.
 
-### Stage 3: Vendor-Specific Trust Gates
-**Sysco** — Math-first: qty × price = total (±$0.01) + all sources column_read
-**PFG** — Same math rule + column confusion checks (WEIGHT-as-qty, decimal qty, pack-as-qty)
-**US Foods** — Same math rule + column confusion checks (WEIGHT-as-qty, ORDERED-vs-SHIPPED)
-**Fee rows (all vendors)** — total > 0 only, no qty×price math
+### Row Classification
+- `line_item`: product rows (full math gate: qty × price = total ±$0.01)
+- `fee`: fuel surcharge, delivery, service charges (total > 0 only, no qty×price)
+- `group_total`, `subtotal`, `tax`, `header`: excluded from scoring
 
-### Stage 4: Trust Decision Audit
-Every row gets a `trust_decision` object:
+### Vendor-Specific Trust Gates
+All three vendor gates follow the same structure:
+1. Fee rows: trust if total > 0 (no product math)
+2. Product rows: trust if ALL of:
+   - qty × price = total (±$0.01)
+   - qty_source == "column_read"
+   - price_source == "column_read"
+   - total_source == "column_read"
+   - No column confusion errors
+   - Readable item name
+
+### Column Sanity Checks
+- **PFG**: WEIGHT-as-qty (qty > 50), decimal qty (SHIP is integer), pack-as-qty
+- **US Foods**: WEIGHT-as-qty (qty > 50), decimal qty (SHIPPED is integer), ORDERED-vs-SHIPPED
+
+### trust_decision Audit Trail
+Every row carries:
 ```json
 {
-  "row_type": "line_item|fee|...",
-  "extracted": {"raw_name": "...", "quantity": N, "unit_price": N, "total": N, ...},
+  "row_type": "line_item|fee",
+  "extracted": {"raw_name": "...", "quantity": N, "unit_price": N, "total": N},
   "gates": {"qty_source": "column_read", "math_check": true, ...},
   "final_status": "trusted|needs_review_numeric",
-  "failure_category": "none|fee_valid|source|math_fail|...",
+  "failure_category": "none|fee_valid|math_fail|source|...",
   "reason": "human-readable explanation"
 }
 ```
-
-## Completed Work
-- [x] Math-First Trust Gate (Sysco) — 100% on clean images, ~89% aggregate
-- [x] qty_column_visible signal — GPT reports visual presence of QTY column digit
-- [x] Fee row handling — fee rows use total > 0 only, no qty×price math
-- [x] PFG Trust Gate — 83.3% on test samples, 0 false trusts
-- [x] US Foods Trust Gate — 15% on test samples (extraction quality issue, not gate logic)
-- [x] Vendor-specific column sanity checks (PFG: WEIGHT/decimal/pack; US Foods: WEIGHT/ORDERED)
-- [x] trust_decision audit trail on every row
-- [x] Unit Normalization Layer (pack_size → price_per_unit)
-- [x] Product Memory (disabled per user direction until base extraction is reliable)
-- [x] Smart Market Insights UI
-- [x] Profit Intelligence APIs
-- [x] 21 unit tests passing, 0 false trusts across all vendors
 
 ## Current Trust Rates (Feb 2026)
 | Vendor | Trust Rate | False Trusts | Notes |
 |--------|-----------|--------------|-------|
 | Sysco | 100% | 0 | Fully operational |
-| PFG | 83.3% | 0 | Operational, needs more samples |
-| US Foods | 15% | 0 | Extraction quality issue, not gate logic |
+| US Foods | 87.5% | 0 | Operational with dedicated prompt + retry |
+| PFG | 100% | 0 | Fully operational |
 
 ## Known Issues
-- US Foods: GPT returns price=0/total=0 for many items (category section formatting)
-- US Foods: qty=1 downgrade still aggressive (prompt now has qty_column_visible, needs re-test)
-- File `receipt_b6c5bf31` vendor detection fails (returns None instead of US Foods)
+- Vendor detection sometimes fails (returns None for US Foods images) — needs fallback
+- GPT-5.2 vision non-determinism requires retry mechanism (implemented)
+- upload.py ~2600+ lines (refactoring parked per user direction)
 - bcrypt attribute error in backend logs (P2)
-- upload.py ~2400 lines (refactoring parked per user direction)
 
 ## Upcoming Tasks
 ### P0
-- Investigate US Foods extraction quality (why price=0 for many items)
-- Improve US Foods vendor detection reliability
+- Improve vendor detection reliability (fallback to DB-stored vendor when GPT fails)
 
 ### P1
-- Scale stress test to full 294 images (after correctness confirmed)
-- Product Memory re-enablement (after base extraction reliable)
+- Scale stress test to full 294 images (correctness confirmed, ready for scale)
+- Re-enable Product Memory as secondary validation layer
 
 ### P2
 - Expand Smart Market Insights (3-panel command center)
