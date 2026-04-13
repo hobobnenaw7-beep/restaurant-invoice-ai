@@ -64,11 +64,13 @@ def test_qty1_visible_missing():
 
 
 def test_qty1_fee_row():
-    """qty=1, price==total, fee row → keeps column_read (fees always qty=1)"""
+    """qty=1, price==total, fee row → fee_implied (fees normalize differently now)"""
     item = make_item(1, 12.00, 12.00, row_type="fee", raw_name="FUEL SURCHARGE")
     _validate_single_item_sources(item)
-    assert item["qty_source"] == "column_read", f"Expected column_read, got {item['qty_source']}"
-    print("PASS: qty=1 fee row → column_read preserved")
+    assert item["qty_source"] == "fee_implied", f"Expected fee_implied, got {item['qty_source']}"
+    assert item["quantity"] == 1
+    assert item["unit_price"] == 12.00
+    print("PASS: qty=1 fee row → fee_implied (correct fee handling)")
 
 
 def test_qty_not_1():
