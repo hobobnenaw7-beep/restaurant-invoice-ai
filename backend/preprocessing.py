@@ -105,6 +105,23 @@ def preprocess_image(image_bytes: bytes, save_artifacts: bool = False, artifact_
         img = _enhance_image(img)
         meta["steps_applied"].append("enhancement_applied")
 
+        # 7. Resize for GPT vision — cap at 2048px on long side
+        # GPT vision downscales larger images anyway, so sending 4032x3024
+        # wastes bandwidth and can cause inconsistent extraction.
+        max_dim = 2048
+        w, h = img.size
+        if max(w, h) > max_dim:
+            if w > h:
+                new_w = max_dim
+                new_h = int(h * (max_dim / w))
+            else:
+                new_h = max_dim
+                new_w = int(w * (max_dim / h))
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+            meta["steps_applied"].append(f"resize: {w}x{h} → {new_w}x{new_h}")
+        else:
+            meta["steps_applied"].append("resize_not_needed")
+
         buf = io.BytesIO()
         img.save(buf, format="PNG", optimize=True)
         processed = buf.getvalue()

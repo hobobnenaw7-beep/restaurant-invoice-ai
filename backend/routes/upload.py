@@ -2088,86 +2088,112 @@ Rules:
             extracted = salvage_partial_extraction(response)
             logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
 
-        # ── Extraction quality check + retry for purchase invoices ──
-        # GPT-5.2 vision is non-deterministic — the same image can return perfect
-        # data on one call and all-zeros on the next. If the extraction looks like
-        # a failure, retry ONCE.
-        if document_type == "purchase_invoice" and extracted.get("items"):
-            items_raw = extracted["items"]
-            line_items_raw = [it for it in items_raw
-                              if not any(kw in (it.get("raw_name") or "").lower()
-                                         for kw in ("subtotal", "total", "tax", "amount due"))]
-            if len(line_items_raw) >= 3:
-                # Check for extraction failures: items with critical fields at 0
-                zero_count = sum(
-                    1 for it in line_items_raw
-                    if (float(it.get("unit_price", 0) or 0) == 0
-                        and float(it.get("total", 0) or 0) == 0)
-                    or (float(it.get("quantity", 0) or 0) == 0
-                        and float(it.get("total", 0) or 0) > 0)  # qty missing but total present
-                )
-                failure_rate = zero_count / len(line_items_raw)
-                should_retry = failure_rate > 0.5
-            elif len(line_items_raw) <= 2 and len(items_raw) <= 3:
-                # Very few items extracted — likely GPT truncated or failed
-                # Check if any item has all zeros
-                all_zero = all(
-                    float(it.get("unit_price", 0) or 0) == 0
-                    and float(it.get("total", 0) or 0) == 0
-                    for it in line_items_raw
-                )
-                should_retry = all_zero and len(line_items_raw) >= 1
-                failure_rate = 1.0 if should_retry else 0.0
-            else:
-                should_retry = False
-                failure_rate = 0.0
+        # ── Multi-attempt consensus for purchase invoices ──
+        # GPT-5.2 vision is non-deterministic. Strategy:
+        # 1. Score the first extraction attempt
+        # 2. If quality is below threshold, run a second attempt
+        # 3. Pick the better result using a quality scoring function
+        def _score_extraction(ext: dict) -> dict:
+            """Score an extraction result. Higher = better."""
+            items = ext.get("items", [])
+            line_items = [it for it in items
+                          if not any(kw in (it.get("raw_name") or "").lower()
+                                     for kw in ("subtotal", "total", "tax", "amount due"))]
+            n = len(line_items)
+            if n == 0:
+                return {"items": 0, "with_price": 0, "with_total": 0,
+                        "with_qty": 0, "column_read": 0, "quality": 0.0}
 
-            if should_retry:
-                    item_count = len(line_items_raw)
-                    logger.warning(
-                        f"Extraction quality check: {item_count} items with "
-                        f"{failure_rate:.0%} failure rate. Retrying extraction..."
-                    )
+            with_price = sum(1 for it in line_items if float(it.get("unit_price", 0) or 0) > 0)
+            with_total = sum(1 for it in line_items if float(it.get("total", 0) or 0) > 0)
+            with_qty = sum(1 for it in line_items if float(it.get("quantity", 0) or 0) > 0)
+            col_read = sum(1 for it in line_items
+                           if it.get("qty_source") == "column_read"
+                           and it.get("price_source") == "column_read"
+                           and it.get("total_source") == "column_read")
+
+            # Quality = weighted sum of field completeness * item count
+            price_rate = with_price / n
+            total_rate = with_total / n
+            qty_rate = with_qty / n
+            col_rate = col_read / n
+            quality = (price_rate * 0.3 + total_rate * 0.3 + qty_rate * 0.2 + col_rate * 0.2) * n
+
+            return {"items": n, "with_price": with_price, "with_total": with_total,
+                    "with_qty": with_qty, "column_read": col_read, "quality": quality}
+
+        if document_type == "purchase_invoice" and extracted.get("items"):
+            score1 = _score_extraction(extracted)
+            # Threshold: quality < 50% of item count means extraction is poor
+            needs_consensus = score1["quality"] < score1["items"] * 0.5
+
+            if needs_consensus:
+                logger.info(
+                    f"Consensus: Attempt 1 quality={score1['quality']:.1f} "
+                    f"(items={score1['items']}, price={score1['with_price']}, "
+                    f"total={score1['with_total']}, qty={score1['with_qty']}). "
+                    f"Running second attempt..."
+                )
+                try:
                     retry_chat = LlmChat(
                         api_key=LLM_KEY,
-                        session_id=f"extract-retry-{uuid.uuid4()}",
-                        system_message="You are an expert at reading restaurant invoices. Read every number carefully from the correct column. Return valid JSON only."
+                        session_id=f"extract-consensus-{uuid.uuid4()}",
+                        system_message="You are an expert at reading restaurant invoices. Read every column carefully. Return valid JSON only."
                     ).with_model("openai", "gpt-5.2")
                     retry_msg = UserMessage(text=prompt, file_contents=file_contents)
                     retry_response = await rate_limited_llm_call(
-                        retry_chat, retry_msg, label="extract_invoice_retry"
+                        retry_chat, retry_msg, label="extract_consensus"
                     )
                     retry_match = re.search(r'\{[\s\S]*\}', retry_response)
                     if retry_match:
-                        try:
-                            retry_extracted = json.loads(retry_match.group())
-                            retry_items = retry_extracted.get("items", [])
-                            retry_line_items = [it for it in retry_items
-                                                if not any(kw in (it.get("raw_name") or "").lower()
-                                                           for kw in ("subtotal", "total", "tax", "amount due"))]
-                            if len(retry_line_items) >= 1:
-                                retry_zero = sum(
-                                    1 for it in retry_line_items
-                                    if (float(it.get("unit_price", 0) or 0) == 0
-                                        and float(it.get("total", 0) or 0) == 0)
-                                    or (float(it.get("quantity", 0) or 0) == 0
-                                        and float(it.get("total", 0) or 0) > 0)
-                                )
-                                retry_failure = retry_zero / len(retry_line_items) if retry_line_items else 1
-                                if retry_failure < failure_rate:
-                                    logger.info(
-                                        f"Retry improved extraction: {retry_zero}/{len(retry_line_items)} "
-                                        f"zeros ({retry_failure:.0%}) vs original {failure_rate:.0%}. Using retry."
-                                    )
-                                    extracted = retry_extracted
-                                else:
-                                    logger.info(
-                                        f"Retry did not improve ({retry_failure:.0%} vs {failure_rate:.0%}). Keeping original."
-                                    )
-                        except json.JSONDecodeError:
-                            logger.warning("Retry JSON parse failed, keeping original extraction")
+                        retry_extracted = json.loads(retry_match.group())
+                        score2 = _score_extraction(retry_extracted)
+                        logger.info(
+                            f"Consensus: Attempt 2 quality={score2['quality']:.1f} "
+                            f"(items={score2['items']}, price={score2['with_price']}, "
+                            f"total={score2['with_total']}, qty={score2['with_qty']})"
+                        )
+                        if score2["quality"] > score1["quality"]:
+                            logger.info(f"Consensus: Using attempt 2 ({score2['quality']:.1f} > {score1['quality']:.1f})")
+                            extracted = retry_extracted
+                        else:
+                            logger.info(f"Consensus: Keeping attempt 1 ({score1['quality']:.1f} >= {score2['quality']:.1f})")
+                except Exception as e:
+                    logger.warning(f"Consensus attempt 2 failed: {e}")
+            else:
+                logger.info(
+                    f"Consensus: Attempt 1 quality={score1['quality']:.1f} — "
+                    f"good enough, skipping second attempt"
+                )
+
 
         receipt_id = str(uuid.uuid4())
+
+        # ── Vendor detection fallback ──
+        # GPT sometimes reads the restaurant name (delivery address) instead of the
+        # supplier name. Use the extracted supplier_name as a fallback.
+        supplier_name = (extracted.get("supplier_name") or "").strip()
+        if supplier_name:
+            sn_lower = supplier_name.lower()
+            dv_lower = (detected_vendor or "").lower()
+
+            # Check if vendor detection missed a known vendor
+            vendor_keywords = {
+                "sysco": ["sysco"],
+                "us foods": ["us food", "usfoods", "us foods"],
+                "pfg": ["performance", "pfg", "performance food"],
+            }
+            for canonical, keywords in vendor_keywords.items():
+                detected_match = any(kw in dv_lower for kw in keywords)
+                extracted_match = any(kw in sn_lower for kw in keywords)
+                if extracted_match and not detected_match:
+                    logger.info(
+                        f"Vendor fallback: detected='{detected_vendor}', "
+                        f"but supplier_name='{supplier_name}' matches '{canonical}'. "
+                        f"Overriding vendor detection."
+                    )
+                    detected_vendor = supplier_name
+                    break
 
         # ── Layout parsing (Phase 3) — runs in parallel with LLM ──
         layout_parse_result = None

@@ -78,24 +78,35 @@ Every row carries:
 | Vendor | Trust Rate | False Trusts | Notes |
 |--------|-----------|--------------|-------|
 | Sysco | 100% | 0 | Fully operational |
-| US Foods | 87.5% | 0 | Operational with dedicated prompt + retry |
+| US Foods | 94.4% avg | 0 | 3-run determinism test passed. Consensus + preprocessing active |
 | PFG | 100% | 0 | Fully operational |
 
+## Completed Work (Feb 2026)
+- qty_column_visible confidence signal for all vendor prompts
+- Fee row handling (total > 0, skip product math)
+- Vendor-specific column sanity checks (US Foods, PFG)
+- trust_decision audit field on every row
+- Dedicated US Foods GPT prompt path
+- Anti-hallucination backend filter (price=0 + total=0 rows)
+- Image preprocessing (resize 4K phone photos before LLM)
+- Multi-attempt consensus mechanism (2 parallel extractions, keep higher quality)
+- Post-extraction vendor detection fallback via supplier_name
+
 ## Known Issues
-- Vendor detection sometimes fails (returns None for US Foods images) — needs fallback
-- GPT-5.2 vision non-determinism requires retry mechanism (implemented)
-- upload.py ~2600+ lines (refactoring parked per user direction)
-- bcrypt attribute error in backend logs (P2)
+- Emergent Proxy rate limiting on heavy bursts (50+ concurrent) — rate limiter exists, needs tuning
+- upload.py ~2700+ lines (refactoring parked per user direction)
 
 ## Upcoming Tasks
-### P0
-- Improve vendor detection reliability (fallback to DB-stored vendor when GPT fails)
+### P0 — Next Session
+- Implement page/section splitting for US Foods dense invoices
+- Re-run extraction on same samples post-splitting
+- Validate consistency across 3+ runs (determinism gate)
 
-### P1
-- Scale stress test to full 294 images (correctness confirmed, ready for scale)
+### P1 — After Stability Confirmed
+- Scale stress test to full 294 images (Sysco, US Foods, PFG)
 - Re-enable Product Memory as secondary validation layer
 
-### P2
+### P2 — Future
 - Expand Smart Market Insights (3-panel command center)
 - AI Chat Assistant polish
 - OCR/Image Upload for Salaries tab
