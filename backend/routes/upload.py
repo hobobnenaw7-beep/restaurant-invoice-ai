@@ -989,10 +989,253 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
 
 
 
+# ═══════════════════════════════════════════════════════════
+# PFG MATH-FIRST TRUST GATE
+# ═══════════════════════════════════════════════════════════
+# PFG Columns: ITEM# | QTY | PK | SIZE | DESCRIPTION | BRAND | UNIT PRC | EXT TOTAL
+# Math rule: QTY × UNIT PRC = EXT TOTAL (±$0.01)
+# Fee rows: total > 0 only
+# Column confusion: WEIGHT-as-qty, decimal qty, pack-as-qty (already checked in _validate_pfg_extraction)
+
+def _apply_pfg_trust_gate(extracted: dict) -> None:
+    """
+    PFG trust gate — mirrors Sysco structure.
+    Trusts rows where:
+      1. row_type == 'line_item' AND math validates AND all sources column_read AND no column errors
+      2. row_type == 'fee' AND total > 0
+    """
+    items = extracted.get("items", [])
+    line_items = [it for it in items if it.get("row_type") in ("line_item", "fee")]
+
+    for it in line_items:
+        if it.get("confidence_level") == "excluded":
+            continue
+
+        # ── Fee rows: trust if total > 0 ──
+        if it.get("row_type") == "fee":
+            total = float(it.get("total", 0) or 0)
+            has_name = bool((it.get("raw_name") or "").strip())
+            if total > 0 and has_name:
+                it["quantity"] = 1
+                it["unit_price"] = total
+                it["valid_calc"] = True
+                it["confidence_level"] = "trusted"
+                it["needs_review"] = False
+                it["review_reason"] = None
+                it["numeric_failure_category"] = "fee_valid"
+                it["confidence_reason"] = "PFG fee: total present, no product math required"
+            else:
+                it["confidence_level"] = "needs_review_numeric"
+                it["needs_review"] = True
+                it["numeric_failure_category"] = "fee_missing_total"
+                it["review_reason"] = f"PFG fee: missing total (total={total})"
+            it["vendor_status"] = "controlled_operational"
+            it["extraction_source"] = "gpt_vision_pfg"
+            continue
+
+        # ── Product rows: full trust gate ──
+        qty = float(it.get("quantity", 0) or 0)
+        price = float(it.get("unit_price", 0) or 0)
+        total = float(it.get("total", 0) or 0)
+        has_name = bool((it.get("raw_name") or "").strip())
+        alpha_count = sum(1 for c in (it.get("raw_name") or "") if c.isalpha())
+        readable = alpha_count >= 3
+
+        # Math check
+        if qty > 0 and price > 0 and total > 0:
+            computed = round(qty * price, 2)
+            diff = abs(computed - total)
+            it["valid_calc"] = diff <= 0.01
+        else:
+            it["valid_calc"] = False
+
+        # Source check
+        qty_src = (it.get("qty_source") or "").strip().lower()
+        price_src = (it.get("price_source") or "").strip().lower()
+        total_src = (it.get("total_source") or "").strip().lower()
+        all_column_read = (qty_src == "column_read" and
+                           price_src == "column_read" and
+                           total_src == "column_read")
+
+        # Column confusion errors are blocking (not just warnings)
+        errors = it.get("validation_errors", [])
+        column_errors = [e for e in errors if "pfg_column_check" in e]
+        has_blocking_errors = len(column_errors) > 0
+
+        math_ok = it.get("valid_calc", False)
+
+        if (math_ok and has_name and readable
+                and qty > 0 and price > 0 and total > 0
+                and all_column_read and not has_blocking_errors):
+            it["confidence_level"] = "trusted"
+            it["needs_review"] = False
+            it["review_reason"] = None
+            it["numeric_failure_category"] = "none"
+            it["confidence_reason"] = "PFG math-first: all fields present, math validated, all sources column_read"
+        else:
+            it["confidence_level"] = "needs_review_numeric"
+            it["needs_review"] = True
+            reasons = []
+            if not math_ok:
+                reasons.append("math_fail")
+            if not all_column_read:
+                bad_srcs = []
+                if qty_src != "column_read":
+                    bad_srcs.append(f"qty={qty_src}")
+                if price_src != "column_read":
+                    bad_srcs.append(f"price={price_src}")
+                if total_src != "column_read":
+                    bad_srcs.append(f"total={total_src}")
+                reasons.append(f"source({','.join(bad_srcs)})")
+            if has_blocking_errors:
+                reasons.append(f"column_confusion({len(column_errors)})")
+            if not has_name or not readable:
+                reasons.append("unreadable_name")
+            missing = []
+            if qty <= 0:
+                missing.append("qty")
+            if price <= 0:
+                missing.append("price")
+            if total <= 0:
+                missing.append("total")
+            if missing:
+                reasons.append(f"missing({','.join(missing)})")
+
+            reason_str = "; ".join(reasons)
+            it["review_reason"] = f"PFG review: {reason_str}"
+            it["numeric_failure_category"] = "pfg_" + (reasons[0].split("(")[0] if reasons else "unknown")
+            it["confidence_reason"] = f"PFG review: {reason_str}"
+
+        it["vendor_status"] = "controlled_operational"
+        it["extraction_source"] = "gpt_vision_pfg"
+
+
+# ═══════════════════════════════════════════════════════════
+# US FOODS MATH-FIRST TRUST GATE
+# ═══════════════════════════════════════════════════════════
+# US Foods Columns: Product Number | Qty | Unit | Description | Weight | Unit Price | Extended Price
+# Math rule: Qty × Unit Price = Extended Price (±$0.01)
+# Fee rows: total > 0 only
+# Column confusion: WEIGHT-as-qty, decimal qty, ORDERED-vs-SHIPPED (already checked in _validate_usfoods_extraction)
+
+def _apply_usfoods_trust_gate(extracted: dict) -> None:
+    """
+    US Foods trust gate — mirrors Sysco/PFG structure.
+    Trusts rows where:
+      1. row_type == 'line_item' AND math validates AND all sources column_read AND no column errors
+      2. row_type == 'fee' AND total > 0
+    """
+    items = extracted.get("items", [])
+    line_items = [it for it in items if it.get("row_type") in ("line_item", "fee")]
+
+    for it in line_items:
+        if it.get("confidence_level") == "excluded":
+            continue
+
+        # ── Fee rows: trust if total > 0 ──
+        if it.get("row_type") == "fee":
+            total = float(it.get("total", 0) or 0)
+            has_name = bool((it.get("raw_name") or "").strip())
+            if total > 0 and has_name:
+                it["quantity"] = 1
+                it["unit_price"] = total
+                it["valid_calc"] = True
+                it["confidence_level"] = "trusted"
+                it["needs_review"] = False
+                it["review_reason"] = None
+                it["numeric_failure_category"] = "fee_valid"
+                it["confidence_reason"] = "US Foods fee: total present, no product math required"
+            else:
+                it["confidence_level"] = "needs_review_numeric"
+                it["needs_review"] = True
+                it["numeric_failure_category"] = "fee_missing_total"
+                it["review_reason"] = f"US Foods fee: missing total (total={total})"
+            it["vendor_status"] = "controlled_operational"
+            it["extraction_source"] = "gpt_vision_usfoods"
+            continue
+
+        # ── Product rows: full trust gate ──
+        qty = float(it.get("quantity", 0) or 0)
+        price = float(it.get("unit_price", 0) or 0)
+        total = float(it.get("total", 0) or 0)
+        has_name = bool((it.get("raw_name") or "").strip())
+        alpha_count = sum(1 for c in (it.get("raw_name") or "") if c.isalpha())
+        readable = alpha_count >= 3
+
+        # Math check
+        if qty > 0 and price > 0 and total > 0:
+            computed = round(qty * price, 2)
+            diff = abs(computed - total)
+            it["valid_calc"] = diff <= 0.01
+        else:
+            it["valid_calc"] = False
+
+        # Source check
+        qty_src = (it.get("qty_source") or "").strip().lower()
+        price_src = (it.get("price_source") or "").strip().lower()
+        total_src = (it.get("total_source") or "").strip().lower()
+        all_column_read = (qty_src == "column_read" and
+                           price_src == "column_read" and
+                           total_src == "column_read")
+
+        # Column confusion errors are blocking
+        errors = it.get("validation_errors", [])
+        column_errors = [e for e in errors if "usfoods_column_check" in e]
+        has_blocking_errors = len(column_errors) > 0
+
+        math_ok = it.get("valid_calc", False)
+
+        if (math_ok and has_name and readable
+                and qty > 0 and price > 0 and total > 0
+                and all_column_read and not has_blocking_errors):
+            it["confidence_level"] = "trusted"
+            it["needs_review"] = False
+            it["review_reason"] = None
+            it["numeric_failure_category"] = "none"
+            it["confidence_reason"] = "US Foods math-first: all fields present, math validated, all sources column_read"
+        else:
+            it["confidence_level"] = "needs_review_numeric"
+            it["needs_review"] = True
+            reasons = []
+            if not math_ok:
+                reasons.append("math_fail")
+            if not all_column_read:
+                bad_srcs = []
+                if qty_src != "column_read":
+                    bad_srcs.append(f"qty={qty_src}")
+                if price_src != "column_read":
+                    bad_srcs.append(f"price={price_src}")
+                if total_src != "column_read":
+                    bad_srcs.append(f"total={total_src}")
+                reasons.append(f"source({','.join(bad_srcs)})")
+            if has_blocking_errors:
+                reasons.append(f"column_confusion({len(column_errors)})")
+            if not has_name or not readable:
+                reasons.append("unreadable_name")
+            missing = []
+            if qty <= 0:
+                missing.append("qty")
+            if price <= 0:
+                missing.append("price")
+            if total <= 0:
+                missing.append("total")
+            if missing:
+                reasons.append(f"missing({','.join(missing)})")
+
+            reason_str = "; ".join(reasons)
+            it["review_reason"] = f"US Foods review: {reason_str}"
+            it["numeric_failure_category"] = "usfoods_" + (reasons[0].split("(")[0] if reasons else "unknown")
+            it["confidence_reason"] = f"US Foods review: {reason_str}"
+
+        it["vendor_status"] = "controlled_operational"
+        it["extraction_source"] = "gpt_vision_usfoods"
+
+
+
 # ── US Foods Row Classification Keywords ──
 _USFOODS_EXCLUDE_PATTERNS = re.compile(
     r'\b(subtotal|sub\s*total|total|invoice\s*total|amount\s*due|'
-    r'sales\s*tax|tax|fuel\s*surcharge|delivery\s*fee|service\s*charge|'
+    r'sales\s*tax|tax|'
     r'credit|adjustment|balance\s*due|payment|remit)\b',
     re.IGNORECASE,
 )
@@ -1445,7 +1688,8 @@ CRITICAL PFG RULES:
 3. The WEIGHT column shows total weight (e.g., 24.00, 40.00) — do NOT confuse with quantity
 4. A "FUEL SURCHARGE" or "SURCHARGE" line is a service charge, not a product
 5. If a row has SHIP=0 but ORD>0, it was not delivered — use quantity=0
-6. Do NOT default quantity to 1 when uncertain — look at the SHIP column carefully"""
+6. Do NOT default quantity to 1 when uncertain — look at the SHIP column carefully
+7. qty_column_visible: set to true if you can SEE a printed number in the SHIP column for this row, false if that column is blank/unreadable"""
 
             elif "sysco" in dv_lower:
                 builtin_vendor_hint = """
@@ -1511,7 +1755,9 @@ CRITICAL US FOODS RULES:
 4. WEIGHT column shows total pounds — do NOT use as quantity
 5. NEVER default quantity to 1 if SHIPPED column is not readable — use 0 with qty_source="ambiguous"
 6. Description and Brand may appear merged — extract the full text as raw_name
-7. Pack values like "4/5 LB" mean "4 bags of 5 LB each" — copy verbatim as pack_size"""
+7. Pack values like "4/5 LB" mean "4 bags of 5 LB each" — copy verbatim as pack_size
+8. qty_column_visible: set to true if you can SEE a printed number in the SHIPPED column for this row, false if that column is blank/unreadable
+9. "FUEL SURCHARGE", "DELIVERY FEE", "SERVICE CHARGE" are fee rows — extract with quantity=1, qty_column_visible=true"""
 
             elif "performance" in dv_lower or "pfg" in dv_lower:
                 # Override the existing PFG hint with enhanced version
@@ -1539,7 +1785,8 @@ CRITICAL PFG RULES:
 6. "FUEL SURCHARGE" or "SURCHARGE" line is a service charge, not a product
 7. If a row has SHIP=0 but ORD>0, it was not delivered — use quantity=0
 8. Do NOT default quantity to 1 when uncertain — look at the SHIP column carefully
-9. $/LB and EXT PRICE are separate columns — read each from its own position"""
+9. $/LB and EXT PRICE are separate columns — read each from its own position
+10. qty_column_visible: set to true if you can SEE a printed number in the SHIP column for this row, false if that column is blank/unreadable"""
 
         # Update classification with vendor info now that we know it
         if vendor_pattern and detected_vendor.upper() != "UNKNOWN":
@@ -1901,25 +2148,19 @@ Rules:
 
                 if "performance" in dv_lower or "pfg" in dv_lower:
                     _validate_pfg_extraction(extracted["items"])
-                    for it in extracted.get("items", []):
-                        it["confidence_level"] = "vendor_logic_pending"
-                        it["needs_review"] = True
-                        if not it.get("review_reason"):
-                            it["review_reason"] = "Review Required (Vendor Logic Pending) — PFG trust gate not yet implemented"
-                        it["vendor_status"] = "pending"
-                        it["extraction_source"] = "gpt_vision"
-
-                elif "us foods" in dv_lower or "usfoods" in dv_lower or "us food" in dv_lower:
-                    # ── US FOODS: Structural mapping + math gate, NO trust ──
-                    _validate_usfoods_extraction(extracted["items"])
+                    _apply_pfg_trust_gate(extracted)
                     for it in extracted.get("items", []):
                         if it.get("row_type") in ("line_item", "fee"):
-                            it["confidence_level"] = "vendor_logic_pending"
-                            it["needs_review"] = True
-                            if not it.get("review_reason"):
-                                math_status = "PASS" if it.get("valid_calc") else "FAIL"
-                                it["review_reason"] = f"Review Required (Vendor Logic Pending) — US Foods math gate: {math_status}"
-                            it["vendor_status"] = "pending"
+                            it["vendor_status"] = "controlled_operational"
+                            it["extraction_source"] = "gpt_vision_pfg"
+
+                elif "us foods" in dv_lower or "usfoods" in dv_lower or "us food" in dv_lower:
+                    # ── US FOODS: Structural mapping + math gate + trust assignment ──
+                    _validate_usfoods_extraction(extracted["items"])
+                    _apply_usfoods_trust_gate(extracted)
+                    for it in extracted.get("items", []):
+                        if it.get("row_type") in ("line_item", "fee"):
+                            it["vendor_status"] = "controlled_operational"
                             it["extraction_source"] = "gpt_vision_usfoods"
 
                 elif "sysco" in dv_lower:
