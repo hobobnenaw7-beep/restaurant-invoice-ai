@@ -1910,13 +1910,12 @@ HOW TO DETECT THE FORMAT:
 6. WEIGHT is always a separate column — do NOT use it as quantity
 
 STRICT READING RULES:
-- ONLY extract items that are FULLY VISIBLE in this image — all columns (qty, price, total) must be readable
-- If you can see an item name but CANNOT see its price or total columns, DO NOT include that item
-- This image may be one page of a multi-page invoice — only extract items from THIS page
+- Extract EVERY product line item you can identify in the table, even if some fields are hard to read
 - For each line item, READ quantity, unit_price, and total DIRECTLY from their respective columns
-- If you CANNOT clearly read a number from its column, use 0 — do NOT calculate it
+- If you CANNOT clearly read a number from its column, use 0 and mark that field source as "ambiguous"
 - Do NOT compute total from qty x price
 - Do NOT compute qty from total / price
+- Do NOT invent or guess numeric values — only report what you can actually read from the printed text
 - Do NOT default quantity to 1 — use 0 if unreadable
 - NEVER assume quantity is 1
 - Read pack_size verbatim from the Pack/Size column if present
