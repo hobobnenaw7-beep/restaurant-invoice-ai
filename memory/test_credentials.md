@@ -3,8 +3,9 @@
 ## Application Login
 - Email: demo@test.com
 - Password: testpassword
+- Role: manager (all permissions, data_scope=all)
 
-## Test Samples
+## Test Samples (Invoice Extraction)
 - Sysco: `uploads/bfcdcae9-f8d4-4eac-af43-e4e0bfe2b7d5.jpg`
 - PFG: `uploads/receipt_20b24d09-5761-4c09-aca6-6925cb235a55.png`
 - US Foods (clean): `uploads/usfoods_clean_test_invoice.png`

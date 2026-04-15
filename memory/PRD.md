@@ -1,135 +1,122 @@
 # Invoice AI — Product Requirements Document
 
 ## Problem Statement
-Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate. The system must achieve 80-90% trust rate on extracted invoice data across multiple vendors (Sysco, US Foods, PFG) without violating the zero-false-trust rule.
+Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, plus a multi-user permissions and accountability model for team operation.
 
 ## Architecture
 ```
 /app/
 ├── backend/
+│   ├── core/
+│   │   ├── auth.py (JWT auth, password hashing)
+│   │   ├── permissions.py (NEW — visibility/action perms, data scope, soft-delete helpers)
+│   │   ├── models.py (Pydantic models with data_scope field)
+│   │   ├── database.py (MongoDB connection)
 │   ├── routes/
-│   │   ├── upload.py (Core pipeline: extraction, row classification, vendor gates, trust assignment)
-│   │   ├── profit_dashboard.py (AI insights & decision engine APIs)
+│   │   ├── auth.py (Auth + User CRUD with permissions/scope)
+│   │   ├── sales.py (Scope-filtered, soft-delete, ownership fields)
+│   │   ├── other_expenses.py (Scope-filtered, soft-delete, ownership fields)
+│   │   ├── records.py (Scope-filtered, ownership fields)
+│   │   ├── upload.py (Extraction pipeline with ownership fields)
+│   │   ├── profit_dashboard.py (AI insights)
 │   ├── services/
-│   │   ├── unit_normalizer.py (pack_size → lb/piece, computes price_per_unit)
-│   │   ├── product_memory.py (Cross-row historic validation — disabled per user direction)
-│   │   ├── llm_rate_limiter.py (Rate limiting for GPT-5.2 calls)
-│   │   ├── usfoods_structural.py (NEW — 2-phase structural extraction for US Foods)
-│   │   ├── image_preprocessor.py (Resize/enhance for GPT Vision)
-│   │   ├── section_splitter.py (Section splitting — tested, NOT active)
-│   ├── tests/
-│   │   ├── vendor_consistency_report.py (3-vendor 3-run consistency)
-│   │   ├── usfoods_structural_test.py (2-phase structural validation)
-│   │   ├── usfoods_prompt_fix_test.py
-│   │   ├── trust_gate_results.py (Multi-vendor trust gate validation)
-│   │   ├── usfoods_evidence_report.py
+│   │   ├── usfoods_structural.py (2-phase structural extraction)
+│   │   ├── unit_normalizer.py, llm_rate_limiter.py, etc.
+│   ├── migrations/
+│   │   ├── backfill_ownership.py (Field renaming + backfill)
 ├── frontend/src/
-│   ├── pages/ExpensesPage.js (photo capture guidelines added)
+│   ├── App.js (PermRoute for route-level permission enforcement)
+│   ├── components/Layout.js (Sidebar filters by visibility permissions)
+│   ├── contexts/AuthContext.js (Login fetches permissions via /auth/me)
+│   ├── pages/
+│   │   ├── DashboardPage.js (Default month = All Months)
+│   │   ├── UserManagementPage.js (Visibility perms, Data Scope, Action perms)
+│   │   ├── SalesPage.js (Created By + Source columns)
 ```
 
-## Pipeline Flow (per invoice)
+## Permission Model
 
-### Sysco / PFG (Standard Path)
-```
-Image → Preprocess → GPT-5.2 Vision (vendor-specific prompt) → Consensus if poor
-    → Per-Item Sanitize → Row Classification → Source Validation
-    → Vendor-Specific Trust Gate → trust_decision Audit → DB Save
-```
+### Visibility Permissions (8)
+| Page | Manager | Accountant | Cashier | Staff |
+|------|---------|------------|---------|-------|
+| Dashboard | Y | Y | Y | Y |
+| Sales | Y | Y | Y | N |
+| Expenses | Y | Y | N | N |
+| Reports | Y | Y | N | N |
+| Records Library | Y | Y | Y (own) | Y (own) |
+| Vendors | Y | Y | Y (view) | N |
+| Items | Y | Y | Y (view) | N |
+| Users/Mgmt | Y | N | N | N |
 
-### US Foods (2-Phase Structural Path)
-```
-Image → Preprocess → Phase 1: GPT reads NUMERIC GRID (product codes + qty/price/total)
-                   → Phase 2: GPT reads DESCRIPTIONS (product names + pack sizes)
-                   → Deterministic Assembly (merge by product_code)
-    → Per-Item Sanitize → Row Classification → Source Validation
-    → US Foods Trust Gate → trust_decision Audit → DB Save
-```
+### Data Scope
+- Manager/Accountant: `all` (sees all records)
+- Cashier/Staff: `own` (sees only own records)
 
-### Vendor-Specific Prompts
-- **Sysco**: Strict read-only with horizontal column anchoring, qty_column_visible
-- **US Foods**: 2-phase structural — Phase 1 (numbers-only), Phase 2 (descriptions-only)
-- **PFG**: SHIP column focus, WEIGHT/PACK confusion guards, strict read-only
-- **Generic**: Read-only mode, qty_column_visible
+### Action Permissions (13)
+- Sales: add/edit/delete (Cashier can add+edit own, Manager can delete)
+- Expenses: add/edit/delete (Accountant can add+edit, Manager can delete)
+- Files: upload, view/export reports, view records
+- Management: vendors, items, users
 
-### Row Classification
-- `line_item`: product rows (full math gate: qty × price = total ±$0.01)
-- `fee`: fuel surcharge, delivery, service charges (total > 0 only, no qty×price)
-- `group_total`, `subtotal`, `tax`, `header`: excluded from scoring
+### Enforcement
+- Backend: `require_permission()` dependency on each route
+- Backend: `apply_scope_filter()` on every query
+- Backend: `apply_soft_delete_filter()` excludes deleted records
+- Frontend: `PermRoute` redirects unauthorized URL access
+- Frontend: Sidebar filters nav items by visibility permissions
 
-### Vendor-Specific Trust Gates
-All three vendor gates follow the same structure:
-1. Fee rows: trust if total > 0 (no product math)
-2. Product rows: trust if ALL of:
-   - qty × price = total (±$0.01)
-   - qty_source == "column_read"
-   - price_source == "column_read"
-   - total_source == "column_read"
-   - No column confusion errors
-   - Readable item name
+### Soft-Delete
+- Sales and Expenses use soft-delete (status="deleted")
+- Preserves: deleted_at, deleted_by_user_id, deleted_by_name
+- Only Manager can delete
 
-## Current Trust Rates (Feb 2026)
+### Ownership Fields (all transactional collections)
+- `created_by_user_id` — user ID who created the record
+- `created_by_name` — display name
+- `source_type` — "manual" | "upload" | "system" | "pos" | "import"
+- `created_at` — ISO timestamp
 
-### Proven Deterministic (clean inputs)
-| Vendor | Trust Rate | False Trusts | Determinism | Notes |
-|--------|-----------|--------------|-------------|-------|
-| Sysco | 100% | 0 | 3/3 identical | Fully operational, proven |
-| PFG | 100% | 0 | 3/3 identical | Fully operational, proven |
-| US Foods (clean scan) | 100% | 0 | 3/3 identical (12/12 items, all codes match) | 2-phase structural, proven on clean input |
+## Extraction Pipeline Trust Rates (Feb 2026)
+| Vendor | Clean Input | Phone Photo | False Trusts |
+|--------|------------|-------------|--------------|
+| Sysco | 100% | 100% | 0 |
+| PFG | 100% | 100% | 0 |
+| US Foods | 100% | Variable | 0 |
 
-### Production-Safe (dark phone photos)
-| Vendor | Trust Rate | False Trusts | Determinism | Notes |
-|--------|-----------|--------------|-------------|-------|
-| US Foods (phone photo) | 0-100% | 0 | Non-deterministic item counts | Safe (zero false trusts), variability tied to image quality |
-
-## Completed Work (Feb 2026)
-- qty_column_visible confidence signal for all vendor prompts
-- Fee row handling (total > 0, skip product math)
-- Vendor-specific column sanity checks (US Foods, PFG)
-- trust_decision audit field on every row
-- Dedicated US Foods GPT prompt path
-- Anti-hallucination backend filter (price=0 + total=0 rows)
-- Image preprocessing (resize 4K phone photos before LLM)
-- Multi-attempt consensus mechanism (Sysco/PFG/generic)
-- Post-extraction vendor detection fallback via supplier_name
-- US Foods relaxed prompt (removed "FULLY VISIBLE" gate that caused 0-item collapse)
-- US Foods 2-phase structural extraction engine (Phase 1: numbers, Phase 2: descriptions)
-- Section splitting tested and reverted (proven worse than single-pass)
-- Photo capture guidelines added to upload UI
-- Clean-input validation: US Foods 2-phase achieves 100% determinism on clean scans
-
-## Approaches Tested and Results
-| Approach | Outcome |
-|----------|---------|
-| Single-call strict prompt | 0 items on dark photos (too restrictive) |
-| Single-call relaxed prompt | 11-19 items, 0 false trusts, non-deterministic names |
-| Section splitting (2 strips) | WORSE — 0-9 items (strips lose column context) |
-| Multi-attempt consensus | Helps Sysco/PFG; marginal for US Foods |
-| Tesseract OCR on phone photos | Total failure (gibberish output) |
-| Tesseract OCR on clean scans | Perfect (all text readable) |
-| 2-phase structural (numbers + descriptions) | 100% deterministic on clean input; non-deterministic on dark photos |
+## Completed Work
+- Permissions + Accountability model (21 permissions, 4 roles, data scope)
+- Soft-delete for sales and expenses
+- Ownership + audit trail fields on all collections
+- Route-level permission enforcement (backend + frontend)
+- Sidebar visibility filtering
+- Dashboard default month = All Months
+- Created By / Source columns in Sales table
+- US Foods 2-phase structural extraction
+- Multi-vendor trust gates (zero false trusts)
+- Image preprocessing + consensus mechanism
+- Migration script for field backfill
 
 ## Known Issues
-- US Foods dark phone photos: non-deterministic extraction (safe but variable)
+- US Foods dark phone photos: non-deterministic row counts (safe — zero false trusts)
 - Emergent Proxy rate limiting on heavy bursts (50+ concurrent)
-- upload.py ~2700+ lines (refactoring parked per user direction)
+- upload.py ~2600+ lines (refactoring parked per user direction)
 
 ## Upcoming Tasks
-### P0 — Immediate
+### P0
 - Obtain real US Foods PDF/clean scan for production validation
-- Confirm 2-phase structural determinism on real clean US Foods invoice
+- Test permission enforcement with multi-user workflows
 
-### P1 — After Clean-Input Confirmation
-- Scale stress test to full 294 images (Sysco, US Foods, PFG)
-- Re-enable Product Memory as secondary validation layer
+### P1
+- Scale stress test to 294 images
+- Re-enable Product Memory layer
 
-### P2 — Future
-- Expand Smart Market Insights (3-panel command center)
+### P2
+- Smart Market Insights 3-panel expansion
 - AI Chat Assistant polish
 - OCR/Image Upload for Salaries tab
-- upload.py refactoring
 
 ## Test Credentials
-- Username: demo@test.com / Password: testpassword
+- Username: demo@test.com / Password: testpassword (manager)
 
 ## 3rd Party Integrations
 - OpenAI GPT-5.2 (Vision) — uses Emergent LLM Key
