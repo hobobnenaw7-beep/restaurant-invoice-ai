@@ -22,6 +22,56 @@ import PurchaseDecisionsPage from "@/pages/PurchaseDecisionsPage";
 import AuditLogPage from "@/pages/AuditLogPage";
 import CorrectionMemoryPage from "@/pages/CorrectionMemoryPage";
 import VendorComparisonPage from "@/pages/VendorComparisonPage";
+import { ShieldOff } from 'lucide-react';
+
+// Priority-ordered list of pages for landing page resolution.
+// After login, the user lands on the first page they have permission to access.
+const LANDING_PRIORITY = [
+  { path: '/dashboard', perm: 'view_dashboard' },
+  { path: '/sales', perm: 'view_sales' },
+  { path: '/expenses', perm: 'view_expenses' },
+  { path: '/records', perm: 'view_records' },
+  { path: '/reports', perm: 'view_reports' },
+  { path: '/vendors', perm: 'view_vendors' },
+  { path: '/items', perm: 'view_items' },
+  { path: '/users', perm: 'view_users' },
+];
+
+function getFirstAllowedPath(perms) {
+  if (!perms) return null;
+  for (const entry of LANDING_PRIORITY) {
+    if (perms[entry.perm]) return entry.path;
+  }
+  return null;
+}
+
+function NoAccessPage() {
+  const { logout } = useAuth();
+  const handleLogout = () => {
+    logout();
+    window.location.href = '/login';
+  };
+  return (
+    <div className="flex h-screen items-center justify-center bg-slate-50">
+      <div className="text-center max-w-sm px-6">
+        <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-5">
+          <ShieldOff className="w-8 h-8 text-slate-400" />
+        </div>
+        <h1 className="font-heading text-xl font-bold text-navy-900 mb-2">No Accessible Pages</h1>
+        <p className="text-sm text-slate-500 mb-6">
+          Your account does not have visibility permissions for any pages. Please contact your manager to update your access.
+        </p>
+        <button
+          onClick={handleLogout}
+          className="px-4 py-2 text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700 rounded-lg transition-colors"
+          data-testid="no-access-logout-btn"
+        >
+          Log Out
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -35,15 +85,32 @@ function PermRoute({ children, perm }) {
   if (loading) return <div className="flex h-screen items-center justify-center"><div className="animate-spin w-8 h-8 border-2 border-teal-600 border-t-transparent rounded-full" /></div>;
   if (!user) return <Navigate to="/login" replace />;
   const perms = user?.permissions || {};
-  if (perm && !perms[perm]) return <Navigate to="/dashboard" replace />;
+  if (perm && !perms[perm]) {
+    // Redirect to first allowed page, not hardcoded /dashboard
+    const fallback = getFirstAllowedPath(perms);
+    if (!fallback) return <Navigate to="/no-access" replace />;
+    return <Navigate to={fallback} replace />;
+  }
   return <Layout><StableErrorBoundary>{children}</StableErrorBoundary></Layout>;
 }
 
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex h-screen items-center justify-center"><div className="animate-spin w-8 h-8 border-2 border-teal-600 border-t-transparent rounded-full" /></div>;
-  if (user) return <Navigate to="/dashboard" replace />;
+  if (user) {
+    // Redirect to first allowed page, not hardcoded /dashboard
+    const landing = getFirstAllowedPath(user?.permissions);
+    return <Navigate to={landing || '/no-access'} replace />;
+  }
   return children;
+}
+
+function SmartLanding() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="flex h-screen items-center justify-center"><div className="animate-spin w-8 h-8 border-2 border-teal-600 border-t-transparent rounded-full" /></div>;
+  if (!user) return <Navigate to="/login" replace />;
+  const landing = getFirstAllowedPath(user?.permissions);
+  return <Navigate to={landing || '/no-access'} replace />;
 }
 
 function App() {
@@ -52,6 +119,7 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
+          <Route path="/no-access" element={<NoAccessPage />} />
           <Route path="/dashboard" element={<PermRoute perm="view_dashboard"><DashboardPage /></PermRoute>} />
           <Route path="/profit-center" element={<PermRoute perm="view_dashboard"><ProfitDashboard /></PermRoute>} />
           <Route path="/expenses" element={<PermRoute perm="view_expenses"><ExpensesPage /></PermRoute>} />
@@ -69,7 +137,7 @@ function App() {
           <Route path="/audit-log" element={<PermRoute perm="view_users"><AuditLogPage /></PermRoute>} />
           <Route path="/vendor-comparison" element={<PermRoute perm="view_vendors"><VendorComparisonPage /></PermRoute>} />
           <Route path="/correction-memory" element={<PermRoute perm="view_expenses"><CorrectionMemoryPage /></PermRoute>} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<SmartLanding />} />
         </Routes>
         <Toaster position="top-right" richColors />
       </AuthProvider>
