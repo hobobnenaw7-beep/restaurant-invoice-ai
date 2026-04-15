@@ -1723,41 +1723,10 @@ CRITICAL RULES:
 8. qty_column_visible is about whether you can SEE a printed digit in the QTY column area — true even when that digit is 1"""
 
             elif "us foods" in dv_lower or "usfoods" in dv_lower or "us food" in dv_lower:
-                builtin_vendor_hint = """
-
-US FOODS INVOICE — STRUCTURAL FIELD MAPPING:
-You are reading a US Foods restaurant supply invoice. Extract field values by reading the document grid structure.
-
-COLUMN LAYOUT (identify from the HEADER ROW):
-- NUMBER/ITEM#: 7-digit product code (e.g., "1234567", "9876543"). Extract this as item_code — it is SEPARATE from the description.
-- BRAND: brand name (e.g., "MONARCH", "CHEF'S LINE", "METRO DELI")
-- DESCRIPTION: product name (may merge with adjacent columns when text is dense)
-- PACK/SIZE: pack specification (e.g., "4/5 LB", "6/10 CT", "1/15 LB"). This is NOT the quantity.
-- ORDERED: quantity ordered (integer)
-- SHIPPED: quantity actually delivered. THIS IS the correct quantity to extract.
-- WEIGHT: total weight in pounds (decimal). This is NOT the quantity.
-- PRICE/UNIT PRICE: unit price per case ($-prefixed)
-- EXTENSION/EXT PRICE: extended total for the line ($-prefixed)
-
-ROW CLASSIFICATION:
-- Product line items: rows with item code + description + numeric values → extract normally
-- "SUBTOTAL" or "SUB-TOTAL": merchandise subtotal → put in "subtotal" field, do NOT extract as line item
-- "TAX" or "SALES TAX": tax amount → put in "tax" field, do NOT extract as line item
-- "TOTAL" or "INVOICE TOTAL" or "AMOUNT DUE": full total → put in "total" field, do NOT extract as line item
-- "FUEL SURCHARGE" or "DELIVERY FEE" or "SERVICE CHARGE": service charges → do NOT include in subtotal
-- Section headers (category names like "FROZEN", "DAIRY") → SKIP entirely
-- Credit/return lines (negative amounts): extract with negative total
-
-CRITICAL US FOODS RULES:
-1. ALWAYS extract item_code from the NUMBER column — it is the 7-digit code at the start of each row
-2. quantity MUST come from SHIPPED column, NOT from ORDERED, PACK, or WEIGHT
-3. If SHIPPED is 0 but ORDERED > 0, the item was not delivered — use quantity=0
-4. WEIGHT column shows total pounds — do NOT use as quantity
-5. NEVER default quantity to 1 if SHIPPED column is not readable — use 0 with qty_source="ambiguous"
-6. Description and Brand may appear merged — extract the full text as raw_name
-7. Pack values like "4/5 LB" mean "4 bags of 5 LB each" — copy verbatim as pack_size
-8. qty_column_visible: set to true if you can SEE a printed number in the SHIPPED column for this row, false if that column is blank/unreadable
-9. "FUEL SURCHARGE", "DELIVERY FEE", "SERVICE CHARGE" are fee rows — extract with quantity=1, qty_column_visible=true"""
+                # US Foods builtin hints are embedded in the 2-phase structural
+                # extraction engine (services/usfoods_structural.py). No prompt-level
+                # hint needed here since the structural path bypasses the single-call prompt.
+                pass
 
             elif "performance" in dv_lower or "pfg" in dv_lower:
                 # Override the existing PFG hint with enhanced version
@@ -1877,66 +1846,12 @@ QTY COLUMN VISIBILITY (critical for qty=1 items):
 - Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
 
                 elif "us food" in (detected_vendor or "").lower() or "usfoods" in (detected_vendor or "").lower():
-                    # ── US FOODS STRICT READ-ONLY PROMPT ──
-                    prompt = f"""You are reading a US Foods restaurant purchase invoice from a camera phone photo. READ the document exactly as printed. Do NOT compute or infer any numbers.
-
-Extract into this exact JSON format:
-{{"supplier_name":"","invoice_date":"YYYY-MM-DD","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":"","item_code":"","qty_column_visible":false}}],"subtotal":0,"tax":0,"total":0}}
-
-US FOODS COLUMN IDENTIFICATION:
-US Foods invoices have varying column layouts. You MUST first identify the HEADER ROW and map columns:
-
-FORMAT A (most common):
-  Product# | Brand | Description | Pack/Size | Ordered | Shipped | Weight | Unit Price | Extended Price
-  - quantity = value from SHIPPED column (NOT Ordered, NOT Weight)
-  - item_code = value from Product# column (7-digit number)
-
-FORMAT B:
-  Quantity | Unit | Product Number | Description | ... | Unit Price | Extended Price
-  - quantity = value from the Quantity column (first numeric column)
-  - item_code = value from Product Number column
-
-FORMAT C:
-  Item# | Description | Qty | Unit | Price | Extension
-  - quantity = value from the Qty column
-  - item_code = value from Item# column
-
-HOW TO DETECT THE FORMAT:
-1. Read the header row text carefully
-2. If you see "Shipped" in the header → use Shipped column for quantity
-3. If you see "Quantity" or "Qty" as the first column → use that column for quantity
-4. The rightmost dollar column is always Extended Price (total for the line)
-5. The second-to-rightmost dollar column is always Unit Price
-6. WEIGHT is always a separate column — do NOT use it as quantity
-
-STRICT READING RULES:
-- Extract EVERY product line item you can identify in the table, even if some fields are hard to read
-- For each line item, READ quantity, unit_price, and total DIRECTLY from their respective columns
-- If you CANNOT clearly read a number from its column, use 0 and mark that field source as "ambiguous"
-- Do NOT compute total from qty x price
-- Do NOT compute qty from total / price
-- Do NOT invent or guess numeric values — only report what you can actually read from the printed text
-- Do NOT default quantity to 1 — use 0 if unreadable
-- NEVER assume quantity is 1
-- Read pack_size verbatim from the Pack/Size column if present
-- Extract item_code from the Product Number / Item# column
-- "FUEL SURCHARGE", "DELIVERY FEE", "SERVICE CHARGE" are fee rows — extract with quantity=1
-
-ROW EXCLUSION — Do NOT extract:
-- Summary rows: "SUBTOTAL", "TOTAL", "INVOICE TOTAL", "AMOUNT DUE"
-- Section headers or category dividers
-- The "Pieces Ordered / Shipped / Received" summary box at the bottom
-
-FIELD SOURCE (for each item):
-- qty_source: "column_read" if you see a number in the quantity column, "ambiguous" if not
-- price_source: "column_read" if you see a number in the unit price column, "ambiguous" if not
-- total_source: "column_read" if you see a number in the extended price column, "ambiguous" if not
-- NEVER use "inferred"
-
-QTY COLUMN VISIBILITY:
-- qty_column_visible: true if you can SEE a printed number in the quantity column for this row (even if it is 1), false if blank/unreadable
-
-- Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
+                    # ── US FOODS: Handled by 2-phase structural extraction ──
+                    # The structural engine (services/usfoods_structural.py) uses its own
+                    # specialized prompts (Phase 1: numbers-only, Phase 2: descriptions-only).
+                    # This prompt is set as a no-op placeholder; the structural path intercepts
+                    # before it's used. See extraction routing below.
+                    prompt = ""  # Not used — structural path bypasses single-call extraction
 
                 elif "performance" in (detected_vendor or "").lower() or "pfg" in (detected_vendor or "").lower():
                     # ── PFG STRICT READ-ONLY PROMPT ──
@@ -2068,23 +1983,19 @@ Rules:
 - Use 0 for any truly missing numeric values
 - Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
 
-        # ── GPT Vision Extraction ──
-        # US Foods: Use 2-phase structural extraction for determinism
-        # All other vendors: Standard single-call extraction
+        # ── Vendor-Specific Extraction ──
+        # US Foods: 2-phase structural extraction (numbers + descriptions separately)
+        # Sysco/PFG/Generic: Standard single-call GPT extraction with consensus retry
         _is_usfoods = (document_type == "purchase_invoice" and
                        ("us food" in (detected_vendor or "").lower() or
                         "usfoods" in (detected_vendor or "").lower()))
 
         if _is_usfoods:
             from services.usfoods_structural import extract_usfoods_structural
-            from services.llm_rate_limiter import rate_limited_llm_call
-
             extracted = await extract_usfoods_structural(
                 images_b64=images_b64,
                 llm_key=LLM_KEY,
                 rate_limited_llm_call=rate_limited_llm_call,
-                vendor_hint=vendor_hint,
-                builtin_vendor_hint=builtin_vendor_hint,
             )
             response = json.dumps(extracted)  # for raw_ocr_text storage
             logger.info(
@@ -2109,11 +2020,10 @@ Rules:
                 extracted = salvage_partial_extraction(response)
                 logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
 
-        # ── Multi-attempt consensus for purchase invoices ──
-        # GPT-5.2 vision is non-deterministic. Strategy:
-        # 1. Score the first extraction attempt
-        # 2. If quality is below threshold, run a second attempt
-        # 3. Pick the better result using a quality scoring function
+        # ── Multi-attempt consensus (Sysco/PFG/Generic only) ──
+        # US Foods uses the 2-phase structural path which has its own quality assurance.
+        # For other vendors: if first extraction quality is poor (<50% of items have
+        # complete fields), run a second attempt and keep the better result.
         def _score_extraction(ext: dict) -> dict:
             """Score an extraction result. Higher = better."""
             items = ext.get("items", [])
