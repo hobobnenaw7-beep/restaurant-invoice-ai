@@ -2069,23 +2069,45 @@ Rules:
 - Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
 
         # ── GPT Vision Extraction ──
-        chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately by reading the document. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
-        file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
-        user_msg = UserMessage(text=prompt, file_contents=file_contents)
-        response = await rate_limited_llm_call(chat, user_msg, label="extract_invoice")
+        # US Foods: Use 2-phase structural extraction for determinism
+        # All other vendors: Standard single-call extraction
+        _is_usfoods = (document_type == "purchase_invoice" and
+                       ("us food" in (detected_vendor or "").lower() or
+                        "usfoods" in (detected_vendor or "").lower()))
 
-        json_match = re.search(r'\{[\s\S]*\}', response)
-        if json_match:
-            try:
-                extracted = json.loads(json_match.group())
-            except json.JSONDecodeError:
+        if _is_usfoods:
+            from services.usfoods_structural import extract_usfoods_structural
+            from services.llm_rate_limiter import rate_limited_llm_call
+
+            extracted = await extract_usfoods_structural(
+                images_b64=images_b64,
+                llm_key=LLM_KEY,
+                rate_limited_llm_call=rate_limited_llm_call,
+                vendor_hint=vendor_hint,
+                builtin_vendor_hint=builtin_vendor_hint,
+            )
+            response = json.dumps(extracted)  # for raw_ocr_text storage
+            logger.info(
+                f"US Foods structural extraction: {len(extracted.get('items', []))} items"
+            )
+        else:
+            chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately by reading the document. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
+            file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
+            user_msg = UserMessage(text=prompt, file_contents=file_contents)
+            response = await rate_limited_llm_call(chat, user_msg, label="extract_invoice")
+
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if json_match:
+                try:
+                    extracted = json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    from preprocessing import salvage_partial_extraction
+                    extracted = salvage_partial_extraction(response)
+                    logger.warning(f"JSON decode failed, salvaged partial extraction: {list(extracted.keys())}")
+            else:
                 from preprocessing import salvage_partial_extraction
                 extracted = salvage_partial_extraction(response)
-                logger.warning(f"JSON decode failed, salvaged partial extraction: {list(extracted.keys())}")
-        else:
-            from preprocessing import salvage_partial_extraction
-            extracted = salvage_partial_extraction(response)
-            logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
+                logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
 
         # ── Multi-attempt consensus for purchase invoices ──
         # GPT-5.2 vision is non-deterministic. Strategy:
@@ -2121,7 +2143,7 @@ Rules:
             return {"items": n, "with_price": with_price, "with_total": with_total,
                     "with_qty": with_qty, "column_read": col_read, "quality": quality}
 
-        if document_type == "purchase_invoice" and extracted.get("items"):
+        if document_type == "purchase_invoice" and extracted.get("items") and not _is_usfoods:
             score1 = _score_extraction(extracted)
             # Threshold: quality < 50% of item count means extraction is poor
             needs_consensus = score1["quality"] < score1["items"] * 0.5
