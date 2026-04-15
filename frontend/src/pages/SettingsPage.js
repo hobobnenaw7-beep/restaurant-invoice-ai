@@ -90,6 +90,8 @@ export default function SettingsPage() {
   const [showReset, setShowReset] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetConfirm, setResetConfirm] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetError, setResetError] = useState('');
   const [logo, setLogo] = useState(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const logoRef = useRef(null);
@@ -164,14 +166,21 @@ export default function SettingsPage() {
   };
 
   const handleReset = async () => {
-    if (resetConfirm !== 'DELETE') return;
+    if (resetConfirm !== 'RESET') return;
+    if (!resetPassword) { setResetError('Password is required'); return; }
+    setResetError('');
     setResetting(true);
     try {
-      await api.post('/settings/reset-data');
+      await api.post('/settings/reset-data', { password: resetPassword, confirmation: 'RESET' });
       toast.success('All data has been reset');
       setShowReset(false);
       setResetConfirm('');
-    } catch { toast.error('Reset failed'); }
+      setResetPassword('');
+    } catch (err) {
+      const msg = err.response?.data?.detail || 'Reset failed';
+      setResetError(msg);
+      toast.error(msg);
+    }
     finally { setResetting(false); }
   };
 
@@ -340,8 +349,9 @@ export default function SettingsPage() {
         Save Settings
       </Button>
 
-      {/* ==================== DANGER ZONE ==================== */}
-      <Card className="border border-red-200 shadow-sm">
+      {/* ==================== DANGER ZONE (Manager Only) ==================== */}
+      {authUser?.role === 'manager' && (
+      <Card className="border border-red-200 shadow-sm" data-testid="data-management-card">
         <CardHeader className="pb-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-red-600 flex items-center justify-center">
@@ -349,7 +359,7 @@ export default function SettingsPage() {
             </div>
             <div>
               <CardTitle className="font-heading text-base font-bold text-red-700">Data Management</CardTitle>
-              <CardDescription className="text-xs text-red-400">Irreversible actions — proceed with caution</CardDescription>
+              <CardDescription className="text-xs text-red-400">Irreversible actions — Manager only</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -358,17 +368,18 @@ export default function SettingsPage() {
             <h3 className="text-sm font-bold text-red-800 mb-1">Reset All Data</h3>
             <p className="text-xs text-red-600 mb-3">
               This will permanently delete all vendors, items, expenses, sales records, and uploaded files.
-              Your account and restaurant profile will be kept.
+              Your account and restaurant profile will be kept. Requires password confirmation.
             </p>
-            <Button variant="outline" className="border-red-300 text-red-700 hover:bg-red-100 h-9 text-xs" onClick={() => setShowReset(true)} data-testid="reset-data-btn">
+            <Button variant="outline" className="border-red-300 text-red-700 hover:bg-red-100 h-9 text-xs" onClick={() => { setShowReset(true); setResetError(''); setResetPassword(''); setResetConfirm(''); }} data-testid="reset-data-btn">
               <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Reset All Data
             </Button>
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* ==================== RESET CONFIRMATION DIALOG ==================== */}
-      <Dialog open={showReset} onOpenChange={(v) => { if (!resetting) setShowReset(v); }}>
+      <Dialog open={showReset} onOpenChange={(v) => { if (!resetting) { setShowReset(v); setResetError(''); } }}>
         <DialogContent className="max-w-md" data-testid="reset-confirm-dialog">
           <DialogHeader>
             <DialogTitle className="font-heading text-lg flex items-center gap-2 text-red-700">
@@ -379,10 +390,10 @@ export default function SettingsPage() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
-            <p className="text-sm text-slate-600">
-              This action is <span className="font-bold text-red-700">permanent and cannot be undone</span>.
-              All of the following will be deleted:
-            </p>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-sm font-semibold text-red-800 mb-1">This action is permanent and cannot be undone.</p>
+              <p className="text-xs text-red-600">All of the following will be deleted:</p>
+            </div>
             <ul className="text-xs text-slate-600 space-y-1 pl-4 list-disc">
               <li>All vendor records</li>
               <li>All item records and aliases</li>
@@ -392,23 +403,37 @@ export default function SettingsPage() {
               <li>All alerts</li>
             </ul>
             <div>
-              <Label className="text-xs font-bold text-red-600">Type DELETE to confirm</Label>
+              <Label className="text-xs font-bold text-slate-700">Step 1: Enter your password</Label>
               <Input
-                className="mt-1.5 h-10 border-red-200 focus:border-red-400"
+                type="password"
+                className="mt-1.5 h-10 border-slate-200 focus:border-red-400"
+                value={resetPassword}
+                onChange={(e) => { setResetPassword(e.target.value); setResetError(''); }}
+                placeholder="Current login password"
+                data-testid="reset-password-input"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-bold text-red-600">Step 2: Type RESET to confirm</Label>
+              <Input
+                className="mt-1.5 h-10 border-red-200 focus:border-red-400 font-mono uppercase"
                 value={resetConfirm}
-                onChange={(e) => setResetConfirm(e.target.value)}
-                placeholder="Type DELETE"
+                onChange={(e) => setResetConfirm(e.target.value.toUpperCase())}
+                placeholder="Type RESET"
                 data-testid="reset-confirm-input"
               />
             </div>
+            {resetError && (
+              <p className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-md" data-testid="reset-error">{resetError}</p>
+            )}
           </div>
           <DialogFooter className="gap-2 sm:gap-2">
-            <Button variant="outline" className="h-9 text-xs" onClick={() => { setShowReset(false); setResetConfirm(''); }} disabled={resetting}>
+            <Button variant="outline" className="h-9 text-xs" onClick={() => { setShowReset(false); setResetConfirm(''); setResetPassword(''); setResetError(''); }} disabled={resetting}>
               Cancel
             </Button>
             <Button
               onClick={handleReset}
-              disabled={resetConfirm !== 'DELETE' || resetting}
+              disabled={resetConfirm !== 'RESET' || !resetPassword || resetting}
               className="bg-red-600 hover:bg-red-700 text-white h-9 text-xs"
               data-testid="reset-confirm-btn"
             >

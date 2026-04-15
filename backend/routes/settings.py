@@ -1,10 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
+from pydantic import BaseModel
 import base64
 from datetime import datetime, timezone
 
 from core.database import db
-from core.auth import get_user
+from core.auth import get_user, require_manager, verify_pw
 from core.models import SettingsUpdate
+from services.audit import audit_log
 
 router = APIRouter()
 
@@ -50,12 +52,34 @@ async def update_settings(data: SettingsUpdate, user=Depends(get_user)):
     return await get_settings(updated_user)
 
 
+class ResetDataRequest(BaseModel):
+    password: str
+    confirmation: str
+
+
 @router.post("/settings/reset-data")
-async def reset_all_data(user=Depends(get_user)):
+async def reset_all_data(data: ResetDataRequest, user=Depends(get_user)):
+    """Reset all restaurant data. Manager only, requires password verification."""
+    require_manager(user)
+
+    if data.confirmation != "RESET":
+        raise HTTPException(400, "Confirmation word must be 'RESET'")
+
+    # Verify password against stored hash
+    full_user = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full_user or not verify_pw(data.password, full_user["password_hash"]):
+        raise HTTPException(403, "Incorrect password")
+
     rid = user["restaurant_id"]
+    deleted_collections = []
     for coll_name in ["purchases", "sales", "salaries", "other_expenses", "suppliers", "canonical_items", "item_aliases", "alerts", "records_library"]:
-        await db[coll_name].delete_many({"restaurant_id": rid})
+        result = await db[coll_name].delete_many({"restaurant_id": rid})
+        if result.deleted_count > 0:
+            deleted_collections.append(f"{coll_name}:{result.deleted_count}")
     await db.chat_messages.delete_many({"user_id": user["id"]})
+
+    await audit_log(user, "RESET_DATA", "Restaurant", rid, f'{user["name"]} reset all restaurant data', new_value={"collections_cleared": deleted_collections})
+
     return {"status": "All data has been reset"}
 
 
