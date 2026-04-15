@@ -311,19 +311,20 @@ export default function RecordsLibraryPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+                  <SortHead label="Date" field="upload_date" sortBy={sortBy} sortOrder={sortOrder} onSort={handleSort} testId="sort-date" />
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider w-10"></TableHead>
                   <SortHead label="File Name" field="name" sortBy={sortBy} sortOrder={sortOrder} onSort={handleSort} testId="sort-name" />
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Type</TableHead>
-                  <SortHead label="Upload Date" field="upload_date" sortBy={sortBy} sortOrder={sortOrder} onSort={handleSort} testId="sort-date" />
-                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Transaction</TableHead>
-                  <SortHead label="Amount" field="amount" sortBy={sortBy} sortOrder={sortOrder} onSort={handleSort} align="right" testId="sort-amount" />
-                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Size</TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Created By</TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Source</TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Status</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {records.map((rec, i) => (
                   <TableRow key={rec.id} className={`${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} group`} data-testid={`record-row-${i}`}>
+                    <TableCell className="text-xs tabular-nums text-slate-500">{rec.upload_date}</TableCell>
                     <TableCell className="w-10 pr-0">{fileIcon(rec.file_extension)}</TableCell>
                     <TableCell>
                       <button className="text-xs font-medium text-navy-900 hover:text-teal-600 transition-colors text-left truncate max-w-[200px] block" onClick={() => setPreviewRecord(rec)} data-testid={`record-name-${i}`}>
@@ -335,17 +336,20 @@ export default function RecordsLibraryPage() {
                         {typeLabel(rec.file_extension)}
                       </span>
                     </TableCell>
-                    <TableCell className="text-xs tabular-nums text-slate-500">{rec.upload_date}</TableCell>
                     <TableCell>
-                      <div className="text-xs">
-                        <span className="font-medium text-navy-900">{transactionLabel(rec.transaction_type)}</span>
-                        {rec.vendor_name && <span className="text-slate-400 ml-1">({rec.vendor_name})</span>}
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-600 flex-shrink-0">{(rec.created_by_name || '?').charAt(0).toUpperCase()}</div>
+                        <span className="text-[10px] text-slate-500 truncate max-w-[80px]">{rec.created_by_name || '—'}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-xs text-right font-semibold tabular-nums text-navy-900">
-                      {rec.transaction_amount ? fmtMoney(rec.transaction_amount) : '—'}
+                    <TableCell>
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold ${rec.source_type === 'upload' ? 'bg-blue-50 text-blue-600 border border-blue-200' : rec.source_type === 'system' ? 'bg-slate-50 text-slate-500 border border-slate-200' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
+                        {rec.source_type === 'upload' ? 'Upload' : rec.source_type === 'system' ? 'System' : rec.source_type || 'Upload'}
+                      </span>
                     </TableCell>
-                    <TableCell className="text-xs text-slate-400">{fmtSize(rec.file_size)}</TableCell>
+                    <TableCell>
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-200">Active</span>
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
                         <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setPreviewRecord(rec)} data-testid={`record-preview-${i}`}>

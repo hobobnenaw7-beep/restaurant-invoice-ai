@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { dataEvents } from '@/lib/dataEvents';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -226,11 +227,11 @@ export default function SalesPage() {
             <TableHeader>
               <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
                 <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('report_date')}>Date <SI field="report_date" /></TableHead>
-                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Type</TableHead>
-                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Menu Items</TableHead>
-                <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total_sales')}>Total Revenue <SI field="total_sales" /></TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Source / Reference</TableHead>
                 <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Created By</TableHead>
-                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Source</TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Items</TableHead>
+                <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total_sales')}>Total <SI field="total_sales" /></TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Status</TableHead>
                 <TableHead className="w-20" />
               </TableRow>
             </TableHeader>
@@ -256,17 +257,31 @@ export default function SalesPage() {
                       : s.date_from || s.report_date}
                   </TableCell>
                   <TableCell>
-                    {s.date_from && s.date_to && s.date_from !== s.date_to
-                      ? <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[9px] font-bold text-violet-600">{Math.round((new Date(s.date_to) - new Date(s.date_from)) / 86400000) + 1}d Range</span>
-                      : <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[9px] font-bold text-sky-600">1 Day</span>}
+                    <div className="flex items-center gap-1.5">
+                      {s.date_from && s.date_to && s.date_from !== s.date_to
+                        ? <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-violet-50 border border-violet-200 text-[9px] font-bold text-violet-600">{Math.round((new Date(s.date_to) - new Date(s.date_from)) / 86400000) + 1}d Range</span>
+                        : <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-[9px] font-bold text-sky-600">1 Day</span>}
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold ${s.source_type === 'upload' ? 'bg-blue-50 text-blue-600 border border-blue-200' : s.source_type === 'pos' ? 'bg-purple-50 text-purple-600 border border-purple-200' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
+                        {s.source_type === 'upload' ? 'Upload' : s.source_type === 'pos' ? 'POS' : 'Manual'}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-600 flex-shrink-0">{(s.created_by_name || '?').charAt(0).toUpperCase()}</div>
+                      <span className="text-[10px] text-slate-500 truncate max-w-[80px]">{s.created_by_name || '—'}</span>
+                    </div>
                   </TableCell>
                   <TableCell className="text-xs text-center text-slate-500">{(s.items || []).length}</TableCell>
                   <TableCell className="text-xs text-right font-bold text-teal-700 tabular-nums">{fmt(s.total_sales)}</TableCell>
-                  <TableCell className="text-[10px] text-slate-500">{s.created_by_name || s.created_by_id || '—'}</TableCell>
                   <TableCell>
-                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold ${s.source_type === 'upload' ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
-                      {s.source_type === 'upload' ? 'Upload' : s.source_type === 'pos' ? 'POS' : 'Manual'}
-                    </span>
+                    {s.approval_status === 'approved' ? (
+                      <Badge className="text-[9px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200 px-1.5 py-0 h-4">Approved</Badge>
+                    ) : s.approval_status === 'pending' ? (
+                      <Badge className="text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0 h-4">Pending</Badge>
+                    ) : (
+                      <Badge className="text-[9px] font-bold bg-slate-100 text-slate-500 border border-slate-200 px-1.5 py-0 h-4">{s.approval_status || '—'}</Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-0.5">

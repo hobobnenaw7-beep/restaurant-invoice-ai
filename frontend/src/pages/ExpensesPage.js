@@ -626,15 +626,17 @@ function RawMaterialsTab({ api }) {
           <Table><TableHeader><TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
             <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('invoice_date')}>Date <SI field="invoice_date" /></TableHead>
             <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider" onClick={() => toggleSort('supplier_name')}>Vendor <SI field="supplier_name" /></TableHead>
+            <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Created By</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Invoice #</TableHead>
             <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Items</TableHead>
             <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total')}>Total <SI field="total" /></TableHead>
+            <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Status</TableHead>
             <TableHead className="w-20" />
           </TableRow></TableHeader><TableBody>
             {loading ? [1,2,3,4].map(i => (
-              <TableRow key={`skel-${i}`}><TableCell colSpan={6}><Skeleton className="h-8 w-full rounded" /></TableCell></TableRow>
+              <TableRow key={`skel-${i}`}><TableCell colSpan={8}><Skeleton className="h-8 w-full rounded" /></TableCell></TableRow>
             )) : items.length === 0 ? (
-              <TableRow><TableCell colSpan={6} className="h-40">
+              <TableRow><TableCell colSpan={8} className="h-40">
                 <div className="flex flex-col items-center justify-center text-center py-6">
                   <Beef className="w-10 h-10 text-slate-300 mb-3" />
                   <h3 className="font-heading text-sm font-bold text-navy-900 mb-1">No raw material purchases</h3>
@@ -656,6 +658,12 @@ function RawMaterialsTab({ api }) {
               <TableRow key={p.id} className={`transition-colors ${rowBg} ${borderLeft} hover:bg-teal-50/30`} data-testid={`raw-material-row-${i}`}>
                 <TableCell className="text-xs tabular-nums text-slate-600">{p.invoice_date}</TableCell>
                 <TableCell className="text-xs font-semibold text-navy-900">{p.supplier_name}</TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-600 flex-shrink-0">{(p.created_by_name || '?').charAt(0).toUpperCase()}</div>
+                    <span className="text-[10px] text-slate-500 truncate max-w-[80px]">{p.created_by_name || '—'}</span>
+                  </div>
+                </TableCell>
                 <TableCell><Badge variant="outline" className="text-[10px] font-mono">{p.invoice_number}</Badge></TableCell>
                 <TableCell className="text-xs text-center text-slate-500">
                   <span>{(p.items || []).length}</span>
@@ -690,6 +698,15 @@ function RawMaterialsTab({ api }) {
                   })()}
                 </TableCell>
                 <TableCell className="text-xs text-right font-bold text-navy-900 tabular-nums">{fmt(p.total)}</TableCell>
+                <TableCell>
+                  {p.approval_status === 'approved' ? (
+                    <Badge className="text-[9px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200 px-1.5 py-0 h-4">Approved</Badge>
+                  ) : p.approval_status === 'pending' ? (
+                    <Badge className="text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0 h-4">Pending</Badge>
+                  ) : (
+                    <Badge className="text-[9px] font-bold bg-slate-100 text-slate-500 border border-slate-200 px-1.5 py-0 h-4">{p.approval_status || '—'}</Badge>
+                  )}
+                </TableCell>
                 <TableCell className="text-right"><div className="flex justify-end gap-0.5">
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(p)} data-testid={`view-purchase-${i}`}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openEdit(p)} data-testid={`edit-purchase-${i}`}><FileText className="w-3.5 h-3.5 text-blue-500" /></Button>
