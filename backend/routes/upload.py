@@ -1817,8 +1817,6 @@ These images are parts of ONE document. They may be:
 - Overlapping photos of a long receipt
 CRITICAL: Produce ONE unified result. If the same line item appears in multiple images, include it ONLY ONCE. Use the LAST occurrence of subtotal/tax/total. Do NOT duplicate items."""
 
-            is_usfoods_vendor = False  # Track for section splitting
-
             if document_type == "purchase_invoice":
                 is_sysco_vendor = "sysco" in (detected_vendor or "").lower()
 
@@ -1879,7 +1877,6 @@ QTY COLUMN VISIBILITY (critical for qty=1 items):
 - Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
 
                 elif "us food" in (detected_vendor or "").lower() or "usfoods" in (detected_vendor or "").lower():
-                    is_usfoods_vendor = True
                     # ── US FOODS STRICT READ-ONLY PROMPT ──
                     prompt = f"""You are reading a US Foods restaurant purchase invoice from a camera phone photo. READ the document exactly as printed. Do NOT compute or infer any numbers.
 
@@ -2072,137 +2069,29 @@ Rules:
 - Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
 
         # ── GPT Vision Extraction ──
-        # US Foods: Section-split extraction (splits dense image into strips)
-        # All other vendors: Standard single-call extraction
-        if is_usfoods_vendor and document_type == "purchase_invoice" and len(images_b64) == 1:
-            from services.section_splitter import should_split_usfoods, split_image_to_strips, merge_strip_extractions
+        chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately by reading the document. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
+        file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
+        user_msg = UserMessage(text=prompt, file_contents=file_contents)
+        response = await rate_limited_llm_call(chat, user_msg, label="extract_invoice")
 
-            # Decode the preprocessed image for splitting
-            img_bytes = base64.b64decode(images_b64[0])
-
-            if should_split_usfoods(img_bytes):
-                logger.info("US Foods: Section splitting activated")
-                strips = split_image_to_strips(img_bytes)
-                strip_b64_list = [base64.b64encode(s).decode() for s in strips]
-
-                strip_results = []
-                for strip_idx, strip_b64 in enumerate(strip_b64_list):
-                    # Build strip-specific prompt
-                    if strip_idx == 0:
-                        strip_prompt = prompt
-                    else:
-                        # Later strips may not have the header row visible.
-                        # Give GPT explicit column layout so it can parse without headers.
-                        strip_prompt = f"""You are reading a SECTION of a US Foods restaurant purchase invoice. This is section {strip_idx + 1} of {len(strip_b64_list)} — the header row may NOT be visible in this section.
-
-The column layout for US Foods is (left to right):
-Product# | Brand | Description | Pack/Size | Ordered | Shipped | Weight | Unit Price | Extended Price
-
-Extract into this exact JSON format:
-{{"supplier_name":"","invoice_date":"","invoice_number":"","items":[{{"raw_name":"","quantity":0,"pack_size":"","unit_price":0,"total":0,"qty_source":"","price_source":"","total_source":"","item_code":"","qty_column_visible":false}}],"subtotal":0,"tax":0,"total":0}}
-
-READING RULES FOR THIS SECTION:
-- Extract EVERY product line item visible, using the column layout above
-- quantity = value from the SHIPPED column (the 6th column from left)
-- unit_price = value from the UNIT PRICE column (second-to-last dollar column)
-- total = value from the EXTENDED PRICE column (rightmost dollar column)
-- Read each number DIRECTLY from its column position — do NOT compute or infer
-- If you cannot read a number clearly, use 0 with source "ambiguous"
-- Do NOT default quantity to 1 — use 0 if unreadable
-- NEVER use "inferred" as a source
-- "FUEL SURCHARGE", "DELIVERY FEE", "SERVICE CHARGE" are fee rows — extract with quantity=1
-- Do NOT extract summary rows (SUBTOTAL, TOTAL, AMOUNT DUE)
-- If you see subtotal/tax/total values, put them in the top-level fields
-
-FIELD SOURCE:
-- qty_source: "column_read" if you see a number in position 6, "ambiguous" if not
-- price_source: "column_read" if you see the unit price, "ambiguous" if not
-- total_source: "column_read" if you see the extended price, "ambiguous" if not
-- qty_column_visible: true if you can SEE a printed number in the shipped column
-
-Return ONLY the JSON object.{vendor_hint}{builtin_vendor_hint}"""
-
-                    strip_chat = LlmChat(
-                        api_key=LLM_KEY,
-                        session_id=f"extract-usfoods-strip-{strip_idx}-{uuid.uuid4()}",
-                        system_message="You are an expert at reading restaurant invoices. Extract data accurately by reading the document. Return valid JSON only, no markdown fences."
-                    ).with_model("openai", "gpt-5.2")
-                    strip_file = [ImageContent(image_base64=strip_b64)]
-                    strip_msg = UserMessage(text=strip_prompt, file_contents=strip_file)
-
-                    try:
-                        strip_response = await rate_limited_llm_call(
-                            strip_chat, strip_msg, label=f"extract_usfoods_strip_{strip_idx}"
-                        )
-                        strip_match = re.search(r'\{[\s\S]*\}', strip_response)
-                        if strip_match:
-                            strip_data = json.loads(strip_match.group())
-                            strip_items = strip_data.get("items", [])
-                            logger.info(
-                                f"US Foods strip {strip_idx + 1}/{len(strip_b64_list)}: "
-                                f"{len(strip_items)} items extracted"
-                            )
-                            strip_results.append(strip_data)
-                        else:
-                            logger.warning(f"US Foods strip {strip_idx + 1}: no JSON found")
-                            strip_results.append(None)
-                    except Exception as e:
-                        logger.warning(f"US Foods strip {strip_idx + 1} failed: {e}")
-                        strip_results.append(None)
-
-                extracted = merge_strip_extractions(strip_results)
-                response = json.dumps(extracted)  # For raw_ocr_text storage
-
-                logger.info(
-                    f"US Foods section split complete: "
-                    f"{len(strips)} strips -> {len(extracted.get('items', []))} merged items"
-                )
-            else:
-                logger.info("US Foods: Image not dense enough for splitting, using standard extraction")
-                chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately by reading the document. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
-                file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
-                user_msg = UserMessage(text=prompt, file_contents=file_contents)
-                response = await rate_limited_llm_call(chat, user_msg, label="extract_invoice")
-
-                json_match = re.search(r'\{[\s\S]*\}', response)
-                if json_match:
-                    try:
-                        extracted = json.loads(json_match.group())
-                    except json.JSONDecodeError:
-                        from preprocessing import salvage_partial_extraction
-                        extracted = salvage_partial_extraction(response)
-                else:
-                    from preprocessing import salvage_partial_extraction
-                    extracted = salvage_partial_extraction(response)
-        else:
-            # Standard single-call extraction (Sysco, PFG, all other vendors)
-            chat = LlmChat(api_key=LLM_KEY, session_id=f"extract-{uuid.uuid4()}", system_message="You are an expert at reading restaurant invoices and receipts. Extract data accurately by reading the document. Return valid JSON only, no markdown fences.").with_model("openai", "gpt-5.2")
-            file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
-            user_msg = UserMessage(text=prompt, file_contents=file_contents)
-            response = await rate_limited_llm_call(chat, user_msg, label="extract_invoice")
-
-            json_match = re.search(r'\{[\s\S]*\}', response)
-            if json_match:
-                try:
-                    extracted = json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    from preprocessing import salvage_partial_extraction
-                    extracted = salvage_partial_extraction(response)
-                    logger.warning(f"JSON decode failed, salvaged partial extraction: {list(extracted.keys())}")
-            else:
+        json_match = re.search(r'\{[\s\S]*\}', response)
+        if json_match:
+            try:
+                extracted = json.loads(json_match.group())
+            except json.JSONDecodeError:
                 from preprocessing import salvage_partial_extraction
                 extracted = salvage_partial_extraction(response)
-                logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
+                logger.warning(f"JSON decode failed, salvaged partial extraction: {list(extracted.keys())}")
+        else:
+            from preprocessing import salvage_partial_extraction
+            extracted = salvage_partial_extraction(response)
+            logger.warning(f"No JSON found in response, salvaged: {list(extracted.keys())}")
 
         # ── Multi-attempt consensus for purchase invoices ──
-        # Skip for US Foods section-split (splitting IS the consistency mechanism)
         # GPT-5.2 vision is non-deterministic. Strategy:
         # 1. Score the first extraction attempt
         # 2. If quality is below threshold, run a second attempt
         # 3. Pick the better result using a quality scoring function
-        _usfoods_used_section_split = (is_usfoods_vendor and document_type == "purchase_invoice"
-                                        and len(images_b64) == 1)
-
         def _score_extraction(ext: dict) -> dict:
             """Score an extraction result. Higher = better."""
             items = ext.get("items", [])
@@ -2232,7 +2121,7 @@ Return ONLY the JSON object.{vendor_hint}{builtin_vendor_hint}"""
             return {"items": n, "with_price": with_price, "with_total": with_total,
                     "with_qty": with_qty, "column_read": col_read, "quality": quality}
 
-        if document_type == "purchase_invoice" and extracted.get("items") and not _usfoods_used_section_split:
+        if document_type == "purchase_invoice" and extracted.get("items"):
             score1 = _score_extraction(extracted)
             # Threshold: quality < 50% of item count means extraction is poor
             needs_consensus = score1["quality"] < score1["items"] * 0.5
