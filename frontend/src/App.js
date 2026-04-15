@@ -30,6 +30,15 @@ function ProtectedRoute({ children }) {
   return <Layout><StableErrorBoundary>{children}</StableErrorBoundary></Layout>;
 }
 
+function PermRoute({ children, perm }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="flex h-screen items-center justify-center"><div className="animate-spin w-8 h-8 border-2 border-teal-600 border-t-transparent rounded-full" /></div>;
+  if (!user) return <Navigate to="/login" replace />;
+  const perms = user?.permissions || {};
+  if (perm && !perms[perm]) return <Navigate to="/dashboard" replace />;
+  return <Layout><StableErrorBoundary>{children}</StableErrorBoundary></Layout>;
+}
+
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex h-screen items-center justify-center"><div className="animate-spin w-8 h-8 border-2 border-teal-600 border-t-transparent rounded-full" /></div>;
@@ -43,23 +52,23 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
-          <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-          <Route path="/profit-center" element={<ProtectedRoute><ProfitDashboard /></ProtectedRoute>} />
-          <Route path="/expenses" element={<ProtectedRoute><ExpensesPage /></ProtectedRoute>} />
-          <Route path="/sales" element={<ProtectedRoute><SalesPage /></ProtectedRoute>} />
-          <Route path="/vendors" element={<ProtectedRoute><VendorsPage /></ProtectedRoute>} />
-          <Route path="/vendors/:id" element={<ProtectedRoute><VendorDetailPage /></ProtectedRoute>} />
-          <Route path="/items" element={<ProtectedRoute><ItemsPage /></ProtectedRoute>} />
-          <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
-          <Route path="/records" element={<ProtectedRoute><RecordsLibraryPage /></ProtectedRoute>} />
-          <Route path="/users" element={<ProtectedRoute><UserManagementPage /></ProtectedRoute>} />
-          <Route path="/approvals" element={<ProtectedRoute><ApprovalsPage /></ProtectedRoute>} />
+          <Route path="/dashboard" element={<PermRoute perm="view_dashboard"><DashboardPage /></PermRoute>} />
+          <Route path="/profit-center" element={<PermRoute perm="view_dashboard"><ProfitDashboard /></PermRoute>} />
+          <Route path="/expenses" element={<PermRoute perm="view_expenses"><ExpensesPage /></PermRoute>} />
+          <Route path="/sales" element={<PermRoute perm="view_sales"><SalesPage /></PermRoute>} />
+          <Route path="/vendors" element={<PermRoute perm="view_vendors"><VendorsPage /></PermRoute>} />
+          <Route path="/vendors/:id" element={<PermRoute perm="view_vendors"><VendorDetailPage /></PermRoute>} />
+          <Route path="/items" element={<PermRoute perm="view_items"><ItemsPage /></PermRoute>} />
+          <Route path="/reports" element={<PermRoute perm="view_reports"><ReportsPage /></PermRoute>} />
+          <Route path="/records" element={<PermRoute perm="view_records"><RecordsLibraryPage /></PermRoute>} />
+          <Route path="/users" element={<PermRoute perm="view_users"><UserManagementPage /></PermRoute>} />
+          <Route path="/approvals" element={<PermRoute perm="view_users"><ApprovalsPage /></PermRoute>} />
           <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
-          <Route path="/purchase-decisions" element={<ProtectedRoute><PurchaseDecisionsPage /></ProtectedRoute>} />
-          <Route path="/audit-log" element={<ProtectedRoute><AuditLogPage /></ProtectedRoute>} />
-          <Route path="/vendor-comparison" element={<ProtectedRoute><VendorComparisonPage /></ProtectedRoute>} />
-          <Route path="/correction-memory" element={<ProtectedRoute><CorrectionMemoryPage /></ProtectedRoute>} />
+          <Route path="/purchase-decisions" element={<PermRoute perm="view_reports"><PurchaseDecisionsPage /></PermRoute>} />
+          <Route path="/audit-log" element={<PermRoute perm="view_users"><AuditLogPage /></PermRoute>} />
+          <Route path="/vendor-comparison" element={<PermRoute perm="view_vendors"><VendorComparisonPage /></PermRoute>} />
+          <Route path="/correction-memory" element={<PermRoute perm="view_expenses"><CorrectionMemoryPage /></PermRoute>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         <Toaster position="top-right" richColors />

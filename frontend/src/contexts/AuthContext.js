@@ -35,7 +35,9 @@ export function AuthProvider({ children }) {
     const res = await api.post('/auth/login', { email, password });
     localStorage.setItem('ra_token', res.data.token);
     setToken(res.data.token);
-    setUser(res.data.user);
+    // Fetch full user data with permissions
+    const meRes = await api.get('/auth/me', { headers: { Authorization: `Bearer ${res.data.token}` } });
+    setUser(meRes.data);
     return res.data;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

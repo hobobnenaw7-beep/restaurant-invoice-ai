@@ -229,14 +229,16 @@ export default function SalesPage() {
                 <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Type</TableHead>
                 <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-center">Menu Items</TableHead>
                 <TableHead className="cursor-pointer text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right" onClick={() => toggleSort('total_sales')}>Total Revenue <SI field="total_sales" /></TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Created By</TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Source</TableHead>
                 <TableHead className="w-20" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? [1,2,3,4,5].map(i => (
-                <TableRow key={`skel-${i}`}><TableCell colSpan={5}><Skeleton className="h-8 w-full rounded" /></TableCell></TableRow>
+                <TableRow key={`skel-${i}`}><TableCell colSpan={7}><Skeleton className="h-8 w-full rounded" /></TableCell></TableRow>
               )) : sales.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="h-48">
+                <TableRow><TableCell colSpan={7} className="h-48">
                   <div className="flex flex-col items-center justify-center text-center py-6">
                     <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4"><DollarSign className="w-6 h-6 text-slate-300" /></div>
                     <h3 className="font-heading text-base font-bold text-navy-900 mb-1">No sales found</h3>
@@ -260,6 +262,12 @@ export default function SalesPage() {
                   </TableCell>
                   <TableCell className="text-xs text-center text-slate-500">{(s.items || []).length}</TableCell>
                   <TableCell className="text-xs text-right font-bold text-teal-700 tabular-nums">{fmt(s.total_sales)}</TableCell>
+                  <TableCell className="text-[10px] text-slate-500">{s.created_by_name || s.created_by_id || '—'}</TableCell>
+                  <TableCell>
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold ${s.source_type === 'upload' ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
+                      {s.source_type === 'upload' ? 'Upload' : s.source_type === 'pos' ? 'POS' : 'Manual'}
+                    </span>
+                  </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-0.5">
                       <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setSelected(s)} data-testid={`view-sale-${i}`}><Eye className="w-3.5 h-3.5 text-slate-500" /></Button>

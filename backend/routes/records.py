@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Response
-import uuid, hashlib
+import uuid
+import hashlib
 from datetime import datetime, timezone
 
 from core.database import db, UPLOADS_DIR
 from core.auth import get_user
+from core.permissions import require_permission, apply_scope_filter, apply_soft_delete_filter
 
 router = APIRouter()
 
@@ -18,7 +20,7 @@ async def upload_record(
     transaction_amount: float = Form(0),
     transaction_notes: str = Form(""),
     vendor_name: str = Form(""),
-    user=Depends(get_user)
+    user=Depends(require_permission("can_upload_files")),
 ):
     """Upload a file to the Records Library."""
     rid = user["restaurant_id"]
@@ -70,6 +72,9 @@ async def upload_record(
         "transaction_notes": transaction_notes,
         "vendor_name": vendor_name,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by_user_id": user["id"],
+        "created_by_name": user.get("name", ""),
+        "source_type": "upload",
     }
     await db.records_library.insert_one(doc)
     doc.pop("_id", None)
@@ -78,7 +83,7 @@ async def upload_record(
 
 @router.get("/records")
 async def list_records(
-    user=Depends(get_user),
+    user=Depends(require_permission("can_view_records")),
     folder: str = "",
     search: str = "",
     date_from: str = "",
@@ -88,9 +93,9 @@ async def list_records(
     sort_by: str = "upload_date",
     sort_order: str = "desc",
 ):
-    """List records in the library with optional filters and sorting."""
-    rid = user["restaurant_id"]
-    query = {"restaurant_id": rid}
+    """List records in the library with scope enforcement."""
+    query = {"restaurant_id": user["restaurant_id"]}
+    apply_scope_filter(query, user, "created_by_user_id")
     if folder:
         query["folder"] = folder
     if search:
@@ -118,22 +123,21 @@ async def list_records(
 
 
 @router.get("/records/{record_id}")
-async def get_record(record_id: str, user=Depends(get_user)):
-    """Get a single record's details."""
-    rec = await db.records_library.find_one(
-        {"id": record_id, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
-    )
+async def get_record(record_id: str, user=Depends(require_permission("can_view_records"))):
+    query = {"id": record_id, "restaurant_id": user["restaurant_id"]}
+    apply_scope_filter(query, user, "created_by_user_id")
+    rec = await db.records_library.find_one(query, {"_id": 0})
     if not rec:
         raise HTTPException(404, "Record not found")
     return rec
 
 
 @router.get("/records/{record_id}/file")
-async def serve_record_file(record_id: str, user=Depends(get_user)):
+async def serve_record_file(record_id: str, user=Depends(require_permission("can_view_records"))):
     """Serve the actual file for preview or download."""
-    rec = await db.records_library.find_one(
-        {"id": record_id, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
-    )
+    query = {"id": record_id, "restaurant_id": user["restaurant_id"]}
+    apply_scope_filter(query, user, "created_by_user_id")
+    rec = await db.records_library.find_one(query, {"_id": 0})
     if not rec:
         raise HTTPException(404, "Record not found")
     file_path = UPLOADS_DIR / rec["stored_name"]
@@ -148,15 +152,16 @@ async def serve_record_file(record_id: str, user=Depends(get_user)):
 
 
 @router.delete("/records/{record_id}")
-async def delete_record(record_id: str, user=Depends(get_user)):
-    """Delete a record and its file."""
-    rec = await db.records_library.find_one(
-        {"id": record_id, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
-    )
+async def delete_record(record_id: str, user=Depends(require_permission("can_manage_users"))):
+    """Soft-delete a record (manager only)."""
+    query = {"id": record_id, "restaurant_id": user["restaurant_id"]}
+    rec = await db.records_library.find_one(query, {"_id": 0})
     if not rec:
         raise HTTPException(404, "Record not found")
-    file_path = UPLOADS_DIR / rec["stored_name"]
-    if file_path.exists():
-        file_path.unlink()
-    await db.records_library.delete_one({"id": record_id, "restaurant_id": user["restaurant_id"]})
+    await db.records_library.update_one({"id": record_id}, {"$set": {
+        "status": "deleted",
+        "deleted_at": datetime.now(timezone.utc).isoformat(),
+        "deleted_by_user_id": user["id"],
+        "deleted_by_name": user.get("name", ""),
+    }})
     return {"status": "deleted"}

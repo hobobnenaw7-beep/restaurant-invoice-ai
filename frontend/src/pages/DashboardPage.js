@@ -885,7 +885,7 @@ export default function DashboardPage() {
 
   const now = new Date();
   const [filterYear, setFilterYear] = useState(now.getFullYear());
-  const [filterMonth, setFilterMonth] = useState(now.getMonth() + 1); // 1-12, 0 = all
+  const [filterMonth, setFilterMonth] = useState(0); // 0 = all months
 
   const load = useCallback(async (yr, mo) => {
     try {

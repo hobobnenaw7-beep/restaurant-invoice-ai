@@ -129,6 +129,7 @@ class UserCreate(BaseModel):
     password: str
     role: str = "staff"
     permissions: Optional[Dict[str, bool]] = None
+    data_scope: Optional[str] = None
     approval_rule: str = "pending_all"
     auto_approve_limit: Optional[float] = None
 
@@ -140,6 +141,7 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     status: Optional[str] = None
     permissions: Optional[Dict[str, bool]] = None
+    data_scope: Optional[str] = None
     approval_rule: Optional[str] = None
     auto_approve_limit: Optional[float] = None
 

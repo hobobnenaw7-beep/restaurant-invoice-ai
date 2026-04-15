@@ -12,21 +12,22 @@ import {
 } from 'lucide-react';
 
 const mainNav = [
-  { path: '/expenses', label: 'Expenses', icon: Receipt },
-  { path: '/sales', label: 'Sales', icon: DollarSign },
-  { path: '/vendors', label: 'Vendors', icon: Users },
-  { path: '/items', label: 'Items', icon: Package },
-  { path: '/reports', label: 'Reports', icon: FileText },
-  { path: '/purchase-decisions', label: 'Smart Purchases', icon: ShoppingCart },
-  { path: '/vendor-comparison', label: 'Vendor $/LB', icon: Scale },
-  { path: '/records', label: 'Records Library', icon: FolderArchive },
-  { path: '/correction-memory', label: 'Correction Memory', icon: Brain },
-  { path: '/audit-log', label: 'Audit Log', icon: Shield },
+  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'view_dashboard' },
+  { path: '/expenses', label: 'Expenses', icon: Receipt, perm: 'view_expenses' },
+  { path: '/sales', label: 'Sales', icon: DollarSign, perm: 'view_sales' },
+  { path: '/vendors', label: 'Vendors', icon: Users, perm: 'view_vendors' },
+  { path: '/items', label: 'Items', icon: Package, perm: 'view_items' },
+  { path: '/reports', label: 'Reports', icon: FileText, perm: 'view_reports' },
+  { path: '/purchase-decisions', label: 'Smart Purchases', icon: ShoppingCart, perm: 'view_reports' },
+  { path: '/vendor-comparison', label: 'Vendor $/LB', icon: Scale, perm: 'view_vendors' },
+  { path: '/records', label: 'Records Library', icon: FolderArchive, perm: 'view_records' },
+  { path: '/correction-memory', label: 'Correction Memory', icon: Brain, perm: 'view_expenses' },
+  { path: '/audit-log', label: 'Audit Log', icon: Shield, perm: 'view_users' },
 ];
 
 const managerNav = [
-  { path: '/users', label: 'User Management', icon: UserCog },
-  { path: '/approvals', label: 'Approvals', icon: ClipboardCheck },
+  { path: '/users', label: 'User Management', icon: UserCog, perm: 'view_users' },
+  { path: '/approvals', label: 'Approvals', icon: ClipboardCheck, perm: 'view_users' },
 ];
 
 // ======================== ALERT CONFIG ========================
@@ -176,6 +177,10 @@ const NotificationPanel = memo(function NotificationPanel({ alerts, open, onClos
 
 // ======================== SIDEBAR CONTENT ========================
 const SidebarContent = memo(function SidebarContent({ user, pathname, onNavigate, onLogout }) {
+  const perms = user?.permissions || {};
+  const filteredMain = mainNav.filter(item => !item.perm || perms[item.perm]);
+  const filteredManager = managerNav.filter(item => !item.perm || perms[item.perm]);
+
   return (
     <div className="flex flex-col h-full bg-navy-950 text-white" data-testid="sidebar">
       <div className="p-5 border-b border-navy-800">
@@ -191,13 +196,13 @@ const SidebarContent = memo(function SidebarContent({ user, pathname, onNavigate
       </div>
 
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {mainNav.map(item => (
+        {filteredMain.map(item => (
           <NavLink key={item.path} item={item} isActive={pathname === item.path} onNavigate={onNavigate} />
         ))}
-        {user?.role === 'manager' && (
+        {filteredManager.length > 0 && (
           <>
             <div className="pt-3 pb-1 px-3"><p className="text-[10px] font-bold text-navy-600 uppercase tracking-widest">Management</p></div>
-            {managerNav.map(item => (
+            {filteredManager.map(item => (
               <NavLink key={item.path} item={item} isActive={pathname === item.path} onNavigate={onNavigate} />
             ))}
           </>

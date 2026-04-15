@@ -5,55 +5,35 @@ from datetime import datetime, timezone
 from core.database import db
 from core.auth import hash_pw, verify_pw, make_token, get_user, require_manager
 from core.models import UserRegister, UserLogin, UserCreate, UserUpdate
+from core.permissions import (
+    ALL_PERMISSIONS, ALL_VISIBILITY, ALL_ACTIONS,
+    get_default_permissions, get_default_data_scope,
+    DEFAULT_VISIBILITY, DEFAULT_ACTIONS, DEFAULT_DATA_SCOPE,
+)
 from services.audit import audit_log
 
 router = APIRouter()
 
 VALID_ROLES = ["manager", "accountant", "cashier", "staff"]
-
-ALL_PERMISSIONS = [
-    "can_add_sales", "can_edit_sales", "can_delete_sales",
-    "can_add_expenses", "can_edit_expenses", "can_delete_expenses",
-    "can_upload_files", "can_view_reports", "can_export_reports",
-    "can_view_records", "can_manage_vendors", "can_manage_items",
-    "can_manage_users",
-]
-
-DEFAULT_PERMISSIONS = {
-    "manager": {p: True for p in ALL_PERMISSIONS},
-    "accountant": {
-        "can_add_sales": True, "can_edit_sales": True, "can_delete_sales": False,
-        "can_add_expenses": True, "can_edit_expenses": True, "can_delete_expenses": False,
-        "can_upload_files": True, "can_view_reports": True, "can_export_reports": True,
-        "can_view_records": True, "can_manage_vendors": True, "can_manage_items": True,
-        "can_manage_users": False,
-    },
-    "cashier": {
-        "can_add_sales": True, "can_edit_sales": False, "can_delete_sales": False,
-        "can_add_expenses": False, "can_edit_expenses": False, "can_delete_expenses": False,
-        "can_upload_files": False, "can_view_reports": False, "can_export_reports": False,
-        "can_view_records": False, "can_manage_vendors": False, "can_manage_items": False,
-        "can_manage_users": False,
-    },
-    "staff": {
-        "can_add_sales": False, "can_edit_sales": False, "can_delete_sales": False,
-        "can_add_expenses": False, "can_edit_expenses": False, "can_delete_expenses": False,
-        "can_upload_files": True, "can_view_reports": False, "can_export_reports": False,
-        "can_view_records": False, "can_manage_vendors": False, "can_manage_items": False,
-        "can_manage_users": False,
-    },
-}
-
 VALID_APPROVAL_RULES = ["auto_approve_all", "auto_approve_below", "pending_all"]
 
 
 def _safe_user(u):
-    """Return user dict without password_hash, with permissions and approval defaulted."""
+    """Return user dict without password_hash, with permissions/scope/approval defaulted."""
     out = {k: v for k, v in u.items() if k != "password_hash"}
+    role = out.get("role", "staff")
     if "permissions" not in out:
-        out["permissions"] = DEFAULT_PERMISSIONS.get(out.get("role", "staff"), DEFAULT_PERMISSIONS["staff"])
+        out["permissions"] = get_default_permissions(role)
+    else:
+        # Backfill any missing visibility keys into existing permissions
+        defaults = get_default_permissions(role)
+        for k in ALL_PERMISSIONS:
+            if k not in out["permissions"]:
+                out["permissions"][k] = defaults.get(k, False)
+    if "data_scope" not in out:
+        out["data_scope"] = get_default_data_scope(role)
     if "approval_rule" not in out:
-        out["approval_rule"] = "auto_approve_all" if out.get("role") == "manager" else "pending_all"
+        out["approval_rule"] = "auto_approve_all" if role == "manager" else "pending_all"
     if "auto_approve_limit" not in out:
         out["auto_approve_limit"] = None
     return out
@@ -68,7 +48,13 @@ async def register(data: UserRegister):
     rid = str(uuid.uuid4())
     await db.restaurants.insert_one({"id": rid, "name": data.restaurant_name, "address": "", "phone": "", "created_at": datetime.now(timezone.utc).isoformat()})
     uid = str(uuid.uuid4())
-    await db.users.insert_one({"id": uid, "email": data.email, "password_hash": hash_pw(data.password), "name": data.name, "restaurant_id": rid, "role": "manager", "status": "active", "created_at": datetime.now(timezone.utc).isoformat()})
+    await db.users.insert_one({
+        "id": uid, "email": data.email, "password_hash": hash_pw(data.password),
+        "name": data.name, "restaurant_id": rid, "role": "manager", "status": "active",
+        "permissions": get_default_permissions("manager"),
+        "data_scope": "all",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
     return {"token": make_token(uid), "user": {"id": uid, "email": data.email, "name": data.name, "restaurant_id": rid, "restaurant_name": data.restaurant_name, "role": "manager"}}
 
 
@@ -87,7 +73,15 @@ async def login(data: UserLogin):
 @router.get("/auth/me")
 async def me(user=Depends(get_user)):
     r = await db.restaurants.find_one({"id": user["restaurant_id"]}, {"_id": 0})
-    return {"id": user["id"], "email": user["email"], "name": user["name"], "restaurant_id": user["restaurant_id"], "restaurant_name": r["name"] if r else "", "role": user.get("role", "staff")}
+    safe = _safe_user(user)
+    return {
+        "id": user["id"], "email": user["email"], "name": user["name"],
+        "restaurant_id": user["restaurant_id"],
+        "restaurant_name": r["name"] if r else "",
+        "role": user.get("role", "staff"),
+        "permissions": safe["permissions"],
+        "data_scope": safe["data_scope"],
+    }
 
 
 # ==================== USER MANAGEMENT ====================
@@ -111,12 +105,18 @@ async def create_user(data: UserCreate, user=Depends(get_user)):
     if len(data.password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
     uid = str(uuid.uuid4())
+
+    # Merge custom permissions with defaults, ensuring all keys exist
+    defaults = get_default_permissions(data.role)
     if data.permissions:
         perms = {}
         for p in ALL_PERMISSIONS:
-            perms[p] = bool(data.permissions.get(p, False))
+            perms[p] = bool(data.permissions.get(p, defaults.get(p, False)))
     else:
-        perms = DEFAULT_PERMISSIONS.get(data.role, DEFAULT_PERMISSIONS["staff"])
+        perms = defaults
+
+    scope = data.data_scope if data.data_scope in ("all", "own") else get_default_data_scope(data.role)
+
     doc = {
         "id": uid,
         "email": data.email,
@@ -126,10 +126,12 @@ async def create_user(data: UserCreate, user=Depends(get_user)):
         "role": data.role,
         "status": "active",
         "permissions": perms,
+        "data_scope": scope,
         "approval_rule": data.approval_rule if data.approval_rule in VALID_APPROVAL_RULES else "pending_all",
         "auto_approve_limit": data.auto_approve_limit,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "created_by": user["id"],
+        "created_by_user_id": user["id"],
+        "created_by_name": user.get("name", ""),
     }
     await db.users.insert_one(doc)
     doc.pop("_id", None)
@@ -173,6 +175,9 @@ async def update_user(user_id: str, data: UserUpdate, user=Depends(get_user)):
         for p in ALL_PERMISSIONS:
             clean_perms[p] = bool(data.permissions.get(p, False))
         updates["permissions"] = clean_perms
+    if data.data_scope is not None:
+        if data.data_scope in ("all", "own"):
+            updates["data_scope"] = data.data_scope
     if data.approval_rule is not None:
         if data.approval_rule not in VALID_APPROVAL_RULES:
             raise HTTPException(400, f"Invalid approval_rule. Must be one of: {', '.join(VALID_APPROVAL_RULES)}")
@@ -210,9 +215,24 @@ async def delete_user(user_id: str, user=Depends(get_user)):
 
 
 @router.get("/users/permissions/defaults")
-async def get_default_permissions(user=Depends(get_user)):
+async def get_default_permissions_endpoint(user=Depends(get_user)):
     require_manager(user)
-    return DEFAULT_PERMISSIONS
+    result = {}
+    for role in VALID_ROLES:
+        result[role] = get_default_permissions(role)
+    return result
+
+
+@router.get("/users/permissions/schema")
+async def get_permissions_schema(user=Depends(get_user)):
+    """Return the permission keys and data scope options for the UI."""
+    require_manager(user)
+    return {
+        "visibility_keys": ALL_VISIBILITY,
+        "action_keys": ALL_ACTIONS,
+        "data_scope_options": ["all", "own"],
+        "default_scopes": DEFAULT_DATA_SCOPE,
+    }
 
 
 @router.put("/users/{user_id}/permissions")
@@ -225,8 +245,11 @@ async def update_user_permissions(user_id: str, permissions: dict, user=Depends(
     clean_perms = {}
     for p in ALL_PERMISSIONS:
         clean_perms[p] = bool(permissions.get(p, False))
+    update_set = {"permissions": clean_perms, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if "data_scope" in permissions and permissions["data_scope"] in ("all", "own"):
+        update_set["data_scope"] = permissions["data_scope"]
     old_perms = target.get("permissions", {})
-    await db.users.update_one({"id": user_id}, {"$set": {"permissions": clean_perms, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    await db.users.update_one({"id": user_id}, {"$set": update_set})
     updated = await db.users.find_one({"id": user_id}, {"_id": 0})
     await audit_log(user, "ROLE_CHANGE", "User", user_id, f'{user["name"]} updated permissions for {target.get("name", "")}', old_value={"permissions": old_perms}, new_value={"permissions": clean_perms})
     return _safe_user(updated)

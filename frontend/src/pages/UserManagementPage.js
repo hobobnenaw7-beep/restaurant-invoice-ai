@@ -24,6 +24,19 @@ const ROLES = [
 
 const PERMISSION_GROUPS = [
   {
+    label: 'Page Visibility',
+    permissions: [
+      { key: 'view_dashboard', label: 'View Dashboard' },
+      { key: 'view_sales', label: 'View Sales' },
+      { key: 'view_expenses', label: 'View Expenses' },
+      { key: 'view_reports', label: 'View Reports' },
+      { key: 'view_records', label: 'View Records Library' },
+      { key: 'view_vendors', label: 'View Vendors' },
+      { key: 'view_items', label: 'View Items' },
+      { key: 'view_users', label: 'View Users / Management' },
+    ],
+  },
+  {
     label: 'Sales',
     permissions: [
       { key: 'can_add_sales', label: 'Add sales' },
@@ -72,6 +85,7 @@ function permCount(perms) {
 
 const emptyForm = { name: '', email: '', password: '', role: 'staff' };
 const defaultApproval = { rule: 'pending_all', limit: '' };
+const DEFAULT_SCOPES = { manager: 'all', accountant: 'all', cashier: 'own', staff: 'own' };
 
 // ======================== PERMISSIONS PANEL ========================
 function PermissionsPanel({ permissions, onChange, disabled }) {
@@ -132,6 +146,7 @@ export default function UserManagementPage() {
   const [editingUser, setEditingUser] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [permissions, setPermissions] = useState({});
+  const [dataScope, setDataScope] = useState('own');
   const [approvalRule, setApprovalRule] = useState(defaultApproval);
   const [defaults, setDefaults] = useState({});
   const [saving, setSaving] = useState(false);
@@ -159,6 +174,7 @@ export default function UserManagementPage() {
     setEditingUser(null);
     setForm(emptyForm);
     setPermissions(defaults['staff'] || {});
+    setDataScope(DEFAULT_SCOPES['staff']);
     setApprovalRule(defaultApproval);
     setShowDialog(true);
   };
@@ -167,15 +183,16 @@ export default function UserManagementPage() {
     setEditingUser(u);
     setForm({ name: u.name, email: u.email, password: '', role: u.role });
     setPermissions(u.permissions || defaults[u.role] || {});
+    setDataScope(u.data_scope || DEFAULT_SCOPES[u.role] || 'own');
     setApprovalRule({ rule: u.approval_rule || 'pending_all', limit: u.auto_approve_limit != null ? String(u.auto_approve_limit) : '' });
     setShowDialog(true);
   };
 
   const handleRoleChange = (role) => {
     setForm(f => ({ ...f, role }));
-    // Apply role defaults but only if user hasn't customized permissions yet
     if (!editingUser) {
       setPermissions(defaults[role] || {});
+      setDataScope(DEFAULT_SCOPES[role] || 'own');
     }
   };
 
@@ -193,12 +210,12 @@ export default function UserManagementPage() {
         auto_approve_limit: approvalRule.rule === 'auto_approve_below' && approvalRule.limit ? Number(approvalRule.limit) : null,
       };
       if (editingUser) {
-        const payload = { name: form.name, email: form.email, role: form.role, permissions, ...approvalPayload };
+        const payload = { name: form.name, email: form.email, role: form.role, permissions, data_scope: dataScope, ...approvalPayload };
         if (form.password) payload.password = form.password;
         await api.put(`/users/${editingUser.id}`, payload);
         toast.success('User updated');
       } else {
-        await api.post('/users', { ...form, permissions, ...approvalPayload });
+        await api.post('/users', { ...form, permissions, data_scope: dataScope, ...approvalPayload });
         toast.success('User created');
       }
       setShowDialog(false);
@@ -280,6 +297,7 @@ export default function UserManagementPage() {
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Email</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Role</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Permissions</TableHead>
+                  <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Scope</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Approval Rule</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Status</TableHead>
                   <TableHead className="text-[10px] font-bold text-slate-500 uppercase tracking-wider text-right">Actions</TableHead>
@@ -308,6 +326,11 @@ export default function UserManagementPage() {
                       </TableCell>
                       <TableCell>
                         <span className="text-[10px] font-semibold text-slate-500" data-testid={`user-perm-count-${i}`}>{pc}/{ALL_KEYS.length}</span>
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={`text-[9px] font-semibold px-1.5 py-0 h-4 ${(u.data_scope || DEFAULT_SCOPES[u.role]) === 'all' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`} data-testid={`user-scope-${i}`}>
+                          {(u.data_scope || DEFAULT_SCOPES[u.role]) === 'all' ? 'All Records' : 'Own Only'}
+                        </Badge>
                       </TableCell>
                       <TableCell>
                         <span className="text-[10px] font-medium text-slate-500" data-testid={`user-approval-rule-${i}`}>
@@ -393,6 +416,28 @@ export default function UserManagementPage() {
                   <Crown className="w-3 h-3" /> Managers automatically have all permissions
                 </p>
               )}
+            </div>
+
+            {/* Data Scope */}
+            <div className="border-t border-slate-200/80 pt-3">
+              <div className="flex items-center gap-2 mb-3">
+                <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
+                <span className="text-xs font-bold text-navy-900">Data Scope</span>
+                <Badge className="text-[9px] bg-slate-100 text-slate-500 h-4 px-1.5">{dataScope === 'all' ? 'All Records' : 'Own Records'}</Badge>
+              </div>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer" data-testid="scope-all">
+                  <input type="radio" name="data_scope" className="accent-teal-600 w-3.5 h-3.5" checked={dataScope === 'all'} onChange={() => setDataScope('all')} disabled={form.role === 'manager'} />
+                  <span className="text-xs text-slate-600">View all records</span>
+                  <span className="text-[9px] text-slate-400">(sees all team data)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer" data-testid="scope-own">
+                  <input type="radio" name="data_scope" className="accent-teal-600 w-3.5 h-3.5" checked={dataScope === 'own'} onChange={() => setDataScope('own')} disabled={form.role === 'manager'} />
+                  <span className="text-xs text-slate-600">View only own records</span>
+                  <span className="text-[9px] text-slate-400">(sees only what they created)</span>
+                </label>
+              </div>
+              {form.role === 'manager' && <p className="text-[10px] text-teal-600 font-medium mt-1">Managers always have full data access</p>}
             </div>
 
             {/* Approval rule config */}

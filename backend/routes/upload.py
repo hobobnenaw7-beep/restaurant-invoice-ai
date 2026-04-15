@@ -2168,6 +2168,9 @@ Rules:
             "vendor_id": vendor_pattern.get("vendor_id") if vendor_pattern else None,
             "parsing_method": parsing_method,
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by_user_id": user["id"],
+            "created_by_name": user.get("name", ""),
+            "source_type": "upload",
         }
         ext = first_fname.rsplit(".", 1)[-1] if "." in first_fname else "jpg"
         stored_name = f"receipt_{receipt_id}.{ext}"
@@ -2471,6 +2474,9 @@ Rules:
             "total": float(extracted.get("total", 0) or extracted.get("total_sales", 0) or 0),
             "parsing_method": parsing_method,
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by_user_id": user["id"],
+            "created_by_name": user.get("name", ""),
+            "source_type": "upload",
         }
         await db.receipt_extractions.insert_one(ext_doc)
 
@@ -2485,6 +2491,10 @@ Rules:
                     "quantity": float(it.get("quantity", 0) or 0),
                     "unit_price": float(it.get("unit_price", 0) or 0),
                     "total": float(it.get("total", 0) or it.get("revenue", 0) or 0),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_by_user_id": user["id"],
+                    "created_by_name": user.get("name", ""),
+                    "source_type": "upload",
                 })
             await db.extracted_items.insert_many(item_docs)
 

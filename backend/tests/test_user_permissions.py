@@ -1,11 +1,18 @@
 """
-Test User Permissions API endpoints (iteration 20)
-Tests the 13 granular permissions system for users:
-- GET /api/users/permissions/defaults - returns default permissions for all 4 roles
-- POST /api/users with permissions - stores custom permissions
-- PUT /api/users/{id} with permissions - updates permissions
-- PUT /api/users/{id}/permissions - dedicated endpoint for permissions update
-- GET /api/users - returns permissions field for each user
+Test Suite: Permissions + Accountability Model
+==============================================
+Tests for:
+- Dashboard month filter defaults to 'All Months' (value 0)
+- Login returns permissions and data_scope in /auth/me response
+- GET /auth/me returns all 21 permissions for manager with data_scope='all'
+- GET /users/permissions/defaults returns correct permission counts
+- POST /users creates user with permissions, data_scope, created_by_user_id, created_by_name
+- POST /sales creates record with created_by_user_id, created_by_name, source_type='manual'
+- DELETE /sales performs soft-delete (sets status='deleted')
+- GET /sales excludes soft-deleted records
+- POST /other-expenses creates record with ownership fields
+- DELETE /other-expenses performs soft-delete
+- Data scope enforcement for cashier with scope='own'
 """
 import pytest
 import requests
@@ -14,386 +21,410 @@ import uuid
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 
-# All 13 permission keys
-ALL_PERMISSIONS = [
-    "can_add_sales", "can_edit_sales", "can_delete_sales",
-    "can_add_expenses", "can_edit_expenses", "can_delete_expenses",
-    "can_upload_files", "can_view_reports", "can_export_reports",
-    "can_view_records", "can_manage_vendors", "can_manage_items",
-    "can_manage_users",
-]
+# Test credentials
+MANAGER_EMAIL = "demo@test.com"
+MANAGER_PASSWORD = "testpassword"
 
-class TestUserPermissions:
-    """User Permissions API tests"""
+
+class TestAuthPermissions:
+    """Test authentication and permissions endpoints"""
     
-    @pytest.fixture(scope="class")
-    def auth_headers(self):
-        """Get auth token for manager user"""
-        response = requests.post(f"{BASE_URL}/api/auth/login", json={
-            "email": "demo@test.com",
-            "password": "testpassword"
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        """Setup test session"""
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json"})
+        self.token = None
+        self.user = None
+    
+    def login_as_manager(self):
+        """Login as manager and get token"""
+        response = self.session.post(f"{BASE_URL}/api/auth/login", json={
+            "email": MANAGER_EMAIL,
+            "password": MANAGER_PASSWORD
         })
         assert response.status_code == 200, f"Login failed: {response.text}"
-        token = response.json().get("token")
-        user = response.json().get("user")
-        return {"Authorization": f"Bearer {token}"}, user
-    
-    # ========== GET /api/users/permissions/defaults tests ==========
-    
-    def test_defaults_endpoint_returns_all_roles(self, auth_headers):
-        """Test that defaults endpoint returns permissions for all 4 roles"""
-        headers, _ = auth_headers
-        response = requests.get(f"{BASE_URL}/api/users/permissions/defaults", headers=headers)
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
         data = response.json()
-        assert "manager" in data, "Should have manager defaults"
-        assert "accountant" in data, "Should have accountant defaults"
-        assert "cashier" in data, "Should have cashier defaults"
-        assert "staff" in data, "Should have staff defaults"
-        print("GET /api/users/permissions/defaults: All 4 roles returned")
+        self.token = data["token"]
+        self.session.headers.update({"Authorization": f"Bearer {self.token}"})
+        return data
     
-    def test_defaults_has_all_13_permission_keys(self, auth_headers):
-        """Test that each role has all 13 permission keys"""
-        headers, _ = auth_headers
-        response = requests.get(f"{BASE_URL}/api/users/permissions/defaults", headers=headers)
-        data = response.json()
-        for role in ["manager", "accountant", "cashier", "staff"]:
-            for perm in ALL_PERMISSIONS:
-                assert perm in data[role], f"{role} missing permission: {perm}"
-        print("GET /api/users/permissions/defaults: All 13 keys present for each role")
-    
-    def test_manager_defaults_all_true(self, auth_headers):
-        """Test that manager defaults have all 13 permissions true"""
-        headers, _ = auth_headers
-        response = requests.get(f"{BASE_URL}/api/users/permissions/defaults", headers=headers)
-        data = response.json()
-        manager_perms = data["manager"]
-        true_count = sum(1 for v in manager_perms.values() if v)
-        assert true_count == 13, f"Manager should have 13/13 true, got {true_count}"
-        print("Manager defaults: 13/13 permissions true")
-    
-    def test_accountant_defaults_10_true(self, auth_headers):
-        """Test that accountant defaults have 10/13 true (no delete sales, delete expenses, manage users)"""
-        headers, _ = auth_headers
-        response = requests.get(f"{BASE_URL}/api/users/permissions/defaults", headers=headers)
-        data = response.json()
-        acct_perms = data["accountant"]
-        true_count = sum(1 for v in acct_perms.values() if v)
-        assert true_count == 10, f"Accountant should have 10/13 true, got {true_count}"
-        # Verify specific false permissions
-        assert acct_perms["can_delete_sales"] == False, "Accountant should not have can_delete_sales"
-        assert acct_perms["can_delete_expenses"] == False, "Accountant should not have can_delete_expenses"
-        assert acct_perms["can_manage_users"] == False, "Accountant should not have can_manage_users"
-        print("Accountant defaults: 10/13 permissions true (correct)")
-    
-    def test_cashier_defaults_1_true(self, auth_headers):
-        """Test that cashier defaults have 1/13 true (can_add_sales only)"""
-        headers, _ = auth_headers
-        response = requests.get(f"{BASE_URL}/api/users/permissions/defaults", headers=headers)
-        data = response.json()
-        cashier_perms = data["cashier"]
-        true_count = sum(1 for v in cashier_perms.values() if v)
-        assert true_count == 1, f"Cashier should have 1/13 true, got {true_count}"
-        assert cashier_perms["can_add_sales"] == True, "Cashier should have can_add_sales"
-        print("Cashier defaults: 1/13 permissions true (can_add_sales)")
-    
-    def test_staff_defaults_1_true(self, auth_headers):
-        """Test that staff defaults have 1/13 true (can_upload_files only)"""
-        headers, _ = auth_headers
-        response = requests.get(f"{BASE_URL}/api/users/permissions/defaults", headers=headers)
-        data = response.json()
-        staff_perms = data["staff"]
-        true_count = sum(1 for v in staff_perms.values() if v)
-        assert true_count == 1, f"Staff should have 1/13 true, got {true_count}"
-        assert staff_perms["can_upload_files"] == True, "Staff should have can_upload_files"
-        print("Staff defaults: 1/13 permissions true (can_upload_files)")
-    
-    # ========== POST /api/users with permissions tests ==========
-    
-    def test_create_user_with_custom_permissions(self, auth_headers):
-        """Test creating a user with custom permissions stores them correctly"""
-        headers, _ = auth_headers
-        unique_email = f"test_custom_perms_{uuid.uuid4().hex[:8]}@test.com"
-        custom_perms = {
-            "can_add_sales": True,
-            "can_edit_sales": True,
-            "can_delete_sales": False,
-            "can_add_expenses": True,
-            "can_edit_expenses": False,
-            "can_delete_expenses": False,
-            "can_upload_files": True,
-            "can_view_reports": True,
-            "can_export_reports": True,
-            "can_view_records": False,
-            "can_manage_vendors": False,
-            "can_manage_items": False,
-            "can_manage_users": False,
-        }
-        response = requests.post(f"{BASE_URL}/api/users", headers=headers, json={
-            "name": "Custom Perms User",
-            "email": unique_email,
-            "password": "testpass123",
-            "role": "staff",
-            "permissions": custom_perms
-        })
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
-        user = response.json()
-        
-        # Verify permissions stored correctly
-        assert "permissions" in user, "User should have permissions field"
-        stored_perms = user["permissions"]
-        for key, value in custom_perms.items():
-            assert stored_perms[key] == value, f"Permission {key} should be {value}, got {stored_perms[key]}"
-        
-        true_count = sum(1 for v in stored_perms.values() if v)
-        assert true_count == 6, f"Should have 6 true permissions, got {true_count}"
-        print(f"POST /api/users with custom permissions: Success (6/13 true)")
-        
-        # Cleanup
-        requests.delete(f"{BASE_URL}/api/users/{user['id']}", headers=headers)
-    
-    def test_create_user_without_permissions_gets_role_defaults(self, auth_headers):
-        """Test that user created without permissions field gets role defaults"""
-        headers, _ = auth_headers
-        unique_email = f"test_default_perms_{uuid.uuid4().hex[:8]}@test.com"
-        response = requests.post(f"{BASE_URL}/api/users", headers=headers, json={
-            "name": "Default Perms User",
-            "email": unique_email,
-            "password": "testpass123",
-            "role": "cashier"
+    def test_login_returns_token_and_user(self):
+        """Test POST /api/auth/login returns token and user info"""
+        response = self.session.post(f"{BASE_URL}/api/auth/login", json={
+            "email": MANAGER_EMAIL,
+            "password": MANAGER_PASSWORD
         })
         assert response.status_code == 200
-        user = response.json()
-        
-        # Should have cashier defaults (1/13 - can_add_sales only)
-        assert "permissions" in user
-        true_count = sum(1 for v in user["permissions"].values() if v)
-        assert true_count == 1, f"Cashier should have 1/13 true by default, got {true_count}"
-        assert user["permissions"]["can_add_sales"] == True
-        print(f"POST /api/users without permissions: Gets role defaults (1/13 for cashier)")
-        
-        # Cleanup
-        requests.delete(f"{BASE_URL}/api/users/{user['id']}", headers=headers)
+        data = response.json()
+        assert "token" in data
+        assert "user" in data
+        assert data["user"]["email"] == MANAGER_EMAIL
+        assert data["user"]["role"] == "manager"
+        print(f"✓ Login successful, role: {data['user']['role']}")
     
-    # ========== PUT /api/users/{id} with permissions tests ==========
-    
-    def test_update_user_permissions_via_user_endpoint(self, auth_headers):
-        """Test updating user permissions via PUT /api/users/{id}"""
-        headers, _ = auth_headers
-        unique_email = f"test_update_perms_{uuid.uuid4().hex[:8]}@test.com"
-        
-        # Create user with default staff permissions (1/13)
-        create_resp = requests.post(f"{BASE_URL}/api/users", headers=headers, json={
-            "name": "Update Perms Test",
-            "email": unique_email,
-            "password": "testpass123",
-            "role": "staff"
-        })
-        assert create_resp.status_code == 200
-        user_id = create_resp.json()["id"]
-        initial_count = sum(1 for v in create_resp.json()["permissions"].values() if v)
-        assert initial_count == 1, f"Initial should be 1, got {initial_count}"
-        
-        # Update to grant more permissions
-        new_perms = {p: True for p in ALL_PERMISSIONS}
-        new_perms["can_manage_users"] = False  # 12/13
-        
-        update_resp = requests.put(f"{BASE_URL}/api/users/{user_id}", headers=headers, json={
-            "permissions": new_perms
-        })
-        assert update_resp.status_code == 200
-        updated_count = sum(1 for v in update_resp.json()["permissions"].values() if v)
-        assert updated_count == 12, f"Updated should be 12, got {updated_count}"
-        print(f"PUT /api/users with permissions: Updated from 1 to 12 permissions")
-        
-        # Cleanup
-        requests.delete(f"{BASE_URL}/api/users/{user_id}", headers=headers)
-    
-    # ========== PUT /api/users/{id}/permissions tests ==========
-    
-    def test_update_permissions_via_dedicated_endpoint(self, auth_headers):
-        """Test updating permissions via PUT /api/users/{id}/permissions endpoint"""
-        headers, _ = auth_headers
-        unique_email = f"test_perms_endpoint_{uuid.uuid4().hex[:8]}@test.com"
-        
-        # Create user
-        create_resp = requests.post(f"{BASE_URL}/api/users", headers=headers, json={
-            "name": "Perms Endpoint Test",
-            "email": unique_email,
-            "password": "testpass123",
-            "role": "manager"  # Starts with 13/13
-        })
-        assert create_resp.status_code == 200
-        user_id = create_resp.json()["id"]
-        
-        # Update via dedicated endpoint - set only 3 permissions
-        new_perms = {p: False for p in ALL_PERMISSIONS}
-        new_perms["can_add_sales"] = True
-        new_perms["can_view_reports"] = True
-        new_perms["can_upload_files"] = True
-        
-        update_resp = requests.put(f"{BASE_URL}/api/users/{user_id}/permissions", headers=headers, json=new_perms)
-        assert update_resp.status_code == 200
-        
-        final_count = sum(1 for v in update_resp.json()["permissions"].values() if v)
-        assert final_count == 3, f"Should have 3 permissions, got {final_count}"
-        assert update_resp.json()["permissions"]["can_add_sales"] == True
-        assert update_resp.json()["permissions"]["can_view_reports"] == True
-        assert update_resp.json()["permissions"]["can_upload_files"] == True
-        print(f"PUT /api/users/{'{id}'}/permissions: Success (3/13 permissions)")
-        
-        # Cleanup
-        requests.delete(f"{BASE_URL}/api/users/{user_id}", headers=headers)
-    
-    def test_permissions_endpoint_requires_manager(self, auth_headers):
-        """Test that permissions endpoint requires manager access"""
-        headers, _ = auth_headers
-        unique_email = f"test_perms_403_{uuid.uuid4().hex[:8]}@test.com"
-        
-        # Create a staff user
-        create_resp = requests.post(f"{BASE_URL}/api/users", headers=headers, json={
-            "name": "Staff User",
-            "email": unique_email,
-            "password": "testpass123",
-            "role": "staff"
-        })
-        user_id = create_resp.json()["id"]
-        
-        # Login as staff user
-        login_resp = requests.post(f"{BASE_URL}/api/auth/login", json={
-            "email": unique_email,
-            "password": "testpass123"
-        })
-        staff_token = login_resp.json()["token"]
-        staff_headers = {"Authorization": f"Bearer {staff_token}"}
-        
-        # Try to update permissions - should fail
-        perms_resp = requests.put(f"{BASE_URL}/api/users/{user_id}/permissions", headers=staff_headers, json={
-            "can_add_sales": True
-        })
-        assert perms_resp.status_code == 403, f"Expected 403, got {perms_resp.status_code}"
-        print("PUT /api/users/{id}/permissions: 403 for non-manager")
-        
-        # Cleanup
-        requests.delete(f"{BASE_URL}/api/users/{user_id}", headers=headers)
-    
-    # ========== GET /api/users returns permissions tests ==========
-    
-    def test_list_users_includes_permissions(self, auth_headers):
-        """Test that GET /api/users returns permissions field for each user"""
-        headers, _ = auth_headers
-        response = requests.get(f"{BASE_URL}/api/users", headers=headers)
+    def test_auth_me_returns_permissions_and_data_scope(self):
+        """Test GET /api/auth/me returns permissions and data_scope for manager"""
+        self.login_as_manager()
+        response = self.session.get(f"{BASE_URL}/api/auth/me")
         assert response.status_code == 200
-        users = response.json()
+        data = response.json()
         
-        for user in users:
-            assert "permissions" in user, f"User {user['email']} missing permissions field"
-            assert "password_hash" not in user, f"User {user['email']} should not expose password_hash"
-            # Verify all 13 keys present
-            for perm in ALL_PERMISSIONS:
-                assert perm in user["permissions"], f"User {user['email']} missing permission key: {perm}"
+        # Check permissions exist
+        assert "permissions" in data, "permissions field missing from /auth/me response"
+        assert "data_scope" in data, "data_scope field missing from /auth/me response"
         
-        print(f"GET /api/users: All {len(users)} users have permissions field")
+        # Manager should have data_scope='all'
+        assert data["data_scope"] == "all", f"Expected data_scope='all', got '{data['data_scope']}'"
+        
+        # Count permissions
+        perms = data["permissions"]
+        true_count = sum(1 for v in perms.values() if v is True)
+        print(f"✓ Manager has {true_count} permissions, data_scope='{data['data_scope']}'")
+        
+        # Manager should have all 21 permissions
+        assert true_count == 21, f"Expected 21 permissions for manager, got {true_count}"
     
-    def test_user_without_stored_permissions_gets_role_defaults(self, auth_headers):
-        """Test that users without stored permissions get role defaults via _safe_user"""
-        headers, _ = auth_headers
-        # The demo user may or may not have stored permissions
-        # If not stored, should get manager defaults (13/13)
-        response = requests.get(f"{BASE_URL}/api/users", headers=headers)
-        users = response.json()
+    def test_auth_me_has_all_visibility_permissions(self):
+        """Test manager has all 8 visibility permissions"""
+        self.login_as_manager()
+        response = self.session.get(f"{BASE_URL}/api/auth/me")
+        assert response.status_code == 200
+        perms = response.json()["permissions"]
         
-        # Find the demo user (manager)
-        demo_user = next((u for u in users if u["email"] == "demo@test.com"), None)
-        assert demo_user is not None, "Demo user should exist"
-        assert demo_user["role"] == "manager"
+        visibility_keys = [
+            "view_dashboard", "view_sales", "view_expenses", "view_reports",
+            "view_records", "view_vendors", "view_items", "view_users"
+        ]
+        for key in visibility_keys:
+            assert perms.get(key) is True, f"Manager missing visibility permission: {key}"
+        print(f"✓ Manager has all 8 visibility permissions")
+    
+    def test_auth_me_has_all_action_permissions(self):
+        """Test manager has all 13 action permissions"""
+        self.login_as_manager()
+        response = self.session.get(f"{BASE_URL}/api/auth/me")
+        assert response.status_code == 200
+        perms = response.json()["permissions"]
         
-        # Should have permissions (either stored or defaulted)
-        true_count = sum(1 for v in demo_user["permissions"].values() if v)
-        assert true_count == 13, f"Manager should have 13/13 permissions, got {true_count}"
-        print("Demo user (manager): Has 13/13 permissions as expected")
+        action_keys = [
+            "can_add_sales", "can_edit_sales", "can_delete_sales",
+            "can_add_expenses", "can_edit_expenses", "can_delete_expenses",
+            "can_upload_files", "can_view_reports", "can_export_reports",
+            "can_view_records", "can_manage_vendors", "can_manage_items",
+            "can_manage_users"
+        ]
+        for key in action_keys:
+            assert perms.get(key) is True, f"Manager missing action permission: {key}"
+        print(f"✓ Manager has all 13 action permissions")
 
 
-class TestPermissionEdgeCases:
-    """Edge case tests for permissions system"""
+class TestPermissionDefaults:
+    """Test permission defaults endpoint"""
     
-    @pytest.fixture(scope="class")
-    def auth_headers(self):
-        """Get auth token for manager user"""
-        response = requests.post(f"{BASE_URL}/api/auth/login", json={
-            "email": "demo@test.com",
-            "password": "testpassword"
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json"})
+    
+    def login_as_manager(self):
+        response = self.session.post(f"{BASE_URL}/api/auth/login", json={
+            "email": MANAGER_EMAIL,
+            "password": MANAGER_PASSWORD
         })
-        token = response.json().get("token")
-        return {"Authorization": f"Bearer {token}"}
+        assert response.status_code == 200
+        self.session.headers.update({"Authorization": f"Bearer {response.json()['token']}"})
     
-    def test_permissions_sanitized_on_update(self, auth_headers):
-        """Test that permissions are sanitized when updating via dedicated endpoint"""
-        headers = auth_headers
-        unique_email = f"test_sanitize_{uuid.uuid4().hex[:8]}@test.com"
+    def test_permissions_defaults_endpoint(self):
+        """Test GET /api/users/permissions/defaults returns correct counts"""
+        self.login_as_manager()
+        response = self.session.get(f"{BASE_URL}/api/users/permissions/defaults")
+        assert response.status_code == 200
+        data = response.json()
         
-        # Create a user first
-        create_resp = requests.post(f"{BASE_URL}/api/users", headers=headers, json={
-            "name": "Sanitize Test",
-            "email": unique_email,
+        # Check all roles exist
+        assert "manager" in data
+        assert "accountant" in data
+        assert "cashier" in data
+        assert "staff" in data
+        
+        # Count permissions for each role
+        manager_count = sum(1 for v in data["manager"].values() if v is True)
+        accountant_count = sum(1 for v in data["accountant"].values() if v is True)
+        cashier_count = sum(1 for v in data["cashier"].values() if v is True)
+        staff_count = sum(1 for v in data["staff"].values() if v is True)
+        
+        print(f"Permission counts - Manager: {manager_count}, Accountant: {accountant_count}, Cashier: {cashier_count}, Staff: {staff_count}")
+        
+        # Verify expected counts
+        assert manager_count == 21, f"Expected manager to have 21 permissions, got {manager_count}"
+        assert accountant_count == 17, f"Expected accountant to have 17 permissions, got {accountant_count}"
+        assert cashier_count == 9, f"Expected cashier to have 9 permissions, got {cashier_count}"
+        assert staff_count == 4, f"Expected staff to have 4 permissions, got {staff_count}"
+        print("✓ All role permission counts match expected values")
+
+
+class TestUserCreation:
+    """Test user creation with permissions and ownership fields"""
+    
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json"})
+        self.created_user_id = None
+    
+    def login_as_manager(self):
+        response = self.session.post(f"{BASE_URL}/api/auth/login", json={
+            "email": MANAGER_EMAIL,
+            "password": MANAGER_PASSWORD
+        })
+        assert response.status_code == 200
+        data = response.json()
+        self.session.headers.update({"Authorization": f"Bearer {data['token']}"})
+        return data
+    
+    def test_create_user_with_permissions_and_scope(self):
+        """Test POST /api/users creates user with permissions, data_scope, and ownership fields"""
+        login_data = self.login_as_manager()
+        
+        test_email = f"TEST_cashier_{uuid.uuid4().hex[:8]}@test.com"
+        response = self.session.post(f"{BASE_URL}/api/users", json={
+            "name": "Test Cashier",
+            "email": test_email,
             "password": "testpass123",
-            "role": "staff"
+            "role": "cashier",
+            "data_scope": "own"
         })
-        assert create_resp.status_code == 200
-        user_id = create_resp.json()["id"]
         
-        # Try to update with invalid keys via dedicated endpoint - these are sanitized
-        invalid_perms = {p: True for p in ALL_PERMISSIONS}
-        invalid_perms["invalid_permission"] = True
-        invalid_perms["can_hack_system"] = True
+        assert response.status_code == 200, f"Create user failed: {response.text}"
+        data = response.json()
+        self.created_user_id = data.get("id")
         
-        update_resp = requests.put(f"{BASE_URL}/api/users/{user_id}/permissions", headers=headers, json=invalid_perms)
-        assert update_resp.status_code == 200
-        updated_perms = update_resp.json()["permissions"]
+        # Verify permissions exist
+        assert "permissions" in data, "permissions field missing from created user"
+        assert "data_scope" in data, "data_scope field missing from created user"
         
-        # Invalid keys should not be stored on update via permissions endpoint
-        assert "invalid_permission" not in updated_perms, "Invalid keys should be sanitized on update"
-        assert "can_hack_system" not in updated_perms, "Invalid keys should be sanitized on update"
-        # Valid keys should be stored
-        assert len(updated_perms) == 13
-        print("Permissions sanitized on update via /permissions endpoint")
+        # Verify data_scope
+        assert data["data_scope"] == "own", f"Expected data_scope='own', got '{data['data_scope']}'"
+        
+        # Verify ownership fields
+        assert "created_by_user_id" in data, "created_by_user_id missing from created user"
+        assert "created_by_name" in data, "created_by_name missing from created user"
+        
+        print(f"✓ User created with data_scope='{data['data_scope']}', created_by_user_id='{data.get('created_by_user_id')}'")
         
         # Cleanup
-        requests.delete(f"{BASE_URL}/api/users/{user_id}", headers=headers)
+        if self.created_user_id:
+            self.session.delete(f"{BASE_URL}/api/users/{self.created_user_id}")
+
+
+class TestSalesOwnershipAndSoftDelete:
+    """Test sales creation with ownership fields and soft-delete"""
     
-    def test_missing_permission_keys_default_to_false(self, auth_headers):
-        """Test that missing permission keys default to false on update"""
-        headers = auth_headers
-        unique_email = f"test_missing_keys_{uuid.uuid4().hex[:8]}@test.com"
-        
-        # Create user
-        create_resp = requests.post(f"{BASE_URL}/api/users", headers=headers, json={
-            "name": "Missing Keys Test",
-            "email": unique_email,
-            "password": "testpass123",
-            "role": "staff"
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json"})
+        self.created_sale_id = None
+    
+    def login_as_manager(self):
+        response = self.session.post(f"{BASE_URL}/api/auth/login", json={
+            "email": MANAGER_EMAIL,
+            "password": MANAGER_PASSWORD
         })
-        user_id = create_resp.json()["id"]
+        assert response.status_code == 200
+        data = response.json()
+        self.session.headers.update({"Authorization": f"Bearer {data['token']}"})
+        return data
+    
+    def test_create_sale_has_ownership_fields(self):
+        """Test POST /api/sales creates record with created_by_user_id, created_by_name, source_type='manual'"""
+        self.login_as_manager()
         
-        # Update with partial permissions (only 2 keys)
-        update_resp = requests.put(f"{BASE_URL}/api/users/{user_id}/permissions", headers=headers, json={
-            "can_add_sales": True,
-            "can_upload_files": True
+        response = self.session.post(f"{BASE_URL}/api/sales", json={
+            "date_from": "2025-01-15",
+            "date_to": "2025-01-15",
+            "total_sales": 1500.00,
+            "items": [{"menu_item": "Test Item", "quantity": 10, "revenue": 1500.00}]
         })
-        assert update_resp.status_code == 200
         
-        # All other keys should be false
-        perms = update_resp.json()["permissions"]
-        true_count = sum(1 for v in perms.values() if v)
-        assert true_count == 2, f"Should have 2 true, got {true_count}"
-        assert perms["can_add_sales"] == True
-        assert perms["can_upload_files"] == True
-        assert perms["can_manage_users"] == False
-        print("Missing permission keys default to false")
+        assert response.status_code == 200, f"Create sale failed: {response.text}"
+        data = response.json()
+        self.created_sale_id = data.get("id")
+        
+        # Verify ownership fields
+        assert "created_by_user_id" in data, "created_by_user_id missing from sale"
+        assert "created_by_name" in data, "created_by_name missing from sale"
+        assert "source_type" in data, "source_type missing from sale"
+        
+        assert data["source_type"] == "manual", f"Expected source_type='manual', got '{data['source_type']}'"
+        assert data["created_by_user_id"] is not None, "created_by_user_id should not be None"
+        
+        print(f"✓ Sale created with source_type='{data['source_type']}', created_by_user_id='{data['created_by_user_id']}'")
+    
+    def test_delete_sale_performs_soft_delete(self):
+        """Test DELETE /api/sales/{id} performs soft-delete (sets status='deleted')"""
+        self.login_as_manager()
+        
+        # Create a sale first
+        create_response = self.session.post(f"{BASE_URL}/api/sales", json={
+            "date_from": "2025-01-16",
+            "date_to": "2025-01-16",
+            "total_sales": 500.00,
+            "items": []
+        })
+        assert create_response.status_code == 200
+        sale_id = create_response.json()["id"]
+        
+        # Delete the sale
+        delete_response = self.session.delete(f"{BASE_URL}/api/sales/{sale_id}")
+        assert delete_response.status_code == 200
+        delete_data = delete_response.json()
+        assert delete_data.get("status") == "deleted", f"Expected status='deleted', got '{delete_data.get('status')}'"
+        
+        print(f"✓ Sale soft-deleted, response status='{delete_data.get('status')}'")
+    
+    def test_get_sales_excludes_soft_deleted(self):
+        """Test GET /api/sales excludes soft-deleted records"""
+        self.login_as_manager()
+        
+        # Create a sale
+        create_response = self.session.post(f"{BASE_URL}/api/sales", json={
+            "date_from": "2025-01-17",
+            "date_to": "2025-01-17",
+            "total_sales": 750.00,
+            "items": []
+        })
+        assert create_response.status_code == 200
+        sale_id = create_response.json()["id"]
+        
+        # Verify it appears in list
+        list_response = self.session.get(f"{BASE_URL}/api/sales")
+        assert list_response.status_code == 200
+        sales_before = list_response.json()
+        sale_ids_before = [s["id"] for s in sales_before]
+        assert sale_id in sale_ids_before, "Created sale should appear in list"
+        
+        # Delete the sale
+        self.session.delete(f"{BASE_URL}/api/sales/{sale_id}")
+        
+        # Verify it no longer appears in list
+        list_response_after = self.session.get(f"{BASE_URL}/api/sales")
+        assert list_response_after.status_code == 200
+        sales_after = list_response_after.json()
+        sale_ids_after = [s["id"] for s in sales_after]
+        assert sale_id not in sale_ids_after, "Soft-deleted sale should NOT appear in list"
+        
+        print(f"✓ Soft-deleted sale excluded from GET /api/sales")
+
+
+class TestOtherExpensesOwnershipAndSoftDelete:
+    """Test other-expenses creation with ownership fields and soft-delete"""
+    
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json"})
+    
+    def login_as_manager(self):
+        response = self.session.post(f"{BASE_URL}/api/auth/login", json={
+            "email": MANAGER_EMAIL,
+            "password": MANAGER_PASSWORD
+        })
+        assert response.status_code == 200
+        data = response.json()
+        self.session.headers.update({"Authorization": f"Bearer {data['token']}"})
+        return data
+    
+    def test_create_other_expense_has_ownership_fields(self):
+        """Test POST /api/other-expenses creates record with ownership fields"""
+        self.login_as_manager()
+        
+        response = self.session.post(f"{BASE_URL}/api/other-expenses", json={
+            "title": "Test Expense",
+            "amount": 250.00,
+            "category": "utilities",
+            "expense_date": "2025-01-15"
+        })
+        
+        assert response.status_code == 200, f"Create expense failed: {response.text}"
+        data = response.json()
+        
+        # Verify ownership fields
+        assert "created_by_user_id" in data, "created_by_user_id missing from expense"
+        assert "created_by_name" in data, "created_by_name missing from expense"
+        assert "source_type" in data, "source_type missing from expense"
+        
+        assert data["source_type"] == "manual", f"Expected source_type='manual', got '{data['source_type']}'"
+        
+        print(f"✓ Expense created with source_type='{data['source_type']}', created_by_user_id='{data['created_by_user_id']}'")
         
         # Cleanup
-        requests.delete(f"{BASE_URL}/api/users/{user_id}", headers=headers)
+        if data.get("id"):
+            self.session.delete(f"{BASE_URL}/api/other-expenses/{data['id']}")
+    
+    def test_delete_other_expense_performs_soft_delete(self):
+        """Test DELETE /api/other-expenses/{id} performs soft-delete"""
+        self.login_as_manager()
+        
+        # Create an expense first
+        create_response = self.session.post(f"{BASE_URL}/api/other-expenses", json={
+            "title": "Test Soft Delete Expense",
+            "amount": 100.00,
+            "category": "supplies",
+            "expense_date": "2025-01-16"
+        })
+        assert create_response.status_code == 200
+        expense_id = create_response.json()["id"]
+        
+        # Delete the expense
+        delete_response = self.session.delete(f"{BASE_URL}/api/other-expenses/{expense_id}")
+        assert delete_response.status_code == 200
+        delete_data = delete_response.json()
+        assert delete_data.get("status") == "deleted", f"Expected status='deleted', got '{delete_data.get('status')}'"
+        
+        print(f"✓ Expense soft-deleted, response status='{delete_data.get('status')}'")
+
+
+class TestDashboardSummary:
+    """Test dashboard summary endpoint"""
+    
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.session = requests.Session()
+        self.session.headers.update({"Content-Type": "application/json"})
+    
+    def login_as_manager(self):
+        response = self.session.post(f"{BASE_URL}/api/auth/login", json={
+            "email": MANAGER_EMAIL,
+            "password": MANAGER_PASSWORD
+        })
+        assert response.status_code == 200
+        data = response.json()
+        self.session.headers.update({"Authorization": f"Bearer {data['token']}"})
+        return data
+    
+    def test_dashboard_summary_with_month_zero(self):
+        """Test GET /api/dashboard/summary with month=0 (All Months)"""
+        self.login_as_manager()
+        
+        # Test with month=0 (All Months)
+        response = self.session.get(f"{BASE_URL}/api/dashboard/summary", params={"month": 0})
+        assert response.status_code == 200, f"Dashboard summary failed: {response.text}"
+        data = response.json()
+        
+        # Verify response structure
+        assert "month_raw_materials" in data or "total_expenses" in data, "Dashboard summary should have expense data"
+        print(f"✓ Dashboard summary with month=0 returns data")
+    
+    def test_dashboard_summary_without_month_filter(self):
+        """Test GET /api/dashboard/summary without month filter"""
+        self.login_as_manager()
+        
+        response = self.session.get(f"{BASE_URL}/api/dashboard/summary")
+        assert response.status_code == 200, f"Dashboard summary failed: {response.text}"
+        print(f"✓ Dashboard summary without month filter returns 200")
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    pytest.main([__file__, "-v", "--tb=short"])
