@@ -26,6 +26,7 @@ from routes.vendor_comparison import router as vendor_comparison_router
 from routes.alerts import router as alerts_router
 from routes.chat import router as chat_router
 from routes.settings import router as settings_router
+from routes.password_reset import router as password_reset_router
 from routes.correction_memory import router as correction_memory_router
 from routes.metrics import router as metrics_router
 from routes.usability_metrics import router as usability_metrics_router
@@ -64,6 +65,7 @@ api_router.include_router(vendor_comparison_router)
 api_router.include_router(alerts_router)
 api_router.include_router(chat_router)
 api_router.include_router(settings_router)
+api_router.include_router(password_reset_router)
 api_router.include_router(correction_memory_router)
 api_router.include_router(metrics_router)
 api_router.include_router(usability_metrics_router)

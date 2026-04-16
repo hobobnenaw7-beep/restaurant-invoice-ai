@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { ChefHat, ArrowRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 export default function LoginPage() {
   const { login, register } = useAuth();
@@ -88,7 +89,14 @@ export default function LoginPage() {
                 <Input id="email" data-testid="input-email" type="email" value={form.email} onChange={set('email')} placeholder="you@restaurant.com" required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password" className="text-sm font-medium">Password</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password" className="text-sm font-medium">Password</Label>
+                  {!isSignup && (
+                    <Link to="/forgot-password" className="text-xs text-teal-600 hover:text-teal-700 font-medium transition-colors" data-testid="forgot-password-link">
+                      Forgot password?
+                    </Link>
+                  )}
+                </div>
                 <Input id="password" data-testid="input-password" type="password" value={form.password} onChange={set('password')} placeholder="Min 6 characters" required minLength={6} />
               </div>
               <Button

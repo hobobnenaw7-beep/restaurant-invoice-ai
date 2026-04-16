@@ -22,6 +22,8 @@ import PurchaseDecisionsPage from "@/pages/PurchaseDecisionsPage";
 import AuditLogPage from "@/pages/AuditLogPage";
 import CorrectionMemoryPage from "@/pages/CorrectionMemoryPage";
 import VendorComparisonPage from "@/pages/VendorComparisonPage";
+import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
+import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import { ShieldOff } from 'lucide-react';
 
 // Priority-ordered list of pages for landing page resolution.
@@ -119,6 +121,8 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
+          <Route path="/forgot-password" element={<PublicRoute><ForgotPasswordPage /></PublicRoute>} />
+          <Route path="/reset-password" element={<PublicRoute><ResetPasswordPage /></PublicRoute>} />
           <Route path="/no-access" element={<NoAccessPage />} />
           <Route path="/dashboard" element={<PermRoute perm="view_dashboard"><DashboardPage /></PermRoute>} />
           <Route path="/profit-center" element={<PermRoute perm="view_dashboard"><ProfitDashboard /></PermRoute>} />
