@@ -17,31 +17,24 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 │   │   ├── sales.py (Scope-filtered, soft-delete, ownership fields)
 │   │   ├── other_expenses.py (Scope-filtered, soft-delete, ownership fields)
 │   │   ├── records.py (Scope-filtered, ownership fields)
-│   │   ├── upload.py (Extraction pipeline with ownership fields)
+│   │   ├── upload.py (Extraction pipeline with multi-signal routing)
 │   │   ├── settings.py (Manager-only reset with password verification)
 │   │   ├── profit_dashboard.py (AI insights)
 │   ├── services/
+│   │   ├── vendor_detection.py (Multi-signal detection + confidence routing)
 │   │   ├── usfoods_structural.py (2-phase structural extraction)
 │   │   ├── unit_normalizer.py, llm_rate_limiter.py, audit.py, approval.py
 │   ├── tests/
-│   │   ├── stress_test_294.py (Batch execution script)
-│   │   ├── stress_test_294_report.md (Final report)
+│   │   ├── stress_test_294.py, stress_test_294_report.md
+│   │   ├── usfoods_retest_subset.py, vendor_detection_report.md
 ├── frontend/src/
-│   ├── App.js (PermRoute, SmartLanding, NoAccessPage — permission-aware routing)
+│   ├── App.js (PermRoute, SmartLanding, NoAccessPage)
 │   ├── components/Layout.js (Sidebar filters by visibility permissions)
-│   ├── contexts/AuthContext.js (Login fetches permissions via /auth/me)
-│   ├── pages/
-│   │   ├── DashboardPage.js (Default month = All Months)
-│   │   ├── UserManagementPage.js (Visibility perms, Data Scope, Action perms)
-│   │   ├── SalesPage.js (Created By + Source + Status columns)
-│   │   ├── ExpensesPage.js (Created By + Status columns)
-│   │   ├── RecordsLibraryPage.js (Created By + Source + Status columns)
-│   │   ├── SettingsPage.js (Manager-only Data Management with password+RESET confirmation)
+│   ├── contexts/AuthContext.js
+│   ├── pages/ (Dashboard, Sales, Expenses, Records, Settings, UserManagement, etc.)
 ```
 
 ## Permission Model — APPROVED FOR PRODUCTION
-
-### Role Matrix (66/66 tests passed)
 | Permission | Manager | Accountant | Cashier | Staff |
 |-----------|---------|------------|---------|-------|
 | view_dashboard | Y | Y | Y | Y |
@@ -56,15 +49,16 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 | can_delete_sales | Y | N | N | N |
 | can_delete_expenses | Y | N | N | N |
 
-### Enforcement
-- Backend: `require_permission()` + `apply_scope_filter()` + `apply_soft_delete_filter()`
-- Frontend: `PermRoute` + sidebar filtering + `SmartLanding`
-- Soft-delete preserves audit trail (deleted_at, deleted_by_user_id)
-- Ownership fields: created_by_user_id, created_by_name, source_type, created_at
+## Vendor Detection — Multi-Signal (April 17, 2026)
+Three signals per invoice:
+- **Name Match** (weight 0.55): 16+ variants per vendor
+- **Content Clues** (weight 0.25): Domain/URL/account patterns
+- **Layout Signature** (weight 0.20): Column header keywords
+- Routing threshold: 0.40 confidence
+- Full audit trail stored on every receipt
 
-## Extraction Pipeline — STRESS TESTED
-
-### 294-Image Stress Test Results (April 17, 2026)
+## Extraction Pipeline — Stress Tested
+### 294-Image Stress Test (Phase 3)
 | Metric | Value |
 |--------|-------|
 | Total images | 294 |
@@ -72,46 +66,42 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 | Partial | 109 (37.1%) |
 | Failed | 33 (11.2%) |
 | False trusts | **0** |
-| Runtime | 91.9 min (18.8s avg) |
 
 ### Core Vendor Performance
-| Vendor | Images | Success Rate | False Trusts |
-|--------|--------|-------------|--------------|
-| Sysco | 148 | 99.3% | 0 |
-| US Foods | 78 | 84.6% | 0 |
-| PFG | 25 | 96.0% | 0 |
-| **Core Total** | **251** | **94.4%** | **0** |
+| Vendor | Success Rate | False Trusts |
+|--------|-------------|--------------|
+| Sysco (148) | 99.3% | 0 |
+| US Foods (78) | 84.6% | 0 |
+| PFG (25) | 96.0% | 0 |
 
-### Dashboard Performance at Scale
-- All Months: 149.6ms avg (1,270+ records)
-- Baseline: ~114ms
-- Verdict: +31%, acceptable
-
-### Audit Coverage
-- 100% of all records tagged with user_id, source_type, created_at
-- 0 missing audit fields across 1,270 receipts and 8,617 items
+### Vendor Detection Upgrade Results (US Foods Re-test)
+| Metric | Before | After |
+|--------|--------|-------|
+| Files routed to structural parser | 0/12 | **11/11** |
+| Previously-failed files recovered | — | **3 (2 SUCCESS, 1 PARTIAL)** |
+| False trusts | 0 | 0 |
 
 ## Completed Work
-- Permissions + Accountability model (21 permissions, 4 roles, data scope) — APPROVED
-- Soft-delete for sales and expenses — APPROVED
-- Route-level permission enforcement (backend + frontend) — APPROVED
-- Permission-aware landing page (no blank screens) — APPROVED
-- Secured Reset All Data (manager-only, password+RESET confirmation) — APPROVED
-- Forgot Password flow (Manager-only, 15-min token, rate limited) — APPROVED
-- Consistent table layouts (Expenses/Sales/Records with Created By, Source, Status)
+- Permissions + Accountability model (21 permissions, 4 roles, data scope)
+- Soft-delete for sales and expenses
+- Route-level permission enforcement (backend + frontend)
+- Permission-aware landing page
+- Secured Reset All Data (manager-only, password+RESET confirmation)
+- Forgot Password flow (Manager-only, 15-min token, rate limited)
+- Consistent table layouts (Created By, Source, Status columns)
 - US Foods 2-phase structural extraction
 - Multi-vendor trust gates (zero false trusts)
-- Image preprocessing + consensus mechanism
 - Credit/discount row handling (negative totals preserved)
-- **294-image stress test — COMPLETE** (Phase 3 finalized)
+- 294-image stress test — COMPLETE
+- **Multi-signal vendor detection + confidence-based routing — COMPLETE**
 
 ## Upcoming Tasks
 ### P0
-- Widen US Foods structural parser trigger to capture all vendor name variants
-- Add minimum image quality gate (reject <100KB with warning)
+- Image preprocessing enhancement for dark US Foods photos (contrast/brightness)
+- Image quality gate (warn on low-entropy <100KB images)
 
 ### P1
-- Re-enable Product Memory Layer (extraction baseline now proven)
+- Re-enable Product Memory Layer (extraction baseline proven)
 - Test multi-user workflows with production data
 
 ### P2

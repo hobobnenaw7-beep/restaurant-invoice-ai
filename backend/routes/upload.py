@@ -1719,10 +1719,38 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
 
         vendor_hint = ""
         vendor_pattern = None
-        detect_chat = LlmChat(api_key=LLM_KEY, session_id=f"detect-{uuid.uuid4()}", system_message="You read receipts. Return ONLY the vendor/supplier company name, nothing else. If unclear, return UNKNOWN.").with_model("openai", "gpt-5.2")
-        detect_msg = UserMessage(text="What is the vendor/supplier name on this receipt?", file_contents=[ImageContent(image_base64=images_b64[0])])
-        detected_vendor = (await rate_limited_llm_call(detect_chat, detect_msg, label="vendor_detect")).strip().strip('"').strip("'")
-        logger.info(f"Detected vendor: {detected_vendor}")
+
+        # ── Multi-Signal Vendor Detection ──
+        from services.vendor_detection import (
+            VENDOR_DETECT_PROMPT, parse_vendor_detect_response,
+            resolve_vendor_routing,
+        )
+        detect_chat = LlmChat(
+            api_key=LLM_KEY,
+            session_id=f"detect-{uuid.uuid4()}",
+            system_message="You read invoices and receipts. Return ONLY valid JSON as instructed.",
+        ).with_model("openai", "gpt-5.2")
+        detect_msg = UserMessage(
+            text=VENDOR_DETECT_PROMPT,
+            file_contents=[ImageContent(image_base64=images_b64[0])],
+        )
+        raw_detect_response = await rate_limited_llm_call(
+            detect_chat, detect_msg, label="vendor_detect"
+        )
+        detected_vendor, gpt_vendor_confidence, vendor_clues = (
+            parse_vendor_detect_response(raw_detect_response)
+        )
+        vendor_routing = resolve_vendor_routing(
+            raw_vendor_name=detected_vendor,
+            gpt_confidence=gpt_vendor_confidence,
+            clues=vendor_clues,
+        )
+        logger.info(
+            f"Vendor routing: vendor='{detected_vendor}' | "
+            f"parser={vendor_routing.selected_parser} | "
+            f"confidence={vendor_routing.confidence:.3f} | "
+            f"reason={vendor_routing.routing_reason}"
+        )
 
         if detected_vendor and detected_vendor.upper() != "UNKNOWN":
             norm_vendor = detected_vendor.lower().strip()
@@ -1816,7 +1844,7 @@ CRITICAL RULES:
 7. Identify columns by their HEADER TEXT, not by fixed pixel positions
 8. qty_column_visible is about whether you can SEE a printed digit in the QTY column area — true even when that digit is 1"""
 
-            elif "us foods" in dv_lower or "usfoods" in dv_lower or "us food" in dv_lower:
+            elif vendor_routing.selected_parser == "usfoods_structural":
                 # US Foods builtin hints are embedded in the 2-phase structural
                 # extraction engine (services/usfoods_structural.py). No prompt-level
                 # hint needed here since the structural path bypasses the single-call prompt.
@@ -1939,7 +1967,7 @@ QTY COLUMN VISIBILITY (critical for qty=1 items):
 
 - Return ONLY the JSON object, no other text.{vendor_hint}{builtin_vendor_hint}{multi_hint}"""
 
-                elif "us food" in (detected_vendor or "").lower() or "usfoods" in (detected_vendor or "").lower():
+                elif vendor_routing.selected_parser == "usfoods_structural":
                     # ── US FOODS: Handled by 2-phase structural extraction ──
                     # The structural engine (services/usfoods_structural.py) uses its own
                     # specialized prompts (Phase 1: numbers-only, Phase 2: descriptions-only).
@@ -2078,11 +2106,13 @@ Rules:
 - Return ONLY the JSON object, no other text.{vendor_hint}{multi_hint}"""
 
         # ── Vendor-Specific Extraction ──
+        # Routing decision driven by multi-signal vendor detection (confidence-based).
         # US Foods: 2-phase structural extraction (numbers + descriptions separately)
         # Sysco/PFG/Generic: Standard single-call GPT extraction with consensus retry
-        _is_usfoods = (document_type == "purchase_invoice" and
-                       ("us food" in (detected_vendor or "").lower() or
-                        "usfoods" in (detected_vendor or "").lower()))
+        _is_usfoods = (
+            document_type == "purchase_invoice"
+            and vendor_routing.selected_parser == "usfoods_structural"
+        )
 
         if _is_usfoods:
             from services.usfoods_structural import extract_usfoods_structural
@@ -2197,6 +2227,8 @@ Rules:
         # ── Vendor detection fallback ──
         # GPT sometimes reads the restaurant name (delivery address) instead of the
         # supplier name. Use the extracted supplier_name as a fallback.
+        # If the fallback identifies a known vendor that the initial multi-signal
+        # detection missed, update detected_vendor and log the override.
         supplier_name = (extracted.get("supplier_name") or "").strip()
         if supplier_name:
             sn_lower = supplier_name.lower()
@@ -2218,6 +2250,22 @@ Rules:
                         f"Overriding vendor detection."
                     )
                     detected_vendor = supplier_name
+                    # Re-run routing with the corrected vendor name
+                    vendor_routing = resolve_vendor_routing(
+                        raw_vendor_name=detected_vendor,
+                        gpt_confidence="medium",
+                        clues=vendor_clues,
+                    )
+                    vendor_routing.routing_reason = (
+                        f"FALLBACK: supplier_name='{supplier_name}' "
+                        f"overrode initial detection. "
+                        + vendor_routing.routing_reason
+                    )
+                    logger.info(
+                        f"Vendor routing (post-fallback): "
+                        f"parser={vendor_routing.selected_parser} | "
+                        f"confidence={vendor_routing.confidence:.3f}"
+                    )
                     break
 
         # ── Layout parsing (Phase 3) — runs in parallel with LLM ──
@@ -2248,6 +2296,7 @@ Rules:
             "page_types": page_types,
             "document_classification": doc_classification,
             "parser_route": parser_route,
+            "vendor_routing": vendor_routing.to_dict(),
             "layout_parse": {
                 "parser_used": layout_parse_result["parser_used"],
                 "item_count": len(layout_parse_result["items"]),
@@ -2287,7 +2336,6 @@ Rules:
 
                 warnings = []
                 processed_items = []
-                is_sysco = "sysco" in (detected_vendor or "").lower()
 
                 for idx, item in enumerate(extracted.get("items", [])):
                     try:
@@ -2299,7 +2347,7 @@ Rules:
                         item_warnings = []
 
                         # ── Math infill — DISABLED for vendors with trust gates (strict read-only) ──
-                        is_trusted_vendor = is_sysco or "us food" in (detected_vendor or "").lower() or "pfg" in (detected_vendor or "").lower() or "performance" in (detected_vendor or "").lower()
+                        is_trusted_vendor = vendor_routing.selected_parser in ("sysco", "usfoods_structural", "pfg")
                         if is_trusted_vendor:
                             if tot == 0 and (qty > 0 or up > 0):
                                 item_warnings.append("total is zero (not infilled — strict read-only)")
@@ -2406,9 +2454,11 @@ Rules:
                         it["numeric_failure_category"] = "n/a"
 
                 # ── Vendor-specific post-extraction validation ──
-                dv_lower = (detected_vendor or "").lower()
+                # Use the multi-signal routing result for consistent vendor identification.
+                # The routing result may have been updated by the fallback (supplier_name).
+                selected_parser = vendor_routing.selected_parser
 
-                if "performance" in dv_lower or "pfg" in dv_lower:
+                if selected_parser == "pfg":
                     _validate_pfg_extraction(extracted["items"])
                     _apply_pfg_trust_gate(extracted)
                     for it in extracted.get("items", []):
@@ -2416,7 +2466,7 @@ Rules:
                             it["vendor_status"] = "controlled_operational"
                             it["extraction_source"] = "gpt_vision_pfg"
 
-                elif "us foods" in dv_lower or "usfoods" in dv_lower or "us food" in dv_lower:
+                elif selected_parser == "usfoods_structural":
                     # ── US FOODS: Structural mapping + math gate + trust assignment ──
                     _validate_usfoods_extraction(extracted["items"])
                     _apply_usfoods_trust_gate(extracted)
@@ -2425,7 +2475,7 @@ Rules:
                             it["vendor_status"] = "controlled_operational"
                             it["extraction_source"] = "gpt_vision_usfoods"
 
-                elif "sysco" in dv_lower:
+                elif selected_parser == "sysco":
                     # ── SYSCO STRICT MATH-FIRST VALIDATION ──
                     _validate_sysco_extraction(extracted["items"])
                     await _apply_sysco_math_first_gate(extracted)
