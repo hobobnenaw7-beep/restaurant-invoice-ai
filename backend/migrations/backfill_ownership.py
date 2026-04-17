@@ -10,7 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime, timezone
 
 MONGO_URL = "mongodb://localhost:27017"
-DB_NAME = "restaurant_ai"
+DB_NAME = "test_database"
 
 
 async def migrate():
