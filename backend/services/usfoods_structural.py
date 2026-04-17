@@ -68,6 +68,12 @@ SKIP these rows:
 
 FEE ROWS: "FUEL SURCHARGE" or "DELIVERY FEE" → use shipped_qty=1
 
+CREDIT/RETURN ROWS: Lines with "CREDIT", "RETURN", or negative amounts → use NEGATIVE ext_price (e.g., -48.90)
+
+DISCOUNT ROWS: Lines with "DISCOUNT", "REBATE", "ALLOWANCE" → use NEGATIVE ext_price (e.g., -25.00)
+
+IMPORTANT: Preserve negative signs on credit and discount amounts. Do NOT convert them to positive.
+
 Also report: supplier_name, invoice_date (YYYY-MM-DD), invoice_number, subtotal, tax, total
 
 Return ONLY this JSON:
@@ -92,6 +98,8 @@ RULES:
 - Do NOT include summary rows (SUBTOTAL, TOTAL)
 - Do NOT include section headers
 - "FUEL SURCHARGE", "DELIVERY FEE" rows: use description="FUEL SURCHARGE" etc.
+- "CREDIT", "RETURN" rows: include them with the full description (e.g., "CREDIT: WING DMG CASE")
+- "DISCOUNT", "REBATE", "EARLY PAY" rows: include them with the full description
 - Return ONLY the JSON array below, nothing else
 
 Return this exact JSON:
@@ -236,6 +244,11 @@ _FEE_KEYWORDS = (
     "delivery charge", "surcharge",
 )
 
+_DISCOUNT_KEYWORDS = (
+    "discount", "rebate", "allowance", "early pay",
+    "prompt pay", "trade discount", "volume discount",
+)
+
 
 def _assemble(numeric_data: dict, descriptions: list[dict]) -> dict:
     """
@@ -272,14 +285,15 @@ def _assemble(numeric_data: dict, descriptions: list[dict]) -> dict:
 
         # Determine field sources from data presence
         is_fee = any(kw in raw_name.lower() for kw in _FEE_KEYWORDS)
-        if is_fee:
+        is_discount = any(kw in raw_name.lower() for kw in _DISCOUNT_KEYWORDS)
+        if is_fee or is_discount:
             qty_source = "fee_implied"
             price_source = "fee_implied"
             total_source = "fee_implied"
         else:
             qty_source = "column_read" if qty > 0 else "ambiguous"
             price_source = "column_read" if price > 0 else "ambiguous"
-            total_source = "column_read" if total > 0 else "ambiguous"
+            total_source = "column_read" if total != 0 else "ambiguous"  # != 0: covers negatives
 
         items.append({
             "raw_name": raw_name,

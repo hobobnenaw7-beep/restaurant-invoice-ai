@@ -1434,11 +1434,17 @@ def sanitize_extracted_item(item: dict) -> dict:
                 parse_issues.append(f"unparseable {field}: {repr(val)}")
                 item[field] = 0
 
-    # Negative values → likely OCR errors, not credits
-    for field in ("quantity", "unit_price", "total"):
+    # Negative values handling:
+    # - quantity and unit_price: likely OCR errors → convert to absolute
+    # - total: may be a legitimate credit/return → preserve the sign
+    for field in ("quantity", "unit_price"):
         if item[field] < 0:
             parse_issues.append(f"negative {field}: {item[field]}, using absolute value")
             item[field] = abs(item[field])
+
+    if item["total"] < 0:
+        # Preserve negative total for credit/return lines
+        parse_issues.append(f"negative total: {item['total']}, preserved as credit")
 
     # Sanitize name
     name = item.get("raw_name", "")

@@ -55,6 +55,8 @@ def _classify_row_type(item: dict) -> str:
     """
     Classify a row into one of:
       line_item    — actual product line
+      credit       — return/credit line (negative total)
+      discount     — discount line (e.g., early payment discount)
       group_total  — section/group subtotal (e.g., "GROUP TOTAL****")
       subtotal     — invoice subtotal line
       tax          — tax line
@@ -70,6 +72,17 @@ def _classify_row_type(item: dict) -> str:
     qty = float(item.get("quantity", 0) or 0)
     price = float(item.get("unit_price", 0) or 0)
     total = float(item.get("total", 0) or 0)
+
+    # Rule 0a: Discount lines — identified by keywords + negative or zero total
+    _DISCOUNT_KW = {"discount", "rebate", "allowance", "credit", "adjustment"}
+    if name_words & _DISCOUNT_KW and (total < 0 or total == 0):
+        return "discount"
+    if any(kw in name_lower for kw in ("early pay", "prompt pay", "trade discount", "volume discount")):
+        return "discount"
+
+    # Rule 0b: Credit/return lines — negative total with product-like structure
+    if total < 0 and (qty > 0 or price > 0 or "credit" in name_lower or "return" in name_lower):
+        return "credit"
 
     # Rule 1: GROUP TOTAL / SUBTOTAL in description
     if _GROUP_TOTAL_PATTERNS.search(name_lower):
@@ -133,6 +146,58 @@ def _classify_all_row_types(items: list) -> None:
     for item in items:
         item["row_type"] = _classify_row_type(item)
 
+
+
+# Scoreable row types — used across all trust gates
+_SCOREABLE_ROW_TYPES = ("line_item", "fee", "credit", "discount")
+
+
+def _trust_credit_or_discount_row(item: dict, vendor_label: str) -> None:
+    """
+    Trust gate for credit/discount rows.
+    Credit lines have negative totals. Discount lines also have negative totals.
+    Trust if total != 0 (i.e., the financial value is present).
+    Math: qty × price = |total| (optional — sent to review if fails).
+    """
+    total = float(item.get("total", 0) or 0)
+    qty = float(item.get("quantity", 0) or 0)
+    price = float(item.get("unit_price", 0) or 0)
+    has_name = bool((item.get("raw_name") or "").strip())
+    row_type = item.get("row_type", "credit")
+
+    if total != 0 and has_name:
+        # Check math if qty/price present: qty × price should = |total|
+        if qty > 0 and price > 0:
+            computed = round(qty * price, 2)
+            if abs(computed - abs(total)) <= 0.02:
+                item["valid_calc"] = True
+                item["confidence_level"] = "trusted"
+                item["needs_review"] = False
+                item["review_reason"] = None
+                item["numeric_failure_category"] = f"{row_type}_math_valid"
+                item["confidence_reason"] = f"{vendor_label} {row_type}: math valid ({qty}x{price}={computed}, total={total})"
+            else:
+                item["valid_calc"] = False
+                item["confidence_level"] = "needs_review_numeric"
+                item["needs_review"] = True
+                item["numeric_failure_category"] = f"{row_type}_math_mismatch"
+                item["review_reason"] = f"{vendor_label} {row_type}: math mismatch ({qty}x{price}={computed} vs {total})"
+        else:
+            # No qty/price but has total — trust based on total presence
+            item["valid_calc"] = True
+            item["confidence_level"] = "trusted"
+            item["needs_review"] = False
+            item["review_reason"] = None
+            item["numeric_failure_category"] = f"{row_type}_total_present"
+            item["confidence_reason"] = f"{vendor_label} {row_type}: total={total}, no product math required"
+    else:
+        item["confidence_level"] = "needs_review_numeric"
+        item["needs_review"] = True
+        item["numeric_failure_category"] = f"{row_type}_missing_total"
+        item["review_reason"] = f"{vendor_label} {row_type}: missing total or name"
+
+    item["vendor_status"] = "controlled_operational"
+    item["extraction_source"] = f"gpt_vision_{vendor_label}"
 
 # ---------------------------------------------------------------------------
 # Numeric Field Source Validation — System-Level Overrides
@@ -465,7 +530,7 @@ def _validate_pfg_extraction(items: list) -> None:
             )
 
     for it in items:
-        if it.get("row_type") not in ("line_item", "fee", None):
+        if it.get("row_type") not in _SCOREABLE_ROW_TYPES and it.get("row_type") is not None:
             continue
 
         name = (it.get("raw_name") or "").strip()
@@ -511,7 +576,8 @@ def _validate_pfg_extraction(items: list) -> None:
                     )
 
         # ── Service row reclassification ──
-        if name_words & _SERVICE_KW and len(name_words) <= 4:
+        # Only reclassify if not already credit/discount
+        if it.get("row_type") not in ("credit", "discount") and name_words & _SERVICE_KW and len(name_words) <= 4:
             it["row_type"] = "fee"
 
         # ── Pack info leaked into item name ──
@@ -542,7 +608,7 @@ def _validate_sysco_extraction(items: list) -> None:
 
     for it in items:
         # Skip non-line-item rows — already classified and excluded upstream
-        if it.get("row_type") not in ("line_item", "fee"):
+        if it.get("row_type") not in _SCOREABLE_ROW_TYPES:
             continue
 
         name = (it.get("raw_name") or "").strip()
@@ -622,7 +688,7 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
 
     # ── Phase 1: Enhanced row filtering for Sysco ──
     for it in items:
-        if it.get("row_type") not in ("line_item", "fee"):
+        if it.get("row_type") not in _SCOREABLE_ROW_TYPES:
             continue
 
         name = (it.get("raw_name") or "").strip()
@@ -666,10 +732,15 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
     # ── Phase 2: Per-row strict math validation ──
     # Tolerance: $0.01 — no rounding ambiguity
     line_items = [it for it in items
-                  if it.get("row_type") in ("line_item", "fee")
+                  if it.get("row_type") in _SCOREABLE_ROW_TYPES
                   and it.get("confidence_level") != "excluded"]
 
     for it in line_items:
+        # ── Credit/discount rows ──
+        if it.get("row_type") in ("credit", "discount"):
+            _trust_credit_or_discount_row(it, "sysco")
+            continue
+
         # ── Fee rows: validate with total > 0 only ──
         if it.get("row_type") == "fee":
             total = float(it.get("total", 0) or 0)
@@ -1003,12 +1074,18 @@ def _apply_pfg_trust_gate(extracted: dict) -> None:
     Trusts rows where:
       1. row_type == 'line_item' AND math validates AND all sources column_read AND no column errors
       2. row_type == 'fee' AND total > 0
+      3. row_type == 'credit' or 'discount' AND total != 0
     """
     items = extracted.get("items", [])
-    line_items = [it for it in items if it.get("row_type") in ("line_item", "fee")]
+    line_items = [it for it in items if it.get("row_type") in _SCOREABLE_ROW_TYPES]
 
     for it in line_items:
         if it.get("confidence_level") == "excluded":
+            continue
+
+        # ── Credit/discount rows ──
+        if it.get("row_type") in ("credit", "discount"):
+            _trust_credit_or_discount_row(it, "pfg")
             continue
 
         # ── Fee rows: trust if total > 0 ──
@@ -1124,12 +1201,18 @@ def _apply_usfoods_trust_gate(extracted: dict) -> None:
     Trusts rows where:
       1. row_type == 'line_item' AND math validates AND all sources column_read AND no column errors
       2. row_type == 'fee' AND total > 0
+      3. row_type == 'credit' or 'discount' AND total != 0
     """
     items = extracted.get("items", [])
-    line_items = [it for it in items if it.get("row_type") in ("line_item", "fee")]
+    line_items = [it for it in items if it.get("row_type") in _SCOREABLE_ROW_TYPES]
 
     for it in line_items:
         if it.get("confidence_level") == "excluded":
+            continue
+
+        # ── Credit/discount rows ──
+        if it.get("row_type") in ("credit", "discount"):
+            _trust_credit_or_discount_row(it, "usfoods")
             continue
 
         # ── Fee rows: trust if total > 0 ──
@@ -1262,7 +1345,7 @@ def _validate_usfoods_extraction(items: list) -> None:
         return
 
     for it in items:
-        if it.get("row_type") not in ("line_item", "fee", None):
+        if it.get("row_type") not in _SCOREABLE_ROW_TYPES and it.get("row_type") is not None:
             continue
 
         name = (it.get("raw_name") or "").strip()
@@ -1274,8 +1357,9 @@ def _validate_usfoods_extraction(items: list) -> None:
 
         # ── Fee row handling (BEFORE exclude patterns) ──
         # Fees like fuel surcharge should NOT be excluded as summary rows
+        # Do NOT override credit/discount classifications
         name_words = set(name_lower.split())
-        if name_words & _SERVICE_KW and len(name_words) <= 5:
+        if it.get("row_type") not in ("credit", "discount") and name_words & _SERVICE_KW and len(name_words) <= 5:
             it["row_type"] = "fee"
             if total > 0:
                 it["quantity"] = 1
@@ -1342,14 +1426,24 @@ def _validate_usfoods_extraction(items: list) -> None:
                 )
 
         # ── Math validation ($0.01 tolerance) ──
-        if qty > 0 and price > 0 and total > 0:
+        # Credit lines have negative totals: qty × price = |total|
+        abs_total = abs(total) if total != 0 else 0
+        is_credit = total < 0
+
+        if qty > 0 and price > 0 and abs_total > 0:
             computed = round(qty * price, 2)
-            diff = abs(computed - total)
+            diff = abs(computed - abs_total)
             it["valid_calc"] = diff <= 0.01
+            if is_credit:
+                it["_is_credit_line"] = True
             if not it["valid_calc"]:
                 it.setdefault("validation_errors", []).append(
                     f"usfoods_math: {qty}x{price}={computed} != {total}"
                 )
+        elif total == 0 and qty == 0 and price == 0:
+            # Completely empty row — skip
+            it["valid_calc"] = False
+            it.setdefault("validation_errors", []).append("usfoods_missing: qty,price,total")
         else:
             it["valid_calc"] = False
             missing = []
@@ -1357,7 +1451,7 @@ def _validate_usfoods_extraction(items: list) -> None:
                 missing.append("qty")
             if price <= 0:
                 missing.append("price")
-            if total <= 0:
+            if abs_total <= 0:
                 missing.append("total")
             it.setdefault("validation_errors", []).append(
                 f"usfoods_missing: {','.join(missing)}"
@@ -2300,12 +2394,12 @@ Rules:
 
                 # ── System-level numeric source validation ──
                 scoreable_items = [it for it in extracted["items"]
-                                   if it.get("row_type") in ("line_item", "fee")]
+                                   if it.get("row_type") in _SCOREABLE_ROW_TYPES]
                 _validate_numeric_field_sources(scoreable_items)
 
                 # Non-line-item rows: mark as excluded
                 for it in extracted["items"]:
-                    if it.get("row_type") not in ("line_item", "fee"):
+                    if it.get("row_type") not in _SCOREABLE_ROW_TYPES:
                         it["confidence_level"] = "excluded"
                         it["needs_review"] = False
                         it["review_reason"] = f"Row type '{it.get('row_type')}' excluded from trust evaluation"
@@ -2318,7 +2412,7 @@ Rules:
                     _validate_pfg_extraction(extracted["items"])
                     _apply_pfg_trust_gate(extracted)
                     for it in extracted.get("items", []):
-                        if it.get("row_type") in ("line_item", "fee"):
+                        if it.get("row_type") in _SCOREABLE_ROW_TYPES:
                             it["vendor_status"] = "controlled_operational"
                             it["extraction_source"] = "gpt_vision_pfg"
 
@@ -2327,7 +2421,7 @@ Rules:
                     _validate_usfoods_extraction(extracted["items"])
                     _apply_usfoods_trust_gate(extracted)
                     for it in extracted.get("items", []):
-                        if it.get("row_type") in ("line_item", "fee"):
+                        if it.get("row_type") in _SCOREABLE_ROW_TYPES:
                             it["vendor_status"] = "controlled_operational"
                             it["extraction_source"] = "gpt_vision_usfoods"
 
@@ -2336,7 +2430,7 @@ Rules:
                     _validate_sysco_extraction(extracted["items"])
                     await _apply_sysco_math_first_gate(extracted)
                     for it in extracted.get("items", []):
-                        if it.get("row_type") in ("line_item", "fee"):
+                        if it.get("row_type") in _SCOREABLE_ROW_TYPES:
                             it["vendor_status"] = "controlled_operational"
                             it["extraction_source"] = "gpt_vision_strict"
 
@@ -2344,7 +2438,7 @@ Rules:
                     # ── ALL OTHER VENDORS: Vendor Logic Pending ──
                     # Run math validation but do NOT grant Trusted status
                     for it in extracted.get("items", []):
-                        if it.get("row_type") in ("line_item", "fee"):
+                        if it.get("row_type") in _SCOREABLE_ROW_TYPES:
                             it["confidence_level"] = "vendor_logic_pending"
                             it["needs_review"] = True
                             vendor_label = detected_vendor if detected_vendor.upper() != "UNKNOWN" else "Unknown vendor"
@@ -2365,10 +2459,14 @@ Rules:
 
                     # Build gates summary
                     gates = {}
-                    if rt in ("line_item", "fee"):
+                    if rt in _SCOREABLE_ROW_TYPES:
                         if rt == "fee":
                             gates["fee_total_present"] = total > 0
                             gates["fee_math_rule"] = "total > 0 (no qty×price required)"
+                        elif rt in ("credit", "discount"):
+                            gates["adjustment_total_present"] = total != 0
+                            gates["adjustment_math_rule"] = "total != 0 (preserved sign)"
+                            gates["is_negative"] = total < 0
                         else:
                             gates["qty_source"] = it.get("qty_source", "?")
                             gates["price_source"] = it.get("price_source", "?")
@@ -2400,7 +2498,7 @@ Rules:
 
                 # ── Subtotal validation (all vendors) ──
                 line_items_for_sum = [it for it in extracted.get("items", [])
-                                      if it.get("row_type") in ("line_item", "fee")]
+                                      if it.get("row_type") in _SCOREABLE_ROW_TYPES]
                 items_sum = round(sum(float(it.get("total", 0) or 0) for it in line_items_for_sum), 2)
                 if not extracted.get("subtotal") and items_sum > 0:
                     extracted["subtotal"] = items_sum
