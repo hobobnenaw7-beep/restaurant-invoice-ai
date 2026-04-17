@@ -23,8 +23,9 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 │   ├── services/
 │   │   ├── usfoods_structural.py (2-phase structural extraction)
 │   │   ├── unit_normalizer.py, llm_rate_limiter.py, audit.py, approval.py
-│   ├── migrations/
-│   │   ├── backfill_ownership.py (Field renaming + backfill)
+│   ├── tests/
+│   │   ├── stress_test_294.py (Batch execution script)
+│   │   ├── stress_test_294_report.md (Final report)
 ├── frontend/src/
 │   ├── App.js (PermRoute, SmartLanding, NoAccessPage — permission-aware routing)
 │   ├── components/Layout.js (Sidebar filters by visibility permissions)
@@ -43,17 +44,17 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 ### Role Matrix (66/66 tests passed)
 | Permission | Manager | Accountant | Cashier | Staff |
 |-----------|---------|------------|---------|-------|
-| view_dashboard | ✅ | ✅ | ✅ | ✅ |
-| view_sales | ✅ | ✅ | ✅ | ❌ |
-| view_expenses | ✅ | ✅ | ❌ | ❌ |
-| view_reports | ✅ | ✅ | ❌ | ❌ |
-| view_records | ✅ | ✅ | ✅ | ✅ |
-| view_vendors | ✅ | ✅ | ✅ | ❌ |
-| view_items | ✅ | ✅ | ✅ | ❌ |
-| view_users | ✅ | ❌ | ❌ | ❌ |
+| view_dashboard | Y | Y | Y | Y |
+| view_sales | Y | Y | Y | N |
+| view_expenses | Y | Y | N | N |
+| view_reports | Y | Y | N | N |
+| view_records | Y | Y | Y | Y |
+| view_vendors | Y | Y | Y | N |
+| view_items | Y | Y | Y | N |
+| view_users | Y | N | N | N |
 | data_scope | all | all | own | own |
-| can_delete_sales | ✅ | ❌ | ❌ | ❌ |
-| can_delete_expenses | ✅ | ❌ | ❌ | ❌ |
+| can_delete_sales | Y | N | N | N |
+| can_delete_expenses | Y | N | N | N |
 
 ### Enforcement
 - Backend: `require_permission()` + `apply_scope_filter()` + `apply_soft_delete_filter()`
@@ -61,12 +62,34 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 - Soft-delete preserves audit trail (deleted_at, deleted_by_user_id)
 - Ownership fields: created_by_user_id, created_by_name, source_type, created_at
 
-## Extraction Pipeline Trust Rates
-| Vendor | Clean Input | Phone Photo | False Trusts |
-|--------|------------|-------------|--------------|
-| Sysco | 100% | 100% | 0 |
-| PFG | 100% | 100% | 0 |
-| US Foods | 100% | Variable | 0 |
+## Extraction Pipeline — STRESS TESTED
+
+### 294-Image Stress Test Results (April 17, 2026)
+| Metric | Value |
+|--------|-------|
+| Total images | 294 |
+| Success | 152 (51.7%) |
+| Partial | 109 (37.1%) |
+| Failed | 33 (11.2%) |
+| False trusts | **0** |
+| Runtime | 91.9 min (18.8s avg) |
+
+### Core Vendor Performance
+| Vendor | Images | Success Rate | False Trusts |
+|--------|--------|-------------|--------------|
+| Sysco | 148 | 99.3% | 0 |
+| US Foods | 78 | 84.6% | 0 |
+| PFG | 25 | 96.0% | 0 |
+| **Core Total** | **251** | **94.4%** | **0** |
+
+### Dashboard Performance at Scale
+- All Months: 149.6ms avg (1,270+ records)
+- Baseline: ~114ms
+- Verdict: +31%, acceptable
+
+### Audit Coverage
+- 100% of all records tagged with user_id, source_type, created_at
+- 0 missing audit fields across 1,270 receipts and 8,617 items
 
 ## Completed Work
 - Permissions + Accountability model (21 permissions, 4 roles, data scope) — APPROVED
@@ -74,19 +97,22 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 - Route-level permission enforcement (backend + frontend) — APPROVED
 - Permission-aware landing page (no blank screens) — APPROVED
 - Secured Reset All Data (manager-only, password+RESET confirmation) — APPROVED
+- Forgot Password flow (Manager-only, 15-min token, rate limited) — APPROVED
 - Consistent table layouts (Expenses/Sales/Records with Created By, Source, Status)
 - US Foods 2-phase structural extraction
 - Multi-vendor trust gates (zero false trusts)
 - Image preprocessing + consensus mechanism
+- Credit/discount row handling (negative totals preserved)
+- **294-image stress test — COMPLETE** (Phase 3 finalized)
 
 ## Upcoming Tasks
 ### P0
-- Obtain real US Foods PDF for extraction validation
-- Test multi-user workflows with production data
+- Widen US Foods structural parser trigger to capture all vendor name variants
+- Add minimum image quality gate (reject <100KB with warning)
 
 ### P1
-- Scale stress test to 294 images
-- Re-enable Product Memory layer
+- Re-enable Product Memory Layer (extraction baseline now proven)
+- Test multi-user workflows with production data
 
 ### P2
 - Smart Market Insights 3-panel expansion
