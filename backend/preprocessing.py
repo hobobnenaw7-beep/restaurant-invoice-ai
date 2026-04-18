@@ -155,6 +155,125 @@ def get_last_preprocess_meta() -> dict:
     return _last_preprocess_meta.copy()
 
 
+# ---------------------------------------------------------------------------
+# Dark Image Detection & Aggressive Enhancement
+# ---------------------------------------------------------------------------
+# Targeted for low-quality phone photos where standard preprocessing is
+# insufficient. Triggered ONLY when Phase 1 extraction returns 0 items.
+
+def assess_image_quality(b64_image: str) -> dict:
+    """
+    Assess image quality from base64. Returns a dict with metrics
+    used to decide whether aggressive enhancement is warranted.
+
+    Thresholds calibrated from the US Foods stress test:
+      - Good scans/PDFs: mean > 220, p95 > 240
+      - Dark phone photos: mean 140-180, p95 < 210
+      - Very dark: mean < 140
+    """
+    raw = base64.b64decode(b64_image)
+    img = Image.open(io.BytesIO(raw)).convert("L")
+    arr = np.array(img)
+    h, w = arr.shape
+
+    mean_brightness = float(np.mean(arr))
+    std_brightness = float(np.std(arr))
+    p5 = float(np.percentile(arr, 5))
+    p95 = float(np.percentile(arr, 95))
+    dynamic_range = p95 - p5
+
+    # Center region (invoice table area) may be darker than borders
+    center = arr[h // 4 : 3 * h // 4, w // 4 : 3 * w // 4]
+    center_mean = float(np.mean(center))
+
+    is_dark = mean_brightness < 180 and p95 < 215
+    is_low_contrast = dynamic_range < 160 and std_brightness < 50
+
+    return {
+        "mean_brightness": round(mean_brightness, 1),
+        "std_brightness": round(std_brightness, 1),
+        "p5": round(p5, 1),
+        "p95": round(p95, 1),
+        "dynamic_range": round(dynamic_range, 1),
+        "center_mean": round(center_mean, 1),
+        "is_dark": is_dark,
+        "is_low_contrast": is_low_contrast,
+        "needs_enhancement": is_dark or is_low_contrast,
+        "width": w,
+        "height": h,
+    }
+
+
+def enhance_dark_image(b64_image: str) -> str:
+    """
+    Apply aggressive enhancement to a dark/low-contrast image.
+    Returns a new base64-encoded PNG.
+
+    Steps:
+      1. Gamma correction to lift shadows
+      2. Aggressive CLAHE on luminance channel
+      3. Brightness normalization to target mean ~200
+      4. Local contrast boost for text readability
+      5. Light sharpening
+
+    Only call this when assess_image_quality().needs_enhancement is True.
+    """
+    raw = base64.b64decode(b64_image)
+    img = Image.open(io.BytesIO(raw))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    arr = np.array(img)
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    mean_before = float(np.mean(gray))
+
+    # Step 1: Gamma correction (lift shadows without blowing highlights)
+    # Gamma < 1 brightens; calibrate based on current brightness
+    if mean_before < 130:
+        gamma = 0.55
+    elif mean_before < 160:
+        gamma = 0.65
+    else:
+        gamma = 0.75
+    inv_gamma = 1.0 / gamma
+    lut = np.array([((i / 255.0) ** inv_gamma) * 255 for i in range(256)]).astype(np.uint8)
+    arr = cv2.LUT(arr, lut)
+
+    # Step 2: Aggressive CLAHE on L channel (LAB color space)
+    lab = cv2.cvtColor(arr, cv2.COLOR_RGB2LAB)
+    l_channel = lab[:, :, 0]
+    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(12, 12))
+    lab[:, :, 0] = clahe.apply(l_channel)
+    arr = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+
+    # Step 3: Brightness normalization — push mean toward 200
+    gray_after = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    mean_after = float(np.mean(gray_after))
+    target_mean = 200.0
+    if mean_after < target_mean:
+        alpha = min(target_mean / max(mean_after, 1.0), 1.6)
+        beta = (target_mean - mean_after * alpha) * 0.5
+        beta = max(0, min(beta, 50))
+        arr = cv2.convertScaleAbs(arr, alpha=alpha, beta=beta)
+
+    # Step 4: Light sharpening for text edges
+    pil_img = Image.fromarray(arr)
+    pil_img = ImageEnhance.Sharpness(pil_img).enhance(1.4)
+
+    # Encode
+    buf = io.BytesIO()
+    pil_img.save(buf, format="PNG", optimize=True)
+    enhanced_b64 = base64.b64encode(buf.getvalue()).decode()
+
+    gray_final = np.array(pil_img.convert("L"))
+    mean_final = float(np.mean(gray_final))
+    logger.info(
+        f"Dark image enhanced: brightness {mean_before:.0f} → {mean_final:.0f} "
+        f"(gamma={gamma}, CLAHE=4.0/12x12)"
+    )
+    return enhanced_b64
+
+
 def _save_artifact(image_bytes: bytes, artifact_id: str, stage: str, size: tuple) -> None:
     """Save a before/after artifact image to uploads dir."""
     try:

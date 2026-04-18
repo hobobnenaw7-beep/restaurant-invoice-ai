@@ -10,46 +10,20 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 │   ├── core/
 │   │   ├── auth.py, permissions.py, models.py, database.py
 │   ├── routes/
-│   │   ├── auth.py, sales.py, other_expenses.py, records.py
-│   │   ├── upload.py (Extraction pipeline with multi-signal routing + correction apply)
+│   │   ├── upload.py (Extraction pipeline, multi-signal routing, correction apply, hallucination filter)
 │   │   ├── purchases.py (Correction save on explicit user edit)
 │   │   ├── correction_memory.py (CRUD for correction management)
-│   │   ├── settings.py, profit_dashboard.py, password_reset.py
+│   │   ├── auth.py, sales.py, other_expenses.py, records.py, settings.py, profit_dashboard.py
 │   ├── services/
 │   │   ├── vendor_detection.py (Multi-signal detection + confidence routing)
 │   │   ├── correction_memory.py (v2: strong key hierarchy + provenance)
-│   │   ├── usfoods_structural.py (2-phase structural extraction)
+│   │   ├── usfoods_structural.py (2-phase extraction + dark image retry)
 │   │   ├── product_memory.py (In-memory cross-row validation)
 │   │   ├── normalization.py, unit_normalizer.py, llm_rate_limiter.py
+│   ├── preprocessing.py (Image processing + dark image detection/enhancement)
 ├── frontend/src/
 │   ├── App.js, components/, contexts/, pages/
-│   ├── pages/CorrectionMemoryPage.js (Manage corrections UI)
 ```
-
-## Correction Memory v2 — Key Structure
-
-### Primary Key: `{CANONICAL_VENDOR}:{PRODUCT_CODE}`
-- Confidence: **1.0** (strong match)
-- Example: `SYSCO:5551234`
-- Requires: vendor identified + 4+ digit product code
-
-### Secondary Key: `{CANONICAL_VENDOR}:{SORTED_NORMALIZED_NAME}:{NORMALIZED_PACK}`
-- Confidence: **0.75** (lower, flagged as secondary)
-- Example: `SYSCO:1620 IQF SHRIMP:2/5LB`
-- Requires: vendor identified + raw name
-
-### Match Priority
-1. Primary (product code) wins always
-2. Secondary (name + pack) only if no primary match
-3. First match per tier wins (no loose/fuzzy matching)
-
-### Safeguards
-- raw_name NEVER overwritten
-- Corrections applied as additive display layer only
-- Secondary matches flagged with lower confidence
-- Full provenance on every applied correction
-- Only explicit user saves create memory entries
-- No destructive updates to historical records
 
 ## Completed Work
 - Permissions + Accountability model (21 perms, 4 roles)
@@ -57,21 +31,27 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 - Multi-vendor trust gates (zero false trusts)
 - 294-image stress test — COMPLETE
 - Multi-signal vendor detection + confidence routing — COMPLETE
-- **Correction Memory v2 (strong key hierarchy + provenance) — COMPLETE**
+- Correction Memory v2 (strong key hierarchy + provenance) — COMPLETE
+- **Dark image preprocessing layer — COMPLETE**
+  - Quality assessment on original images (before standard preprocessing)
+  - Aggressive enhancement: gamma + CLAHE + brightness normalization
+  - Retry-with-enhancement in structural parser
+  - Hallucination filter exemption for structural items with product codes
+  - Result: 0→138 items recovered (+90 net), zero false trusts
 
 ## Upcoming Tasks
 ### P0
-- Image preprocessing for dark US Foods photos
-- Image quality gate for low-entropy images
+- Production correction workflow testing with real user edits
 
 ### P1
-- Test multi-user correction workflows with production data
 - Re-enable Product Memory layer integration
+- Test multi-user workflows with production data
 
 ### P2
 - Smart Market Insights 3-panel expansion
 - AI Chat Assistant polish
 - Trash/Restore UI for soft-deleted records
+- OCR/Image Upload for Salaries tab
 
 ## Test Credentials
 - Manager: demo@test.com / testpassword

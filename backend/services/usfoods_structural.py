@@ -114,6 +114,7 @@ async def extract_usfoods_structural(
     images_b64: list[str],
     llm_key: str,
     rate_limited_llm_call,
+    original_images_b64: list[str] = None,
 ) -> dict:
     """
     2-phase structural extraction for US Foods invoices.
@@ -130,8 +131,17 @@ async def extract_usfoods_structural(
             subtotal, tax, total.
     """
     from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+    from preprocessing import assess_image_quality, enhance_dark_image
 
     file_contents = [ImageContent(image_base64=b64) for b64 in images_b64]
+
+    # ── Assess ORIGINAL image quality (before standard preprocessing) ──
+    check_b64 = (original_images_b64 or images_b64)[0]
+    quality = assess_image_quality(check_b64)
+    logger.info(
+        f"US Foods image quality (original): mean={quality['mean_brightness']}, "
+        f"dark={quality['is_dark']}, low_contrast={quality['is_low_contrast']}"
+    )
 
     # ── Phase 1: Numeric Grid ──
     logger.info("US Foods structural: Phase 1 — numeric grid extraction")
@@ -147,7 +157,79 @@ async def extract_usfoods_structural(
         label="usfoods_phase1_numbers",
     )
     numeric_data = _parse_phase1(phase1_response)
-    logger.info(f"US Foods Phase 1: {len(numeric_data.get('rows', []))} numeric rows")
+    phase1_rows = len(numeric_data.get("rows", []))
+    logger.info(f"US Foods Phase 1: {phase1_rows} numeric rows")
+
+    # ── Detect all-zero prices (GPT read rows but couldn't read numbers) ──
+    has_zero_prices = False
+    if phase1_rows > 0:
+        zero_count = sum(
+            1 for r in numeric_data["rows"]
+            if r.get("unit_price", 0) == 0 and r.get("ext_price", 0) == 0
+        )
+        if zero_count == phase1_rows:
+            has_zero_prices = True
+            logger.info(
+                f"US Foods Phase 1: all {phase1_rows} rows have zero prices"
+            )
+
+    # ── Retry with enhancement if dark original AND (0 rows OR all-zero prices) ──
+    enhancement_applied = False
+    if (phase1_rows == 0 or has_zero_prices) and quality["needs_enhancement"]:
+        logger.info(
+            "US Foods: dark/low-contrast original — enhancing and retrying Phase 1"
+        )
+        enhanced_b64 = [enhance_dark_image(b64) for b64 in (original_images_b64 or images_b64)]
+        enhanced_contents = [ImageContent(image_base64=b64) for b64 in enhanced_b64]
+        enhancement_applied = True
+
+        retry_chat = LlmChat(
+            api_key=llm_key,
+            session_id=f"usfoods-phase1-enh-{uuid.uuid4()}",
+            system_message="You read invoice numbers precisely. Return valid JSON only."
+        ).with_model("openai", "gpt-5.2")
+        retry_response = await rate_limited_llm_call(
+            retry_chat,
+            UserMessage(text=PHASE1_PROMPT, file_contents=enhanced_contents),
+            label="usfoods_phase1_enhanced",
+        )
+        retry_data = _parse_phase1(retry_response)
+        retry_rows = len(retry_data.get("rows", []))
+        retry_zero = sum(
+            1 for r in retry_data.get("rows", [])
+            if r.get("unit_price", 0) == 0 and r.get("ext_price", 0) == 0
+        )
+        retry_with_prices = retry_rows - retry_zero
+        logger.info(
+            f"US Foods Phase 1 (enhanced): {retry_rows} rows, "
+            f"{retry_with_prices} with prices"
+        )
+        if retry_with_prices > 0 and (has_zero_prices or phase1_rows == 0):
+            numeric_data = retry_data
+            phase1_rows = retry_rows
+            file_contents = enhanced_contents
+            logger.info("US Foods: enhanced extraction improved — using enhanced")
+        elif retry_rows > phase1_rows:
+            numeric_data = retry_data
+            phase1_rows = retry_rows
+            file_contents = enhanced_contents
+    elif phase1_rows == 0 and not quality["needs_enhancement"]:
+            retry_chat = LlmChat(
+                api_key=llm_key,
+                session_id=f"usfoods-phase1-retry-{uuid.uuid4()}",
+                system_message="You read invoice numbers precisely. Return valid JSON only."
+            ).with_model("openai", "gpt-5.2")
+            retry_response = await rate_limited_llm_call(
+                retry_chat,
+                UserMessage(text=PHASE1_PROMPT, file_contents=file_contents),
+                label="usfoods_phase1_retry",
+            )
+            retry_data = _parse_phase1(retry_response)
+            retry_rows = len(retry_data.get("rows", []))
+            logger.info(f"US Foods Phase 1 retry: {retry_rows} numeric rows")
+            if retry_rows > 0:
+                numeric_data = retry_data
+                phase1_rows = retry_rows
 
     # ── Phase 2: Descriptions ──
     logger.info("US Foods structural: Phase 2 — description extraction")
@@ -167,6 +249,9 @@ async def extract_usfoods_structural(
 
     # ── Phase 3: Deterministic Assembly ──
     assembled = _assemble(numeric_data, descriptions)
+    if enhancement_applied:
+        assembled["_enhancement_applied"] = True
+    assembled["_image_quality"] = quality
     logger.info(f"US Foods assembly: {len(assembled.get('items', []))} items")
     return assembled
 

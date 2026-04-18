@@ -1656,6 +1656,7 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
         from preprocessing import preprocess_image, get_last_preprocess_meta
 
         images_b64 = []
+        original_images_b64 = []  # Pre-preprocessing originals for quality assessment
         first_content = None
         first_fname = ""
         first_mime = ""
@@ -1678,12 +1679,14 @@ async def extract_document(files: List[UploadFile] = File(None), file: UploadFil
                     page = pdf_doc[page_num]
                     pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
                     img_bytes = pix.tobytes("png")
+                    original_images_b64.append(base64.b64encode(img_bytes).decode())
                     artifact_id = str(uuid.uuid4())[:8]
                     img_bytes = preprocess_image(img_bytes, save_artifacts=True, artifact_id=artifact_id)
                     preprocess_evidence.append(get_last_preprocess_meta())
                     images_b64.append(base64.b64encode(img_bytes).decode())
                 pdf_doc.close()
             else:
+                original_images_b64.append(base64.b64encode(content).decode())
                 artifact_id = str(uuid.uuid4())[:8]
                 processed = preprocess_image(content, save_artifacts=True, artifact_id=artifact_id)
                 preprocess_evidence.append(get_last_preprocess_meta())
@@ -2120,6 +2123,7 @@ Rules:
                 images_b64=images_b64,
                 llm_key=LLM_KEY,
                 rate_limited_llm_call=rate_limited_llm_call,
+                original_images_b64=original_images_b64,
             )
             response = json.dumps(extracted)  # for raw_ocr_text storage
             logger.info(
@@ -2420,23 +2424,38 @@ Rules:
                 # ── Hallucination filter ──
                 # Multi-page invoices: GPT may produce items from pages not in the image.
                 # Signature: name/item_code present but price=0 AND total=0.
-                # These are not extraction failures — the items simply aren't visible.
+                # EXCEPTION: Items from the structural path that have a product_code
+                # are real line items where GPT couldn't read the numbers — keep them
+                # as needs_review rather than deleting them.
                 pre_filter_count = len(extracted["items"])
                 filtered_items = []
                 hallucinated_count = 0
+                preserved_unreadable = 0
                 for it in extracted["items"]:
                     if it.get("row_type") in ("line_item",):
                         price = float(it.get("unit_price", 0) or 0)
                         total = float(it.get("total", 0) or 0)
                         has_name = bool((it.get("raw_name") or "").strip())
                         if has_name and price == 0 and total == 0:
+                            # Structural path items with product_code are real items
+                            has_product_code = bool((it.get("item_code") or "").strip())
+                            if _is_usfoods and has_product_code:
+                                # Keep the item but mark as needs_review
+                                it["confidence_level"] = "needs_review"
+                                it["needs_review"] = True
+                                it["review_reason"] = "Structural extraction: product code present but price/total unreadable"
+                                filtered_items.append(it)
+                                preserved_unreadable += 1
+                                continue
                             hallucinated_count += 1
                             continue  # Drop this row
                     filtered_items.append(it)
-                if hallucinated_count > 0:
+                if hallucinated_count > 0 or preserved_unreadable > 0:
                     logger.info(
                         f"Hallucination filter: removed {hallucinated_count}/{pre_filter_count} items "
-                        f"with name but price=0 AND total=0 (likely from unseen pages)"
+                        f"with name but price=0 AND total=0"
+                        + (f", preserved {preserved_unreadable} structural items with product_code"
+                           if preserved_unreadable > 0 else "")
                     )
                 extracted["items"] = filtered_items
 
