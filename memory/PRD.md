@@ -7,23 +7,39 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 ```
 /app/
 ├── backend/
-│   ├── core/
-│   │   ├── auth.py, permissions.py, models.py, database.py
+│   ├── core/ (auth, permissions, models, database)
 │   ├── routes/
-│   │   ├── upload.py (Extraction pipeline, multi-signal routing, correction apply, hallucination filter)
-│   │   ├── purchases.py (Correction save on explicit user edit)
+│   │   ├── upload.py (Extraction pipeline, multi-signal routing, correction apply)
+│   │   ├── purchases.py (CRUD + inline PATCH edit + verify + correction memory hook)
 │   │   ├── correction_memory.py (CRUD for correction management)
-│   │   ├── auth.py, sales.py, other_expenses.py, records.py, settings.py, profit_dashboard.py
+│   │   ├── auth.py, sales.py, other_expenses.py, records.py, settings.py
 │   ├── services/
 │   │   ├── vendor_detection.py (Multi-signal detection + confidence routing)
 │   │   ├── correction_memory.py (v2: strong key hierarchy + provenance)
 │   │   ├── usfoods_structural.py (2-phase extraction + dark image retry)
-│   │   ├── product_memory.py (In-memory cross-row validation)
-│   │   ├── normalization.py, unit_normalizer.py, llm_rate_limiter.py
 │   ├── preprocessing.py (Image processing + dark image detection/enhancement)
 ├── frontend/src/
-│   ├── App.js, components/, contexts/, pages/
+│   ├── components/
+│   │   ├── InlineReviewPanel.js (Inline edit cells + Mark Verified)
+│   │   ├── InvoiceReviewDialog.js (Full review dialog with audit trail)
+│   ├── pages/ExpensesPage.js (Needs Review filter + InlineReviewPanel integration)
 ```
+
+## Manual Review Workflow — COMPLETE
+### Flow
+1. User selects "Needs Review" filter on Expenses → InlineReviewPanel appears
+2. Click any Price/Qty/Total cell → inline input opens
+3. Enter/blur saves via PATCH → item, totals, review_status recalculated
+4. Navigate between invoices with < > arrows
+5. When all items resolved → "Mark Verified" button appears
+6. Click Mark Verified → sets review_status='verified', approval_status='approved'
+
+### Memory Hook Rules
+- **Name corrections** → saved to Correction Memory (primary/secondary key)
+- **Price/quantity edits** → audit trail ONLY (not saved to correction memory)
+
+### Audit Trail
+Every PATCH edit records: edited_by, edited_at, field, previous_value, new_value, validation_delta
 
 ## Completed Work
 - Permissions + Accountability model (21 perms, 4 roles)
@@ -32,16 +48,13 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 - 294-image stress test — COMPLETE
 - Multi-signal vendor detection + confidence routing — COMPLETE
 - Correction Memory v2 (strong key hierarchy + provenance) — COMPLETE
-- **Dark image preprocessing layer — COMPLETE**
-  - Quality assessment on original images (before standard preprocessing)
-  - Aggressive enhancement: gamma + CLAHE + brightness normalization
-  - Retry-with-enhancement in structural parser
-  - Hallucination filter exemption for structural items with product codes
-  - Result: 0→138 items recovered (+90 net), zero false trusts
+- Dark image preprocessing layer — COMPLETE
+- **Manual Review Workflow (inline edit + verify + audit) — COMPLETE**
 
 ## Upcoming Tasks
 ### P0
-- Production correction workflow testing with real user edits
+- Production testing of correction workflows with real invoice data
+- End-to-end test: upload dark image → review → inline edit → verify cycle
 
 ### P1
 - Re-enable Product Memory layer integration
