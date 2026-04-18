@@ -72,8 +72,16 @@ def classify_items_by_section(items: list, raw_text: str = "") -> list:
     section_assignments = _detect_sections(raw_text) if raw_text else {}
 
     for idx, item in enumerate(items):
+        raw_name = (item.get("raw_name") or item.get("description") or "")
+        item_code = (item.get("item_code") or "")
+
         # PROTECTION: Never overwrite manual assignments
         if item.get("category_source") == "manual":
+            logger.info(
+                f"Storage classifier: SKIP item #{idx} '{raw_name[:40]}' "
+                f"(code={item_code}) — category_source=manual, "
+                f"keeping storage_category='{item.get('storage_category', '')}'"
+            )
             continue
 
         category = None
@@ -84,15 +92,20 @@ def classify_items_by_section(items: list, raw_text: str = "") -> list:
 
         # Priority 2: Product name keyword match
         if not category:
-            raw_name = (item.get("raw_name") or item.get("description") or "").upper()
-            category = _classify_by_keywords(raw_name)
+            category = _classify_by_keywords(raw_name.upper())
 
         if category:
+            logger.debug(
+                f"Storage classifier: item #{idx} '{raw_name[:40]}' → {category} (auto)"
+            )
             item["storage_category"] = category
             item["category_source"] = "auto"
         else:
             # Cannot confidently classify → mark as uncategorized
             if not item.get("storage_category"):
+                logger.debug(
+                    f"Storage classifier: item #{idx} '{raw_name[:40]}' → uncategorized (no confident match)"
+                )
                 item["storage_category"] = "uncategorized"
                 item["category_source"] = "auto"
 
@@ -205,6 +218,10 @@ async def lookup_manual_category_async(
         {"_id": 0, "storage_category": 1, "category_source": 1},
     )
     if existing:
+        logger.info(
+            f"Storage lookup: product_code={product_code} has manual category "
+            f"'{existing['storage_category']}' in extracted_items — reusing"
+        )
         return {
             "storage_category": existing["storage_category"],
             "category_source": "manual",
@@ -220,6 +237,10 @@ async def lookup_manual_category_async(
         {"_id": 0, "storage_category": 1, "category_source": 1},
     )
     if canon:
+        logger.info(
+            f"Storage lookup: product_code={product_code} has manual category "
+            f"'{canon['storage_category']}' in canonical_items — reusing"
+        )
         return {
             "storage_category": canon["storage_category"],
             "category_source": "manual",
