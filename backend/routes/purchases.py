@@ -210,13 +210,11 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
             enrich_item_with_pack_size(item)
             normalize_item(item)
             validate_and_score_item(item)
-            # Detect edits and save corrections
-            if supplier_id and idx < len(old_items):
+            # Detect edits and save corrections (explicit save only)
+            if idx < len(old_items):
                 old_item = old_items_by_idx.get(idx, {})
                 old_raw = old_item.get("raw_name", "").strip()
                 new_raw = item.get("raw_name", "").strip()
-                old_norm = old_item.get("norm", {})
-                old_key = old_norm.get("strict_match_key", "")
                 new_norm = item.get("norm", {})
 
                 # Detect field-level changes
@@ -236,7 +234,7 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
 
                 has_changes = name_changed or pack_changed or price_changed or total_changed
 
-                if has_changes and old_key:
+                if has_changes:
                     corrected_specs = dict(new_norm.get("specs") or {})
                     if pack_changed:
                         corrected_specs["pack_size"] = new_pack
@@ -245,14 +243,20 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
                     if total_changed:
                         corrected_specs["total"] = new_total
 
+                    vendor_name = old.get("supplier_name") or old.get("detected_vendor") or ""
+                    item_code = (item.get("item_code") or old_item.get("item_code") or "").strip()
+
                     await save_correction(
                         user_id=user["id"],
+                        user_name=user.get("name", ""),
                         restaurant_id=rid,
-                        supplier_id=supplier_id,
+                        canonical_vendor=vendor_name,
                         original_raw_name=old_raw,
-                        normalized_key=old_key,
                         corrected_name=new_raw if name_changed else old_raw,
+                        product_code=item_code,
+                        pack_size=new_pack or old_pack,
                         corrected_specs=corrected_specs,
+                        supplier_id=supplier_id,
                     )
         validate_purchase_items(update_data["items"])
         update_data["review_status"] = compute_review_status(update_data["items"])
@@ -374,6 +378,36 @@ async def patch_purchase_item(pid: str, item_index: int, updates: dict, user=Dep
             "$push": {"edit_history": edit_entry},
         },
     )
+
+    # Save correction to memory (explicit save via PATCH = user confirmed)
+    if changes:
+        from services.correction_memory import save_correction
+        old_raw = old_item.get("raw_name", "").strip()
+        new_raw = updated_item.get("raw_name", "").strip()
+        name_changed = "raw_name" in changes
+        vendor_name = purchase.get("supplier_name") or purchase.get("detected_vendor") or ""
+        item_code = (updated_item.get("item_code") or old_item.get("item_code") or "").strip()
+        pack = (updated_item.get("pack_size") or updated_item.get("pack_size_raw") or "").strip()
+
+        corrected_specs = {}
+        if "unit_price" in changes:
+            corrected_specs["unit_price"] = changes["unit_price"]["new"]
+        if "total" in changes:
+            corrected_specs["total"] = changes["total"]["new"]
+        if "pack_size" in changes:
+            corrected_specs["pack_size"] = changes["pack_size"]["new"]
+
+        await save_correction(
+            user_id=user["id"],
+            user_name=user.get("name", ""),
+            restaurant_id=user["restaurant_id"],
+            canonical_vendor=vendor_name,
+            original_raw_name=old_raw,
+            corrected_name=new_raw if name_changed else old_raw,
+            product_code=item_code,
+            pack_size=pack,
+            corrected_specs=corrected_specs if corrected_specs else None,
+        )
 
     return {
         "item": {k: v for k, v in updated_item.items() if k != "_id"},

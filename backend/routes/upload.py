@@ -2727,11 +2727,13 @@ Rules:
             from preprocessing import validate_purchase_items
             validate_purchase_items(extracted["items"])
 
-        # Apply correction memory (supplier-scoped, strict_match_key only)
+        # Apply correction memory (vendor-scoped, strong key hierarchy)
         if document_type == "purchase_invoice" and isinstance(extracted.get("items"), list):
             from services.correction_memory import apply_corrections
+            # Use canonical vendor from routing for strong matching
+            correction_vendor = detected_vendor or ""
             supplier_id_for_correction = ""
-            detected_name = (detected_vendor or "").strip()
+            detected_name = correction_vendor.strip()
             if detected_name and detected_name.upper() != "UNKNOWN":
                 sup = await db.suppliers.find_one(
                     {"restaurant_id": rid, "name": {"$regex": f".*{re.escape(detected_name[:20])}.*", "$options": "i"}},
@@ -2739,8 +2741,12 @@ Rules:
                 )
                 if sup:
                     supplier_id_for_correction = sup["id"]
-            if supplier_id_for_correction:
-                await apply_corrections(extracted["items"], rid, supplier_id_for_correction)
+            if correction_vendor:
+                await apply_corrections(
+                    extracted["items"], rid,
+                    canonical_vendor=correction_vendor,
+                    supplier_id=supplier_id_for_correction,
+                )
 
         result = {
             "extracted_data": extracted,
