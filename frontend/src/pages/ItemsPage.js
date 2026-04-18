@@ -352,6 +352,7 @@ export default function ItemsPage() {
             <TabsTrigger value="frozen" className="text-xs px-3 gap-1" data-testid="filter-frozen"><Snowflake className="w-3 h-3" />Frozen</TabsTrigger>
             <TabsTrigger value="chilled" className="text-xs px-3 gap-1" data-testid="filter-chilled"><Thermometer className="w-3 h-3" />Chilled</TabsTrigger>
             <TabsTrigger value="dry" className="text-xs px-3 gap-1" data-testid="filter-dry"><Sun className="w-3 h-3" />Dry</TabsTrigger>
+            <TabsTrigger value="uncategorized" className="text-xs px-3 gap-1" data-testid="filter-uncategorized"><Package className="w-3 h-3" />Uncategorized</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -404,6 +405,7 @@ export default function ItemsPage() {
                             <SelectItem value="frozen" className="text-[10px]"><span className="flex items-center gap-1"><Snowflake className="w-3 h-3 text-blue-500" />Frozen</span></SelectItem>
                             <SelectItem value="chilled" className="text-[10px]"><span className="flex items-center gap-1"><Thermometer className="w-3 h-3 text-cyan-500" />Chilled</span></SelectItem>
                             <SelectItem value="dry" className="text-[10px]"><span className="flex items-center gap-1"><Sun className="w-3 h-3 text-amber-500" />Dry</span></SelectItem>
+                            <SelectItem value="uncategorized" className="text-[10px]"><span className="flex items-center gap-1"><Package className="w-3 h-3 text-slate-400" />Uncategorized</span></SelectItem>
                           </SelectContent>
                         </Select>
                         {item.category_source === 'manual' && (
@@ -461,6 +463,7 @@ export default function ItemsPage() {
                   <SelectItem value="frozen"><span className="flex items-center gap-2"><Snowflake className="w-3.5 h-3.5 text-blue-500" />Frozen</span></SelectItem>
                   <SelectItem value="chilled"><span className="flex items-center gap-2"><Thermometer className="w-3.5 h-3.5 text-cyan-500" />Chilled</span></SelectItem>
                   <SelectItem value="dry"><span className="flex items-center gap-2"><Sun className="w-3.5 h-3.5 text-amber-500" />Dry</span></SelectItem>
+                  <SelectItem value="uncategorized"><span className="flex items-center gap-2"><Package className="w-3.5 h-3.5 text-slate-400" />Uncategorized</span></SelectItem>
                 </SelectContent>
               </Select>
             </div>

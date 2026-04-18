@@ -90,6 +90,11 @@ def classify_items_by_section(items: list, raw_text: str = "") -> list:
         if category:
             item["storage_category"] = category
             item["category_source"] = "auto"
+        else:
+            # Cannot confidently classify → mark as uncategorized
+            if not item.get("storage_category"):
+                item["storage_category"] = "uncategorized"
+                item["category_source"] = "auto"
 
     return items
 
@@ -195,7 +200,7 @@ async def lookup_manual_category_async(
             "restaurant_id": restaurant_id,
             "item_code": product_code,
             "category_source": "manual",
-            "storage_category": {"$in": ["dry", "chilled", "frozen"]},
+            "storage_category": {"$in": ["dry", "chilled", "frozen", "uncategorized"]},
         },
         {"_id": 0, "storage_category": 1, "category_source": 1},
     )
@@ -210,7 +215,7 @@ async def lookup_manual_category_async(
         {
             "restaurant_id": restaurant_id,
             "category_source": "manual",
-            "storage_category": {"$in": ["dry", "chilled", "frozen"]},
+            "storage_category": {"$in": ["dry", "chilled", "frozen", "uncategorized"]},
         },
         {"_id": 0, "storage_category": 1, "category_source": 1},
     )

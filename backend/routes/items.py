@@ -15,7 +15,7 @@ async def list_items(user=Depends(get_user), search: str = "", storage_category:
     query = {"restaurant_id": user["restaurant_id"]}
     if search:
         query["name"] = {"$regex": search, "$options": "i"}
-    if storage_category and storage_category in ("dry", "chilled", "frozen"):
+    if storage_category and storage_category in ("dry", "chilled", "frozen", "uncategorized"):
         query["storage_category"] = storage_category
     items = await db.canonical_items.find(query, {"_id": 0}).to_list(1000)
     for item in items:
@@ -53,8 +53,8 @@ async def update_storage_category(iid: str, body: dict, user=Depends(get_user)):
     from being overwritten by future auto-extraction.
     """
     new_cat = (body.get("storage_category") or "").strip().lower()
-    if new_cat not in ("dry", "chilled", "frozen", ""):
-        raise HTTPException(400, f"Invalid storage_category: '{new_cat}'. Must be dry, chilled, or frozen.")
+    if new_cat not in ("dry", "chilled", "frozen", "uncategorized", ""):
+        raise HTTPException(400, f"Invalid storage_category: '{new_cat}'. Must be dry, chilled, frozen, or uncategorized.")
 
     old = await db.canonical_items.find_one(
         {"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
