@@ -2767,6 +2767,22 @@ Rules:
                     supplier_id=supplier_id_for_correction,
                 )
 
+        # ── Storage Category Classification ──
+        # Auto-classify items by section headers + product name keywords.
+        # Manual overrides (category_source='manual') are never overwritten.
+        if document_type == "purchase_invoice" and isinstance(extracted.get("items"), list):
+            from services.storage_classifier import classify_items_by_section, lookup_manual_category_async
+            # First, check if any items have manual categories from previous extractions
+            for it in extracted["items"]:
+                item_code = (it.get("item_code") or "").strip()
+                if item_code and it.get("category_source") != "manual":
+                    manual = await lookup_manual_category_async(item_code, rid)
+                    if manual:
+                        it["storage_category"] = manual["storage_category"]
+                        it["category_source"] = manual["category_source"]
+            # Then auto-classify remaining items from section headers + keywords
+            classify_items_by_section(extracted["items"])
+
         result = {
             "extracted_data": extracted,
             "document_type": document_type,

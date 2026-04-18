@@ -11,10 +11,12 @@ router = APIRouter()
 
 
 @router.get("/items")
-async def list_items(user=Depends(get_user), search: str = ""):
+async def list_items(user=Depends(get_user), search: str = "", storage_category: str = ""):
     query = {"restaurant_id": user["restaurant_id"]}
     if search:
         query["name"] = {"$regex": search, "$options": "i"}
+    if storage_category and storage_category in ("dry", "chilled", "frozen"):
+        query["storage_category"] = storage_category
     items = await db.canonical_items.find(query, {"_id": 0}).to_list(1000)
     for item in items:
         item["aliases"] = await db.item_aliases.find({"canonical_item_id": item["id"], "restaurant_id": user["restaurant_id"]}, {"_id": 0}).to_list(100)
@@ -41,6 +43,46 @@ async def update_item(iid: str, data: CanonicalItemCreate, user=Depends(get_user
     await db.canonical_items.update_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
     await audit_log(user, "UPDATE", "Item", iid, f'{user["name"]} updated item {old.get("name", "") if old else ""}', old_value=old_vals, new_value=update_data)
     return await db.canonical_items.find_one({"id": iid}, {"_id": 0})
+
+
+@router.patch("/items/{iid}/storage-category")
+async def update_storage_category(iid: str, body: dict, user=Depends(get_user)):
+    """
+    Set storage_category on an item. When called from the UI, this is a manual
+    override — category_source is set to 'manual', which protects the value
+    from being overwritten by future auto-extraction.
+    """
+    new_cat = (body.get("storage_category") or "").strip().lower()
+    if new_cat not in ("dry", "chilled", "frozen", ""):
+        raise HTTPException(400, f"Invalid storage_category: '{new_cat}'. Must be dry, chilled, or frozen.")
+
+    old = await db.canonical_items.find_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
+    )
+    if not old:
+        raise HTTPException(404, "Item not found")
+
+    old_cat = old.get("storage_category", "")
+    updates = {
+        "storage_category": new_cat,
+        "category_source": "manual" if new_cat else "auto",
+        "storage_category_updated_by": user["id"],
+        "storage_category_updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.canonical_items.update_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]},
+        {"$set": updates},
+    )
+    await audit_log(
+        user, "UPDATE", "Item", iid,
+        f'{user["name"]} set storage category to "{new_cat}" (manual)',
+        old_value={"storage_category": old_cat, "category_source": old.get("category_source", "auto")},
+        new_value={"storage_category": new_cat, "category_source": "manual"},
+    )
+    updated = await db.canonical_items.find_one({"id": iid}, {"_id": 0})
+    return updated
+
+
 
 
 @router.delete("/items/{iid}")

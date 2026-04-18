@@ -9,7 +9,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus, Scale, Award } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus, Scale, Award, Snowflake, Sun, Thermometer } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
 
@@ -254,26 +256,44 @@ export default function ItemsPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [storageFilter, setStorageFilter] = useState('all');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [aliasDialog, setAliasDialog] = useState(null);
   const [priceItem, setPriceItem] = useState(null);
-  const [form, setForm] = useState({ name: '', category: '' });
+  const [form, setForm] = useState({ name: '', category: '', storage_category: '', category_source: 'auto' });
   const [aliasName, setAliasName] = useState('');
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null });
+  const [categoryUpdating, setCategoryUpdating] = useState(null);
 
   const load = async () => {
     setLoading(true);
-    try { const res = await api.get('/items', { params: { search } }); setItems(res.data); }
+    try {
+      const params = { search };
+      if (storageFilter && storageFilter !== 'all') params.storage_category = storageFilter;
+      const res = await api.get('/items', { params });
+      setItems(res.data);
+    }
     catch { toast.error('Failed to load'); }
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, [search]); // eslint-disable-line
+  useEffect(() => { load(); }, [search, storageFilter]); // eslint-disable-line
 
-  const openNew = () => { setEditing(null); setForm({ name: '', category: '' }); setDialogOpen(true); };
-  const openEdit = (item) => { setEditing(item); setForm({ name: item.name, category: item.category || '' }); setDialogOpen(true); };
+  const openNew = () => { setEditing(null); setForm({ name: '', category: '', storage_category: '', category_source: 'auto' }); setDialogOpen(true); };
+  const openEdit = (item) => { setEditing(item); setForm({ name: item.name, category: item.category || '', storage_category: item.storage_category || '', category_source: item.category_source || 'auto' }); setDialogOpen(true); };
+
+  const updateStorageCategory = async (itemId, newCat) => {
+    setCategoryUpdating(itemId);
+    try {
+      const res = await api.patch(`/items/${itemId}/storage-category`, { storage_category: newCat });
+      setItems(prev => prev.map(it => it.id === itemId ? { ...it, ...res.data, aliases: it.aliases } : it));
+      toast.success(`Category set to ${newCat || 'none'} (manual)`);
+    } catch (err) {
+      toast.error('Update failed: ' + (err.response?.data?.detail || err.message));
+    } finally { setCategoryUpdating(null); }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -321,9 +341,19 @@ export default function ItemsPage() {
         </Button>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        <Input className="pl-9 h-10" placeholder="Search items..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="search-items" />
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Input className="pl-9 h-10" placeholder="Search items..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="search-items" />
+        </div>
+        <Tabs value={storageFilter} onValueChange={setStorageFilter}>
+          <TabsList className="h-9">
+            <TabsTrigger value="all" className="text-xs px-3" data-testid="filter-all">All Items</TabsTrigger>
+            <TabsTrigger value="frozen" className="text-xs px-3 gap-1" data-testid="filter-frozen"><Snowflake className="w-3 h-3" />Frozen</TabsTrigger>
+            <TabsTrigger value="chilled" className="text-xs px-3 gap-1" data-testid="filter-chilled"><Thermometer className="w-3 h-3" />Chilled</TabsTrigger>
+            <TabsTrigger value="dry" className="text-xs px-3 gap-1" data-testid="filter-dry"><Sun className="w-3 h-3" />Dry</TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
       {loading ? (
@@ -342,6 +372,7 @@ export default function ItemsPage() {
                 <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
                   <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Item Name</TableHead>
                   <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Category</TableHead>
+                  <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider w-40">Storage</TableHead>
                   <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Aliases</TableHead>
                   <TableHead className="text-[11px] font-bold text-slate-500 uppercase tracking-wider text-right w-48">Actions</TableHead>
                 </TableRow>
@@ -357,6 +388,28 @@ export default function ItemsPage() {
                     </TableCell>
                     <TableCell>
                       {item.category ? <Badge variant="outline" className="text-[10px] font-semibold">{item.category}</Badge> : <span className="text-xs text-slate-300">—</span>}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5">
+                        <Select
+                          value={item.storage_category || '_none'}
+                          onValueChange={(v) => updateStorageCategory(item.id, v === '_none' ? '' : v)}
+                          disabled={categoryUpdating === item.id}
+                        >
+                          <SelectTrigger className="h-7 w-28 text-[10px] border-slate-200" data-testid={`storage-cat-${item.id}`}>
+                            <SelectValue placeholder="—" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="_none" className="text-[10px]">—</SelectItem>
+                            <SelectItem value="frozen" className="text-[10px]"><span className="flex items-center gap-1"><Snowflake className="w-3 h-3 text-blue-500" />Frozen</span></SelectItem>
+                            <SelectItem value="chilled" className="text-[10px]"><span className="flex items-center gap-1"><Thermometer className="w-3 h-3 text-cyan-500" />Chilled</span></SelectItem>
+                            <SelectItem value="dry" className="text-[10px]"><span className="flex items-center gap-1"><Sun className="w-3 h-3 text-amber-500" />Dry</span></SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {item.category_source === 'manual' && (
+                          <Badge className="text-[8px] bg-indigo-50 text-indigo-600 border-indigo-200 px-1 py-0 h-4">manual</Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1 max-w-md">
@@ -397,6 +450,20 @@ export default function ItemsPage() {
           <div className="space-y-4 py-2">
             <div><Label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Item Name</Label><Input className="mt-1.5 h-10" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="input-item-name" /></div>
             <div><Label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Category</Label><Input className="mt-1.5 h-10" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="e.g. Meat, Dairy, Vegetables" /></div>
+            <div>
+              <Label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Storage Category</Label>
+              <Select value={form.storage_category || '_none'} onValueChange={(v) => setForm({ ...form, storage_category: v === '_none' ? '' : v, category_source: v === '_none' ? 'auto' : 'manual' })}>
+                <SelectTrigger className="mt-1.5 h-10" data-testid="input-storage-category">
+                  <SelectValue placeholder="Select storage type..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">None</SelectItem>
+                  <SelectItem value="frozen"><span className="flex items-center gap-2"><Snowflake className="w-3.5 h-3.5 text-blue-500" />Frozen</span></SelectItem>
+                  <SelectItem value="chilled"><span className="flex items-center gap-2"><Thermometer className="w-3.5 h-3.5 text-cyan-500" />Chilled</span></SelectItem>
+                  <SelectItem value="dry"><span className="flex items-center gap-2"><Sun className="w-3.5 h-3.5 text-amber-500" />Dry</span></SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>

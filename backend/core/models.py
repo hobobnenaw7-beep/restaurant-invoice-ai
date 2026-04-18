@@ -63,6 +63,8 @@ class SupplierCreate(BaseModel):
 class CanonicalItemCreate(BaseModel):
     name: str
     category: Optional[str] = ""
+    storage_category: Optional[str] = ""  # dry, chilled, frozen
+    category_source: Optional[str] = "auto"  # auto, manual
 
 
 class ItemAliasCreate(BaseModel):
