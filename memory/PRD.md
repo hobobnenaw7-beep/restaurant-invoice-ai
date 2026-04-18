@@ -9,37 +9,45 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 ├── backend/
 │   ├── core/ (auth, permissions, models, database)
 │   ├── routes/
-│   │   ├── upload.py (Extraction pipeline, multi-signal routing, correction apply)
+│   │   ├── upload.py (Extraction pipeline, multi-signal routing, correction apply, storage classify)
 │   │   ├── purchases.py (CRUD + inline PATCH edit + verify + correction memory hook)
+│   │   ├── items.py (CRUD + PATCH storage-category with manual override + filter)
 │   │   ├── correction_memory.py (CRUD for correction management)
 │   │   ├── auth.py, sales.py, other_expenses.py, records.py, settings.py
 │   ├── services/
 │   │   ├── vendor_detection.py (Multi-signal detection + confidence routing)
 │   │   ├── correction_memory.py (v2: strong key hierarchy + provenance)
+│   │   ├── storage_classifier.py (Auto-classify by section headers + keywords, manual protection)
 │   │   ├── usfoods_structural.py (2-phase extraction + dark image retry)
 │   ├── preprocessing.py (Image processing + dark image detection/enhancement)
 ├── frontend/src/
 │   ├── components/
 │   │   ├── InlineReviewPanel.js (Inline edit cells + Mark Verified)
 │   │   ├── InvoiceReviewDialog.js (Full review dialog with audit trail)
-│   ├── pages/ExpensesPage.js (Needs Review filter + InlineReviewPanel integration)
+│   ├── pages/
+│   │   ├── ItemsPage.js (Storage category column, filter tabs, dropdown edit)
+│   │   ├── ExpensesPage.js (Needs Review filter + InlineReviewPanel)
 ```
 
-## Manual Review Workflow — COMPLETE
-### Flow
-1. User selects "Needs Review" filter on Expenses → InlineReviewPanel appears
-2. Click any Price/Qty/Total cell → inline input opens
-3. Enter/blur saves via PATCH → item, totals, review_status recalculated
-4. Navigate between invoices with < > arrows
-5. When all items resolved → "Mark Verified" button appears
-6. Click Mark Verified → sets review_status='verified', approval_status='approved'
+## Hybrid Item Classification System — COMPLETE
+### Schema
+- `storage_category`: enum (dry, chilled, frozen)
+- `category_source`: enum (auto, manual, default: auto)
 
-### Memory Hook Rules
-- **Name corrections** → saved to Correction Memory (primary/secondary key)
-- **Price/quantity edits** → audit trail ONLY (not saved to correction memory)
+### Auto-Classification
+- Section headers: FROZEN, DRY, REFRIGERATED → classify items under each section
+- Product name keywords: IQF→frozen, FRESH→chilled, RICE→dry
+- Applied during extraction pipeline (upload.py)
 
-### Audit Trail
-Every PATCH edit records: edited_by, edited_at, field, previous_value, new_value, validation_delta
+### Manual Override Protection
+- UI dropdown sets `category_source=manual`
+- Parser NEVER overwrites manual assignments, even if section header disagrees
+- Manual categories reused for future invoices via product_code lookup
+
+### UI
+- Filter tabs: All Items | Frozen | Chilled | Dry
+- Storage column with inline dropdown per item
+- "manual" badge shown when category_source=manual
 
 ## Completed Work
 - Permissions + Accountability model (21 perms, 4 roles)
@@ -49,16 +57,17 @@ Every PATCH edit records: edited_by, edited_at, field, previous_value, new_value
 - Multi-signal vendor detection + confidence routing — COMPLETE
 - Correction Memory v2 (strong key hierarchy + provenance) — COMPLETE
 - Dark image preprocessing layer — COMPLETE
-- **Manual Review Workflow (inline edit + verify + audit) — COMPLETE**
+- Manual Review Workflow (inline edit + verify + audit) — COMPLETE
+- **Hybrid Item Classification System — COMPLETE**
 
 ## Upcoming Tasks
 ### P0
-- Production testing of correction workflows with real invoice data
-- End-to-end test: upload dark image → review → inline edit → verify cycle
+- Production testing: end-to-end upload → classify → review → verify cycle
+- Test manual override on real extraction data
 
 ### P1
 - Re-enable Product Memory layer integration
-- Test multi-user workflows with production data
+- Multi-user workflow testing
 
 ### P2
 - Smart Market Insights 3-panel expansion
