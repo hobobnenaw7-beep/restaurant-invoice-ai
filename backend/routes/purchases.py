@@ -211,40 +211,20 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
             normalize_item(item)
             validate_and_score_item(item)
             # Detect edits and save corrections (explicit save only)
+            # RULE: Only NAME corrections create memory entries.
+            # Price/quantity edits are audit data only.
             if idx < len(old_items):
                 old_item = old_items_by_idx.get(idx, {})
                 old_raw = old_item.get("raw_name", "").strip()
                 new_raw = item.get("raw_name", "").strip()
-                new_norm = item.get("norm", {})
 
-                # Detect field-level changes
                 name_changed = bool(old_raw and new_raw and old_raw != new_raw)
 
-                old_pack = (old_item.get("pack_size_raw") or old_item.get("pack_size") or "").strip()
-                new_pack = (item.get("pack_size_raw") or item.get("pack_size") or "").strip()
-                pack_changed = bool(old_pack != new_pack and new_pack)
-
-                old_up = float(old_item.get("unit_price") or 0)
-                new_up = float(item.get("unit_price") or 0)
-                price_changed = abs(old_up - new_up) > 0.001 and new_up > 0
-
-                old_total = float(old_item.get("total") or 0)
-                new_total = float(item.get("total") or 0)
-                total_changed = abs(old_total - new_total) > 0.001 and new_total > 0
-
-                has_changes = name_changed or pack_changed or price_changed or total_changed
-
-                if has_changes:
-                    corrected_specs = dict(new_norm.get("specs") or {})
-                    if pack_changed:
-                        corrected_specs["pack_size"] = new_pack
-                    if price_changed:
-                        corrected_specs["unit_price"] = new_up
-                    if total_changed:
-                        corrected_specs["total"] = new_total
-
+                if name_changed:
                     vendor_name = old.get("supplier_name") or old.get("detected_vendor") or ""
                     item_code = (item.get("item_code") or old_item.get("item_code") or "").strip()
+                    old_pack = (old_item.get("pack_size_raw") or old_item.get("pack_size") or "").strip()
+                    new_pack = (item.get("pack_size_raw") or item.get("pack_size") or "").strip()
 
                     await save_correction(
                         user_id=user["id"],
@@ -252,10 +232,9 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
                         restaurant_id=rid,
                         canonical_vendor=vendor_name,
                         original_raw_name=old_raw,
-                        corrected_name=new_raw if name_changed else old_raw,
+                        corrected_name=new_raw,
                         product_code=item_code,
                         pack_size=new_pack or old_pack,
-                        corrected_specs=corrected_specs,
                         supplier_id=supplier_id,
                     )
         validate_purchase_items(update_data["items"])
@@ -380,34 +359,29 @@ async def patch_purchase_item(pid: str, item_index: int, updates: dict, user=Dep
     )
 
     # Save correction to memory (explicit save via PATCH = user confirmed)
+    # RULE: Only NAME corrections create memory entries.
+    # Price/quantity edits are stored as audit data only, NOT as permanent
+    # correction rules (per user requirement: no blind pricing memory).
     if changes:
-        from services.correction_memory import save_correction
-        old_raw = old_item.get("raw_name", "").strip()
-        new_raw = updated_item.get("raw_name", "").strip()
         name_changed = "raw_name" in changes
-        vendor_name = purchase.get("supplier_name") or purchase.get("detected_vendor") or ""
-        item_code = (updated_item.get("item_code") or old_item.get("item_code") or "").strip()
-        pack = (updated_item.get("pack_size") or updated_item.get("pack_size_raw") or "").strip()
+        if name_changed:
+            from services.correction_memory import save_correction
+            old_raw = old_item.get("raw_name", "").strip()
+            new_raw = updated_item.get("raw_name", "").strip()
+            vendor_name = purchase.get("supplier_name") or purchase.get("detected_vendor") or ""
+            item_code = (updated_item.get("item_code") or old_item.get("item_code") or "").strip()
+            pack = (updated_item.get("pack_size") or updated_item.get("pack_size_raw") or "").strip()
 
-        corrected_specs = {}
-        if "unit_price" in changes:
-            corrected_specs["unit_price"] = changes["unit_price"]["new"]
-        if "total" in changes:
-            corrected_specs["total"] = changes["total"]["new"]
-        if "pack_size" in changes:
-            corrected_specs["pack_size"] = changes["pack_size"]["new"]
-
-        await save_correction(
-            user_id=user["id"],
-            user_name=user.get("name", ""),
-            restaurant_id=user["restaurant_id"],
-            canonical_vendor=vendor_name,
-            original_raw_name=old_raw,
-            corrected_name=new_raw if name_changed else old_raw,
-            product_code=item_code,
-            pack_size=pack,
-            corrected_specs=corrected_specs if corrected_specs else None,
-        )
+            await save_correction(
+                user_id=user["id"],
+                user_name=user.get("name", ""),
+                restaurant_id=user["restaurant_id"],
+                canonical_vendor=vendor_name,
+                original_raw_name=old_raw,
+                corrected_name=new_raw,
+                product_code=item_code,
+                pack_size=pack,
+            )
 
     return {
         "item": {k: v for k, v in updated_item.items() if k != "_id"},
@@ -430,6 +404,39 @@ async def get_edit_history(pid: str, user=Depends(get_user)):
     if not purchase:
         raise HTTPException(404, "Purchase not found")
     return {"id": pid, "edit_history": purchase.get("edit_history", [])}
+
+
+
+@router.patch("/purchases/{pid}/verify")
+async def verify_purchase(pid: str, user=Depends(get_user)):
+    """
+    Mark a purchase as verified after all review items have been resolved.
+    Sets review_status='verified' and records verification metadata.
+    """
+    purchase = await db.purchases.find_one(
+        {"id": pid, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
+    )
+    if not purchase:
+        raise HTTPException(404, "Purchase not found")
+
+    now = datetime.now(timezone.utc).isoformat()
+    updates = {
+        "review_status": "verified",
+        "approval_status": "approved",
+        "verified_by_user_id": user["id"],
+        "verified_by_name": user.get("name", ""),
+        "verified_at": now,
+    }
+    await db.purchases.update_one(
+        {"id": pid, "restaurant_id": user["restaurant_id"]},
+        {"$set": updates},
+    )
+    await audit_log(
+        user, "VERIFY", "Expense", pid,
+        f'{user["name"]} verified expense ${purchase.get("total", 0)} ({purchase.get("supplier_name", "")})',
+    )
+    return {"status": "verified", "verified_at": now, "verified_by": user.get("name", "")}
+
 
 
 

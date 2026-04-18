@@ -25,6 +25,7 @@ import { useDuplicateCheck, DuplicateWarningDialog } from '@/components/Duplicat
 import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
 import { ConfirmSaveDialog } from '@/components/ConfirmSaveDialog';
 import InvoiceReviewDialog from '@/components/InvoiceReviewDialog';
+import InlineReviewPanel from '@/components/InlineReviewPanel';
 
 function fmt(n) { return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00'; }
 let _keySeq = 0;
@@ -620,6 +621,18 @@ function RawMaterialsTab({ api }) {
         </Select>
         <Button onClick={openAdd} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs" data-testid="add-raw-material-btn"><Plus className="w-3.5 h-3.5 mr-1.5" /> Add</Button>
       </div>
+
+      {/* Inline Review Panel — shown when Needs Review filter is active */}
+      {validationFilter === 'needs_review' && (() => {
+        const reviewPurchases = items.filter(p => (p.items || []).some(it => it.needs_review));
+        return reviewPurchases.length > 0 ? (
+          <InlineReviewPanel
+            purchases={reviewPurchases}
+            api={api}
+            onRefresh={() => load(false)}
+          />
+        ) : null;
+      })()}
 
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
