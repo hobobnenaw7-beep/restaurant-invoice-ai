@@ -214,7 +214,7 @@ export function PurchaseSuggestionModal({ api, decision, onClose, onSaved }) {
             <div>
               <h3 className="font-heading text-base font-bold text-navy-900">Suggestion saved for your review</h3>
               <p className="text-[11px] text-slate-500 mt-1 max-w-md mx-auto">
-                Your draft is stored under your saved suggestions. Nothing has been sent or executed.
+                Your draft is stored under your saved suggestions. No vendor was contacted and no purchase has been placed.
               </p>
             </div>
             <div className="flex items-center justify-center gap-2 flex-wrap">

@@ -47,6 +47,55 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 6: Controlled Action Layer — COMPLETE (2026-04-22)
+
+### Goal
+Bridge decision → action **with friction, not automation**. Advisory only:
+no purchase execution, no vendor comms, no imperative language.
+
+### Backend
+- `services/procurement_suggestions.py`
+  * `log_event` — fixed enum (suggestion_opened, draft_viewed, acknowledgment_checked, action_confirmed, action_canceled); raises ValueError on unknown type → 400.
+  * `save_suggestion` — HARD gate on `acknowledgment_confirmed`; status always `saved_for_review` (execution statuses cannot be set via API).
+  * `list_suggestions` — tenant-scoped.
+  * `suggested_quantity_hint` — returns `{lookback, quantities, helper_text, disclaimer}` filtered to `data_quality_flag='good'`; NEVER pre-fills input.
+- `routes/procurement_suggestions.py`
+  * `POST /api/procurement/events`
+  * `POST /api/procurement/suggestions`
+  * `GET  /api/procurement/suggestions`
+  * `GET  /api/procurement/quantity-hint/{cpid}?canonical_unit=lb`
+
+### Frontend
+- `components/procurement/PurchaseSuggestionModal.js` — advisory-only:
+  * Header badge "ADVISORY ONLY" + disclaimer.
+  * Section A: Recommendation Summary (product, recommended vendor, reference price rows, delta row, reason).
+  * Section B: Suggested Quantities — **helper text only, zero input fields**. Yellow disclaimer row.
+  * Section C: Evidence + Uncertainty bullets.
+  * Mandatory acknowledgment block: red-dashed, disclaimer + checkbox gates Save Suggestion button.
+  * Footer: Copy details · Cancel · Save Suggestion (disabled until ack).
+  * Post-save state: "Suggestion saved for your review" + Copy / Done buttons.
+  * Event log wired: suggestion_opened on open · draft_viewed after hint load · acknowledgment_checked on tick · action_confirmed on save · action_canceled on cancel/X.
+- CTA label **"Prepare Purchase Suggestion"** on full-card and inline-card; shown ONLY for high-confidence switch_vendor/renegotiate. No "order"/"buy"/"submit" anywhere.
+
+### Collections
+- `procurement_suggestion_events` — audit log per event.
+- `procurement_suggestions` — saved advisory drafts (status=`saved_for_review`).
+
+### Testing — 18/18 PASS (iteration_90, 100% on all spec criteria)
+- 8 unit tests (events enum, save ack-gate, quantity-hint filtering & disclaimer, tenant isolation).
+- 10 API tests (POST /events valid+invalid, POST /suggestions ack enforcement, GET /suggestions, /quantity-hint payload shape, 401 unauth, isolation).
+- Frontend verified: CTA label exact, 3 sections present, zero inputs in quantities, acknowledgment gate works at UI AND API layers, events fire correctly, saved-state copy aligned with spec.
+
+### Files
+- /app/backend/services/procurement_suggestions.py
+- /app/backend/routes/procurement_suggestions.py
+- /app/backend/tests/test_procurement_suggestions.py
+- /app/backend/tests/test_procurement_suggestions_api.py
+- /app/frontend/src/components/procurement/PurchaseSuggestionModal.js
+- /app/frontend/src/components/procurement/ProcurementUI.js (CTA + callback wiring)
+- /app/frontend/src/pages/ProcurementDecisionsPage.js (wires the modal)
+- /app/frontend/src/pages/PriceIntelligencePage.js (inline pill + modal)
+
 ## Milestone 5: Procurement Decision Engine — FRONTEND COMPLETE (2026-04-21)
 
 ### Hybrid UI
