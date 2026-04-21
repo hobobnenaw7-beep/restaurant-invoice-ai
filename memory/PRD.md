@@ -1,68 +1,70 @@
 # Invoice AI — Product Requirements Document
 
 ## Problem Statement
-Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, plus a multi-user permissions and accountability model for team operation.
+Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, plus multi-user permissions, accountability, and self-improving product memory.
 
-## Unit Normalization — Layered Decision Engine — COMPLETE
+## Unit Normalization — Layered Decision Engine — MILESTONE 2 COMPLETE
 
 ### Full Decision Flow
 ```
-Input: item with pack_size, item_code, quantity, total, storage_category
+Input: item with pack_size, item_code, qty, unit_price, total, storage_category
                     ↓
 Signal 1: Parser (always runs pack_size text)
 Signal 2: Memory (always runs vendor+code lookup)
                     ↓
-┌─ USER_CORRECTED memory? ──→ Apply directly (conf=1.0)
-│                              UNLESS parser contradicts unit type
+┌─ USER_CORRECTED memory? → Apply (conf=1.0) unless parser contradicts unit type
 ↓
 Drift Detection (category-aware thresholds):
-  frozen/chilled: 10% threshold (strict)
-  dry/chemicals:  25% threshold (tolerant)
-  default:        15%
-  meat keywords:  10% (auto-detected)
+  frozen/chilled: 10% | dry: 25% | default: 15%
                     ↓
-  IF drift > threshold → needs_review (memory_drift_detected)
+  IF drift detected:
+    Signal 3: MATH ARBITRATION
+      - Check PPU from each multiplier against reasonable ranges
+      - Parser gets document evidence bonus (strong parse methods)
+      - If math clearly favors one signal → auto-resolve (no review)
+      - If inconclusive → needs_review
                     ↓
-Recency Bias:
-  >180 days old: memory_conf -= 0.15
-  >90 days old:  memory_conf -= 0.08
-                    ↓
-Validation Layer (math, bounds, category sense)
-                    ↓
-Confidence Scoring + Conflict Resolution
-                    ↓
-Apply or Flag for Review
+Recency Bias → stale memory loses confidence
+Validation → bounds, category-unit sense
+Conflict Resolution → agree/disagree/review
 ```
 
-### Drift Thresholds by Category
-| Category | Threshold | Reasoning |
-|----------|-----------|-----------|
-| frozen, chilled | 10% | Perishables — pack sizes are standardized |
-| dry | 25% | Stable goods — vendor may change pack sizes |
-| uncategorized/default | 15% | Balanced |
-| Meat/seafood keywords | 10% | Auto-detected strict even without storage_category |
+### Math Arbitration Details
+- PPU reasonableness: $0.10-$50/lb, $0.005-$20/piece
+- Parser document bonus: +0.25 for strong parse methods (direct invoice evidence)
+- Win margin: 0.15 (must clearly beat the other signal)
+- Result: reduces unnecessary needs_review by resolving drift via math
 
-### Verified Drift Scenarios
-1. **75% drift on frozen meat** → needs_review ✓
-2. **0% drift on dry goods** → normalized ✓
-3. **20% drift on dry (within 25% tolerance)** → normalized ✓
-4. **20% drift on frozen (exceeds 10% threshold)** → needs_review ✓
+### Verified Scenarios
+1. Parser wins via math (shrimp $4.50/lb > $0.90/lb) ✓
+2. Memory wins via math (chicken $2.95/lb > $0.059/lb on OCR garble) ✓
+3. Math inconclusive (both PPUs reasonable) → parser wins via document bonus ✓
+4. Category-aware drift thresholds ✓
+5. User-corrected truth with parser contradiction check ✓
+6. Learning loop: review → user corrects → memory → auto-reuse ✓
 
 ## Completed Work (Milestone 2 — FULLY CLOSED)
-- Unit Normalization + Canonical Unit Layer
-- Product Memory with cross-format consistency
-- Layered Decision Engine (validation + confidence + conflict)
-- Manual-to-Memory Learning Loop (user_corrected truth)
-- **Trust Calibration & Drift Detection (anti-blind-trust)**
-  - Category-aware thresholds
-  - Recency bias (stale memory loses confidence)
-  - User-corrected drift check (parser unit contradiction)
+- Unit Normalization + Canonical Unit + Pack Size Parsing
+- Product Memory (DB-backed, cross-invoice)
+- Layered Decision Engine (3-signal: parser + memory + math)
+- Manual-to-Memory Learning Loop
+- Trust Calibration + Drift Detection (category-aware)
+- **Math Arbitration Layer (auto-resolve drift without review)**
+
+## Other Completed Work
+- Permissions + Accountability (4 roles, 21 permissions)
+- US Foods 2-phase structural extraction
+- Multi-vendor trust gates (zero false trusts)
+- 294-image stress test
+- Multi-signal vendor detection
+- Correction Memory v2
+- Dark image preprocessing
+- Manual Review Workflow (inline edit + verify)
+- Hybrid Item Classification System
 
 ## Upcoming Tasks
-### P0
-- Milestone 3 (user to define)
-### P2
-- Smart Market Insights, AI Chat Assistant, Trash/Restore
+### P0 - Milestone 3 (user to define)
+### P2 - Smart Market Insights, AI Chat, Trash/Restore, Salaries OCR
 
 ## Test Credentials
 - Manager: demo@test.com / testpassword

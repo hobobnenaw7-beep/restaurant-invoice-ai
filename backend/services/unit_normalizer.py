@@ -968,11 +968,122 @@ async def normalize_item_with_memory(item: dict, vendor: str = "", restaurant_id
     # ─── Conflict Resolution ───
     chosen_signal = None
     decision_reason = ""
+    math_arbitration = None
 
-    # If drift detected → force needs_review regardless of confidence
+    # If drift detected → use Math Arbitration to try resolving before review
     if drift_detected:
-        chosen_signal = None
-        decision_reason = drift_reason
+        # ─── MATH ARBITRATION LAYER (3rd signal) ───
+        # Check which multiplier produces a mathematically consistent PPU.
+        # Invoice math: line_total = quantity × case_price
+        # Case_price = unit_price (the price GPT extracted per case).
+        # PPU = line_total / (quantity × multiplier).
+        # A valid multiplier should produce a PPU that, when multiplied back,
+        # aligns with the extracted total: qty × multiplier × PPU ≈ total.
+        #
+        # Heuristic: the correct multiplier should make unit_price / multiplier
+        # produce a reasonable per-unit price (not absurdly small or large).
+        mem_mult = memory_signal["multiplier"]
+        parse_mult = parser_signal["multiplier"]
+
+        mem_ppu = round(total / (qty * mem_mult), 4) if qty > 0 and mem_mult > 0 else None
+        parse_ppu = round(total / (qty * parse_mult), 4) if qty > 0 and parse_mult > 0 else None
+
+        # Check: does qty × unit_price ≈ total? (extraction math integrity)
+        extraction_math_ok = False
+        if qty > 0 and unit_price > 0 and total > 0:
+            expected_total = round(qty * unit_price, 2)
+            extraction_math_ok = abs(expected_total - total) / total <= 0.02
+
+        # If extraction math is solid, check which multiplier gives a sensible PPU.
+        # "Sensible" = PPU falls within a reasonable range for the product category.
+        mem_math_score = 0.0
+        parse_math_score = 0.0
+
+        if extraction_math_ok:
+            # For weight-based items: PPU should be $0.10 - $50/lb typically
+            # For piece-based: PPU should be $0.005 - $20/piece typically
+            canon = parser_signal["canonical_unit"]
+
+            if canon == "lb":
+                reasonable_range = (0.10, 50.0)
+            elif canon == "piece":
+                reasonable_range = (0.005, 20.0)
+            else:
+                reasonable_range = (0.05, 100.0)
+
+            if mem_ppu and reasonable_range[0] <= mem_ppu <= reasonable_range[1]:
+                mem_math_score = 0.8
+            if parse_ppu and reasonable_range[0] <= parse_ppu <= reasonable_range[1]:
+                parse_math_score = 0.8
+
+            # Bonus: if unit_price / multiplier is very close to PPU, it's more likely correct
+            if mem_ppu and mem_mult > 0:
+                implied = round(unit_price / mem_mult, 4)
+                if abs(implied - mem_ppu) / max(mem_ppu, 0.01) < 0.01:
+                    mem_math_score += 0.15
+            if parse_ppu and parse_mult > 0:
+                implied = round(unit_price / parse_mult, 4)
+                if abs(implied - parse_ppu) / max(parse_ppu, 0.01) < 0.01:
+                    parse_math_score += 0.15
+
+        math_arbitration = {
+            "extraction_math_ok": extraction_math_ok,
+            "memory_ppu": mem_ppu,
+            "parser_ppu": parse_ppu,
+            "memory_math_score": round(mem_math_score, 3),
+            "parser_math_score": round(parse_math_score, 3),
+        }
+
+        # Parser gets a bonus: its multiplier is derived from THIS invoice's text.
+        # If the parser used a strong method, it's direct evidence from the document.
+        if parser_signal:
+            strong_methods = ("fraction_lb", "simple_lb", "lb_container", "ct_count", "frac_ct")
+            if parser_signal["method"] in strong_methods:
+                parse_math_score += 0.25  # direct document evidence
+                math_arbitration["parser_document_bonus"] = 0.25
+
+        # Decision: if one signal has clearly better math, use it
+        MATH_WIN_MARGIN = 0.15  # must win by at least this margin
+
+        if parse_math_score > mem_math_score + MATH_WIN_MARGIN:
+            # Math supports parser → accept parser, resolve drift
+            chosen_signal = parser_signal
+            chosen_signal["_confidence"] = min(parser_conf + parse_math_score * 0.3, 0.95)
+            decision_reason = (
+                f"drift_resolved_by_math(parser_wins:"
+                f"parse_ppu=${parse_ppu},mem_ppu=${mem_ppu},"
+                f"parse_score={parse_math_score},mem_score={mem_math_score})"
+            )
+            logger.info(
+                f"DRIFT RESOLVED by math: {raw_name[:40]} code={item_code} — "
+                f"parser PPU=${parse_ppu}/unit is more reasonable than memory PPU=${mem_ppu}/unit "
+                f"→ accepting parser (mult={parse_mult})"
+            )
+        elif mem_math_score > parse_math_score + MATH_WIN_MARGIN:
+            # Math supports memory → accept memory, resolve drift
+            chosen_signal = memory_signal
+            chosen_signal["_confidence"] = min(memory_conf + mem_math_score * 0.3, 0.95)
+            decision_reason = (
+                f"drift_resolved_by_math(memory_wins:"
+                f"mem_ppu=${mem_ppu},parse_ppu=${parse_ppu},"
+                f"mem_score={mem_math_score},parse_score={parse_math_score})"
+            )
+            logger.info(
+                f"DRIFT RESOLVED by math: {raw_name[:40]} code={item_code} — "
+                f"memory PPU=${mem_ppu}/unit is more reasonable than parser PPU=${parse_ppu}/unit "
+                f"→ accepting memory (mult={mem_mult})"
+            )
+        else:
+            # Neither signal has clear math advantage → keep needs_review
+            chosen_signal = None
+            decision_reason = (
+                f"{drift_reason} → math_inconclusive("
+                f"parse_score={parse_math_score},mem_score={mem_math_score})"
+            )
+            logger.info(
+                f"DRIFT UNRESOLVED: {raw_name[:40]} code={item_code} — "
+                f"math inconclusive (parse={parse_math_score},mem={mem_math_score}) → needs_review"
+            )
 
     elif parser_signal and memory_signal:
         # Both signals present — check agreement
@@ -1042,6 +1153,7 @@ async def normalize_item_with_memory(item: dict, vendor: str = "", restaurant_id
         "memory": {"signal": memory_signal, "valid": memory_valid, "conf": memory_conf, "issues": memory_issues} if memory_signal else None,
         "drift_detected": drift_detected,
         "drift_reason": drift_reason if drift_detected else None,
+        "math_arbitration": math_arbitration,
         "reason": decision_reason,
     }
 
