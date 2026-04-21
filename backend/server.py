@@ -31,6 +31,7 @@ from routes.correction_memory import router as correction_memory_router
 from routes.metrics import router as metrics_router
 from routes.usability_metrics import router as usability_metrics_router
 from routes.profit_dashboard import router as profit_dashboard_router
+from routes.product_identity import router as product_identity_router
 
 # --- App setup ---
 app = FastAPI()
@@ -70,6 +71,7 @@ api_router.include_router(correction_memory_router)
 api_router.include_router(metrics_router)
 api_router.include_router(usability_metrics_router)
 api_router.include_router(profit_dashboard_router)
+api_router.include_router(product_identity_router)
 
 app.include_router(api_router)
 
