@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -9,6 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from 'recharts';
 import { toast } from 'sonner';
+import { InlineDecisionCard, TargetPriceModal } from '@/components/procurement/ProcurementUI';
+import { Sparkles, ArrowRight as ArrowRightIcon } from 'lucide-react';
 import {
   TrendingUp, TrendingDown, Minus, AlertTriangle, Activity, Search, RefreshCw,
   ArrowRight, Package, BarChart3, Layers, Tag, ShieldCheck, ShieldAlert, Shield, Info
@@ -378,18 +381,25 @@ function PriceDetailModal({ api, item, onClose }) {
 // ── Main Page ─────────────────────────────────────────────────────────
 export default function PriceIntelligencePage() {
   const { api } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState({ items: [] });
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all'); // all | alerts | trending_up | trending_down
   const [selected, setSelected] = useState(null);
   const [backfilling, setBackfilling] = useState(false);
+  const [actionable, setActionable] = useState([]);
+  const [targetFor, setTargetFor] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get('/price-intelligence/products');
+      const [res, actRes] = await Promise.all([
+        api.get('/price-intelligence/products'),
+        api.get('/procurement/recommendations?only_actionable=true'),
+      ]);
       setData(res.data || { items: [] });
+      setActionable((actRes.data && actRes.data.items) || []);
     } catch {
       toast.error('Failed to load price intelligence');
     } finally {
@@ -466,6 +476,45 @@ export default function PriceIntelligencePage() {
         <Kpi label="High confidence" value={kpis.highConf} icon={ShieldCheck} iconBg="bg-emerald-600" sub={`${kpis.mediumConf} medium · ${kpis.lowConf} low`} testId="kpi-high-conf" />
         <Kpi label="Trending up" value={kpis.upCount} icon={TrendingUp} iconBg="bg-amber-500" sub={`${kpis.downCount} trending down`} testId="kpi-up" />
       </div>
+
+      {/* ── Inline Procurement Summary (high-confidence actionable only) ── */}
+      {actionable.length > 0 && (
+        <Card className="border border-teal-200 bg-gradient-to-br from-teal-50/60 to-white shadow-sm" data-testid="procurement-summary-panel">
+          <CardContent className="p-4 space-y-3.5">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <h2 className="font-heading text-base font-extrabold text-navy-900 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-teal-600" />
+                  Top procurement actions
+                  <Badge className="bg-teal-600 text-white text-[10px] ml-1">{actionable.length}</Badge>
+                </h2>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  High-confidence recommendations only · click any card for details or open the full decision tab.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 border-teal-300 text-teal-700 hover:bg-teal-50"
+                onClick={() => navigate('/procurement-decisions')}
+                data-testid="view-all-decisions-btn"
+              >
+                View all decisions <ArrowRightIcon className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {actionable.slice(0, 5).map((d) => (
+                <InlineDecisionCard
+                  key={d.canonical_product_id}
+                  decision={d}
+                  onOpen={() => navigate('/procurement-decisions')}
+                  onSetTarget={setTargetFor}
+                />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -571,6 +620,7 @@ export default function PriceIntelligencePage() {
       </Card>
 
       <PriceDetailModal api={api} item={selected} onClose={() => setSelected(null)} />
+      <TargetPriceModal api={api} decision={targetFor} onClose={() => setTargetFor(null)} onSaved={load} />
     </div>
   );
 }
