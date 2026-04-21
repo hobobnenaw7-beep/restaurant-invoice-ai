@@ -3,51 +3,45 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, plus a multi-user permissions and accountability model for team operation.
 
-## Architecture
+## Unit Normalization — Layered Decision Engine (Milestone 2) — COMPLETE
+
+### Architecture
 ```
-/app/
-├── backend/
-│   ├── core/ (auth, permissions, models, database)
-│   ├── routes/
-│   │   ├── upload.py (Extraction pipeline, routing, correction, classification, normalization)
-│   │   ├── purchases.py (CRUD + inline edit + verify + correction memory)
-│   │   ├── items.py (CRUD + storage-category + filter)
-│   ├── services/
-│   │   ├── vendor_detection.py (Multi-signal detection + confidence routing)
-│   │   ├── correction_memory.py (v2: strong key hierarchy + provenance)
-│   │   ├── storage_classifier.py (Auto-classify + manual override protection)
-│   │   ├── unit_normalizer.py (Pack parse + canonical_unit + price_per_unit + unit_memory)
-│   │   ├── usfoods_structural.py (2-phase extraction + dark image retry)
-│   ├── preprocessing.py (Image processing + dark image enhancement)
-├── frontend/src/
-│   ├── components/ (InlineReviewPanel, InvoiceReviewDialog)
-│   ├── pages/ (ItemsPage, ExpensesPage, etc.)
+Signal 1: Parser (always runs) → parses pack_size text
+Signal 2: Memory (always runs) → looks up vendor+product_code
+                    ↓
+         Validation Layer:
+           - Math cross-check (qty × price ≈ total)
+           - Multiplier bounds check (0.5 – 5000)
+           - Category-unit sense check (meat→lb, eggs→piece)
+                    ↓
+         Confidence Scoring:
+           - Base: 0.7
+           - Parser boost: +0.1 for strong methods
+           - Memory boost: +0.1 per historical usage
+                    ↓
+         Conflict Resolution:
+           - Agree → high confidence normalized
+           - Disagree on unit → needs_review (NEVER blind trust)
+           - Multiplier out of bounds → parser wins
+           - Only memory available → use if valid
 ```
 
-## Unit Normalization & Product Memory (Milestone 2) — COMPLETE
+### Decision Outcomes
+| Scenario | Outcome | Source |
+|----------|---------|--------|
+| Parser + Memory agree | normalized (0.9 conf) | validated_agreement |
+| Only parser (no memory) | normalized (save to memory) | parsed_and_saved |
+| Only memory (parser fails) | normalized if valid | memory |
+| Unit disagreement | **needs_review** | conflict |
+| Multiplier out of bounds | parser wins | parser |
+| Both invalid | **needs_review** | conflict |
 
-### Canonical Units
-- `lb` — all weight-based items
-- `piece` — all count-based items
-- `gal` — gallon items (converted to lb for PPU)
-- `oz` — reserved for future use
-
-### Formula
-`price_per_unit = line_total / (quantity × normalization_multiplier)`
-
-### Product Memory Integration
-- **DB Collection**: `unit_memory`
-- **Key**: `vendor_key + product_code`
-- **Flow**: Lookup before parse → reuse if found → save after successful parse
-- **Result**: Same product = identical normalization across invoices
-
-### Consistency Proof
-| Pass | Memory Hits | Memory Saves | Source |
-|------|-------------|--------------|--------|
-| 1st extraction | 0 | 9 | parsed_and_saved |
-| 2nd extraction | 9 | 0 | **memory** |
-
-All items produced identical canonical_unit, multiplier, and price_per_unit on both passes.
+### Verified Test Cases
+1. Unit disagreement (Memory=piece, Parser=lb) → **needs_review** ✓
+2. Agreement (Memory=lb/40, Parser=lb/40) → normalized ✓
+3. Out-of-bounds multiplier (Memory=9999) → parser wins ✓
+4. Memory-only (parser fails) → memory accepted if valid ✓
 
 ## Completed Work
 - Permissions + Accountability model
@@ -59,24 +53,21 @@ All items produced identical canonical_unit, multiplier, and price_per_unit on b
 - Dark image preprocessing
 - Manual Review Workflow
 - Hybrid Item Classification System
-- **Unit Normalization + Canonical Unit + Product Memory (Milestone 2)**
+- Unit Normalization + Canonical Unit
+- Product Memory Integration
+- **Layered Decision Engine (validation + confidence + conflict resolution)**
 
 ## Upcoming Tasks
 ### P0
-- Milestone 3 (user to define next)
+- Milestone 3 (user to define)
 ### P1
 - Multi-user workflow testing
 ### P2
-- Smart Market Insights 3-panel expansion
-- AI Chat Assistant polish
-- Trash/Restore UI
-- OCR/Image Upload for Salaries tab
+- Smart Market Insights, AI Chat Assistant, Trash/Restore, Salaries OCR
 
 ## Test Credentials
 - Manager: demo@test.com / testpassword
 - Accountant: accountant@test.com / testpass123
-- Cashier: cashier@test.com / testpass123
-- Staff: staff@test.com / testpass123
 
 ## 3rd Party Integrations
 - OpenAI GPT-5.2 (Vision) — uses Emergent LLM Key

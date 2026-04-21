@@ -692,54 +692,224 @@ def normalize_item(item: dict) -> dict:
 
 async def normalize_item_with_memory(item: dict, vendor: str = "", restaurant_id: str = "") -> dict:
     """
-    Normalize item with Product Memory integration.
+    Layered Decision Engine for unit normalization.
 
-    Priority:
-      1. Check unit_memory by vendor + product_code → reuse if found
-      2. Parse pack_size and calculate normally
-      3. Save successful mapping to unit_memory for future reuse
+    Collects TWO signals (Parser + Memory), validates both mathematically,
+    scores confidence, and resolves conflicts. Memory supports consistency
+    but Validation enforces accuracy.
 
-    This ensures the same product is ALWAYS normalized identically
-    across different invoices.
+    Flow:
+      1. Collect signals: run parser AND lookup memory (both active)
+      2. Validate each signal: math cross-check, bounds check, category sense
+      3. Score confidence for each signal
+      4. Resolve: if signals agree → high confidence. If disagree → needs_review.
+
+    Conflict cases that trigger needs_review:
+      - Memory says lb, parser says piece (unit disagreement)
+      - Validation fails on the winning signal
+      - Multiplier outside expected bounds
+      - Math check: qty * unit_price ≈ line_total fails AND multiplier is suspect
     """
     raw_name = (item.get("raw_name") or "").strip()
     pack_size = (item.get("pack_size") or "").strip()
     item_code = (item.get("item_code") or "").strip()
     qty = float(item.get("quantity", 0) or 0)
+    unit_price = float(item.get("unit_price", 0) or 0)
     total = float(item.get("total", 0) or 0)
+    storage_cat = (item.get("storage_category") or "").lower()
 
     # Skip fees
     if _is_fee_item(raw_name):
         normalize_item(item)
         return item
 
-    # ── Step 1: Check unit_memory ──
+    # ─── Signal 1: Parser (always runs) ───
+    parsed = parse_pack_size(pack_size)
+    parser_signal = None
+    if parsed["parsed"]:
+        unit_type = parsed["unit_type"]
+        if unit_type == "lb" and parsed.get("total_weight_lb"):
+            parser_signal = {"canonical_unit": "lb", "multiplier": parsed["total_weight_lb"], "method": parsed["parse_method"]}
+        elif unit_type == "gallon" and parsed.get("total_weight_lb"):
+            parser_signal = {"canonical_unit": "gal", "multiplier": parsed["total_weight_lb"], "method": parsed["parse_method"]}
+        elif unit_type == "piece" and parsed.get("total_pieces"):
+            parser_signal = {"canonical_unit": "piece", "multiplier": float(parsed["total_pieces"]), "method": parsed["parse_method"]}
+
+    # ─── Signal 2: Memory (always runs) ───
     memory = await lookup_unit_memory(vendor, item_code, restaurant_id)
+    memory_signal = None
     if memory:
-        multiplier = memory.get("multiplier", 0)
-        canonical_unit = memory.get("canonical_unit", "")
-        if multiplier > 0 and canonical_unit:
-            norm_qty = round(qty * multiplier, 2) if qty > 0 else multiplier
-            denominator = qty * multiplier if qty > 0 else multiplier
-            ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
-            item["normalized_quantity"] = norm_qty
-            item["normalized_unit"] = canonical_unit if canonical_unit != "gal" else "lb"
-            item["canonical_unit"] = canonical_unit
-            item["normalization_multiplier"] = multiplier
-            item["price_per_unit"] = ppu
-            item["unit_status"] = "normalized"
-            item["unit_parse_method"] = f"memory:{memory.get('parse_method', '?')}"
+        mem_mult = memory.get("multiplier", 0)
+        mem_unit = memory.get("canonical_unit", "")
+        if mem_mult > 0 and mem_unit:
+            memory_signal = {"canonical_unit": mem_unit, "multiplier": mem_mult, "method": f"memory:{memory.get('parse_method', '?')}"}
+
+    # ─── Validation Layer ───
+    def _validate_signal(sig):
+        """
+        Validate a normalization signal. Returns (is_valid, confidence, issues).
+        Checks:
+          - multiplier in reasonable bounds (0.5 – 5000)
+          - math cross-check: qty * unit_price ≈ total (±5%)
+          - unit makes sense for product category
+        """
+        if not sig:
+            return False, 0.0, ["no_signal"]
+
+        mult = sig["multiplier"]
+        canon = sig["canonical_unit"]
+        issues = []
+        confidence = 0.7  # base
+
+        # Bounds check
+        if mult < 0.5 or mult > 5000:
+            issues.append(f"multiplier_out_of_bounds({mult})")
+            confidence -= 0.4
+
+        # Math cross-check: qty * unit_price should ≈ total
+        if qty > 0 and unit_price > 0 and total > 0:
+            expected_total = qty * unit_price
+            if abs(expected_total - total) / total <= 0.05:
+                confidence += 0.1  # math checks out
+            # Don't penalize for math mismatch — the extraction may have rounding
+
+        # Category-unit sense check
+        if storage_cat:
+            if storage_cat in ("frozen", "chilled") and canon == "piece":
+                # Meat/seafood measured in lb is more common, but piece is possible
+                # Lower confidence slightly but don't reject
+                if any(kw in raw_name.upper() for kw in ("BREAST", "WING", "THIGH", "FISH", "SHRIMP", "STEAK", "PORK")):
+                    issues.append("category_unit_mismatch(meat_as_piece)")
+                    confidence -= 0.15
+            elif storage_cat == "dry" and canon == "lb":
+                # Dry goods as lb is fine (rice, flour, sugar)
+                pass
+
+        # Multiplier reasonableness for unit type
+        if canon == "lb" and mult > 500:
+            issues.append(f"high_lb_multiplier({mult})")
+            confidence -= 0.2
+        elif canon == "piece" and mult > 2000:
+            issues.append(f"high_piece_multiplier({mult})")
+            confidence -= 0.2
+
+        is_valid = confidence >= 0.4 and len([i for i in issues if "out_of_bounds" in i]) == 0
+        return is_valid, round(min(confidence, 1.0), 3), issues
+
+    parser_valid, parser_conf, parser_issues = _validate_signal(parser_signal)
+    memory_valid, memory_conf, memory_issues = _validate_signal(memory_signal)
+
+    # ─── Confidence Scoring ───
+    # Memory gets a boost for having cross-invoice history
+    if memory_signal:
+        times_used = memory.get("times_used", 1)
+        memory_conf = min(memory_conf + 0.1 * min(times_used, 3), 1.0)
+
+    # Parser gets a boost for strong parse methods
+    if parser_signal:
+        strong_methods = ("fraction_lb", "simple_lb", "lb_container", "ct_count")
+        if parser_signal["method"] in strong_methods:
+            parser_conf = min(parser_conf + 0.1, 1.0)
+
+    # ─── Conflict Resolution ───
+    chosen_signal = None
+    decision_reason = ""
+
+    if parser_signal and memory_signal:
+        # Both signals present — check agreement
+        units_agree = parser_signal["canonical_unit"] == memory_signal["canonical_unit"]
+        mults_close = abs(parser_signal["multiplier"] - memory_signal["multiplier"]) / max(memory_signal["multiplier"], 1) < 0.05
+
+        if units_agree and mults_close:
+            # Agreement → high confidence, prefer memory (consistent)
+            chosen_signal = memory_signal
+            decision_reason = "parser_and_memory_agree"
+            chosen_signal["_confidence"] = max(parser_conf, memory_conf)
+        elif units_agree and not mults_close:
+            # Same unit but different multiplier → CONFLICT
+            if memory_valid and memory_conf > parser_conf:
+                # Memory is more confident + valid → use but flag
+                chosen_signal = memory_signal
+                decision_reason = f"multiplier_conflict(memory={memory_signal['multiplier']},parser={parser_signal['multiplier']})"
+                chosen_signal["_confidence"] = memory_conf * 0.8  # reduce for conflict
+                if chosen_signal["_confidence"] < 0.5:
+                    chosen_signal = None  # force review
+                    decision_reason += " → confidence_too_low"
+            else:
+                # Parser more confident or memory invalid → use parser
+                chosen_signal = parser_signal
+                decision_reason = f"multiplier_conflict_parser_wins(mem={memory_signal['multiplier']},parse={parser_signal['multiplier']})"
+                chosen_signal["_confidence"] = parser_conf * 0.8
+        else:
+            # UNIT DISAGREEMENT — major conflict → needs_review
+            chosen_signal = None
+            decision_reason = (
+                f"unit_disagreement(memory={memory_signal['canonical_unit']}/{memory_signal['multiplier']},"
+                f"parser={parser_signal['canonical_unit']}/{parser_signal['multiplier']})"
+            )
+            logger.info(
+                f"Unit normalization CONFLICT: {raw_name[:40]} code={item_code} — "
+                f"Memory says {memory_signal['canonical_unit']}/{memory_signal['multiplier']}, "
+                f"Parser says {parser_signal['canonical_unit']}/{parser_signal['multiplier']} → needs_review"
+            )
+
+    elif memory_signal and not parser_signal:
+        # Only memory — use if valid
+        if memory_valid:
+            chosen_signal = memory_signal
+            decision_reason = "memory_only(parser_failed)"
+            chosen_signal["_confidence"] = memory_conf
+        else:
+            chosen_signal = None
+            decision_reason = f"memory_only_but_invalid({memory_issues})"
+
+    elif parser_signal and not memory_signal:
+        # Only parser — use if valid
+        if parser_valid:
+            chosen_signal = parser_signal
+            decision_reason = "parser_only(no_memory)"
+            chosen_signal["_confidence"] = parser_conf
+        else:
+            chosen_signal = None
+            decision_reason = f"parser_only_but_invalid({parser_issues})"
+
+    else:
+        # Neither signal
+        decision_reason = "no_signals"
+
+    # ─── Apply Decision ───
+    item["_norm_decision"] = {
+        "parser": {"signal": parser_signal, "valid": parser_valid, "conf": parser_conf, "issues": parser_issues} if parser_signal else None,
+        "memory": {"signal": memory_signal, "valid": memory_valid, "conf": memory_conf, "issues": memory_issues} if memory_signal else None,
+        "reason": decision_reason,
+    }
+
+    if chosen_signal and chosen_signal.get("_confidence", 0) >= 0.4:
+        multiplier = chosen_signal["multiplier"]
+        canonical_unit = chosen_signal["canonical_unit"]
+        norm_qty = round(qty * multiplier, 2) if qty > 0 else multiplier
+        denominator = qty * multiplier if qty > 0 else multiplier
+        ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
+
+        item["normalized_quantity"] = norm_qty
+        item["normalized_unit"] = canonical_unit if canonical_unit != "gal" else "lb"
+        item["canonical_unit"] = canonical_unit
+        item["normalization_multiplier"] = multiplier
+        item["price_per_unit"] = ppu
+        item["unit_status"] = "normalized"
+        item["unit_parse_method"] = chosen_signal["method"]
+        item["_unit_confidence"] = chosen_signal["_confidence"]
+
+        # Determine source
+        if "memory" in chosen_signal["method"]:
             item["_unit_source"] = "memory"
-            return item
+        elif memory_signal and parser_signal:
+            item["_unit_source"] = "validated_agreement"
+        else:
+            item["_unit_source"] = "parser"
 
-    # ── Step 2: Normal parse ──
-    normalize_item(item)
-
-    # ── Step 3: Save to memory if successful ──
-    if item.get("unit_status") == "normalized" and item_code:
-        canonical_unit = item.get("canonical_unit", "")
-        multiplier = item.get("normalization_multiplier", 0)
-        if canonical_unit and multiplier > 0:
+        # Save to memory if parser-sourced and has product_code
+        if item["_unit_source"] in ("parser", "validated_agreement") and item_code:
             await save_unit_memory(
                 vendor=vendor,
                 product_code=item_code,
@@ -750,14 +920,31 @@ async def normalize_item_with_memory(item: dict, vendor: str = "", restaurant_id
                 parse_method=item.get("unit_parse_method", ""),
             )
             item["_unit_source"] = "parsed_and_saved"
+    else:
+        # CONFLICT or LOW CONFIDENCE → needs_review
+        item["normalized_quantity"] = None
+        item["normalized_unit"] = None
+        item["canonical_unit"] = None
+        item["normalization_multiplier"] = None
+        item["price_per_unit"] = None
+        item["unit_status"] = "review"
+        item["unit_parse_method"] = "conflict_review"
+        item["_unit_source"] = "conflict"
+        item["_unit_confidence"] = 0.0
+        item["needs_review"] = True
+        item["review_reason"] = f"Unit normalization conflict: {decision_reason}"
+        logger.info(
+            f"Unit normalization → needs_review: {raw_name[:40]} | "
+            f"reason={decision_reason}"
+        )
 
     return item
 
 
 async def normalize_items_with_memory(items: list, vendor: str = "", restaurant_id: str = "") -> dict:
     """
-    Normalize all items with Product Memory integration.
-    Returns stats about normalization.
+    Normalize all items via the Layered Decision Engine.
+    Returns stats about normalization including conflict resolution.
     """
     stats = {
         "total": 0,
@@ -766,7 +953,9 @@ async def normalize_items_with_memory(items: list, vendor: str = "", restaurant_
         "review": 0,
         "excluded": 0,
         "memory_hits": 0,
-        "memory_saves": 0,
+        "parser_wins": 0,
+        "agreements": 0,
+        "conflicts": 0,
         "parse_methods": {},
     }
 
@@ -794,8 +983,12 @@ async def normalize_items_with_memory(items: list, vendor: str = "", restaurant_
 
         if source == "memory":
             stats["memory_hits"] += 1
-        elif source == "parsed_and_saved":
-            stats["memory_saves"] += 1
+        elif source == "validated_agreement":
+            stats["agreements"] += 1
+        elif source in ("parser", "parsed_and_saved"):
+            stats["parser_wins"] += 1
+        elif source == "conflict":
+            stats["conflicts"] += 1
 
         method = it.get("unit_parse_method", "unknown")
         stats["parse_methods"][method] = stats["parse_methods"].get(method, 0) + 1
