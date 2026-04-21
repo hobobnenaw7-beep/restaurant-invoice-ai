@@ -51,12 +51,17 @@ async def dashboard_summary(year: int = 0, month: int = 0, user=Depends(get_user
 
     smart_alerts = await generate_smart_alerts(rid)
 
-    # Milestone 4: merge Price Intelligence alerts (stored on db.alerts)
+    # Milestone 4 (DSS): merge Price Intelligence alerts (only High-confidence
+    # alerts are ever persisted by the backend — Medium/Low are suppressed at
+    # evaluation time).
     pi_alerts = []
     pi_cursor = db.alerts.find(
         {"restaurant_id": rid, "type": "price_intelligence"}, {"_id": 0}
     ).sort("change_pct", -1)
     async for pi in pi_cursor:
+        # Double-guard: skip if the cached record isn't high-confidence
+        if pi.get("confidence_level") and pi.get("confidence_level") != "high":
+            continue
         pi_alerts.append({
             "type": "price_increase",
             "severity": pi.get("severity", "medium"),
@@ -66,7 +71,10 @@ async def dashboard_summary(year: int = 0, month: int = 0, user=Depends(get_user
             "old_price": pi.get("previous_price", 0),
             "new_price": pi.get("new_price", 0),
             "source": "price_intelligence",
+            "confidence_level": pi.get("confidence_level", "high"),
+            "confidence_score": pi.get("confidence_score", 0),
             "canonical_unit": pi.get("canonical_unit", ""),
+            "message": pi.get("message", ""),
         })
     # Price intelligence alerts take priority in the bell
     smart_alerts = pi_alerts + smart_alerts

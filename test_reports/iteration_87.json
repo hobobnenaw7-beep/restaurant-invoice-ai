@@ -1,0 +1,41 @@
+{
+  "summary": "DSS (Decision-Support System) upgrade — backend contract testing complete. Validated Insight Confidence Engine, DSS guardrails (alert suppression for Medium/Low), data_quality classification/exclusion, probabilistic alert wording, and multi-tenant boundary. 47/47 tests pass: 27 pre-existing pure-function unit tests (test_dss_confidence.py 16 + test_price_intelligence_milestone4.py 11) + 20 new HTTP contract tests in test_dss_price_intelligence.py. Every products-list item exposes confidence{score,level,components,weights,explanation}, recommendation{level,actionable,label,headline,detail,action,tags}, and data_quality{good,fair,poor}. Weights are exactly recency=0.30, observations=0.25, identity=0.25, unit=0.20, and level mapping (High≥0.80, Medium 0.60–0.79, Low<0.60) is enforced per item. Poor-quality records surface in raw history (with data_quality_flag) but are correctly excluded from stats/trend/alert/vendor comparisons; the poor-only product (Ground Beef 80/20) returns confidence=low, stats.observations=0, alert=null, tags={review_suggested,data_thin}, action=null, and /vendors returns 404. Alerts endpoint and dashboard smart_alerts only surface confidence_level=='high' alerts. Alert/message wording is probabilistic ('High likelihood…' — no 'overpaying'). Backfill tags every inserted record with data_quality_flag.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_dss_price_intelligence.py",
+    "/app/backend/tests/test_dss_confidence.py",
+    "/app/backend/tests/test_price_intelligence_milestone4.py",
+    "/app/test_reports/pytest/pytest_dss_price_intelligence.xml"
+  ],
+  "action_items": [
+    "Informational only: the review request's LOW-confidence product ID ('e703a4fe-4eaf-44f7-9316-6ff65c0ea7de') was a typo. The actual seeded id for Ground Beef 80/20 (demo tenant) is 'e703a4fe-e389-4aec-8be4-bc34e5b9b8b3'. Test file uses the correct DB value. Main agent may want to update docs/seed_data comments for accuracy."
+  ],
+  "critical_code_review_comments": [
+    "evaluate_alert DSS gate is correctly enforced at evaluation time (line 535 in services/price_intelligence.py: returns None when confidence.level != 'high'). _evaluate_alert_for_product deletes stale alerts when confidence drops — good hygiene.",
+    "dashboard.py lines 62-64 double-guards confidence_level != 'high' before merging PI alerts into smart_alerts — defense in depth is appropriate given evaluate_alert already filters.",
+    "classify_data_quality has a small edge case: unit_confidence value not in any of the good/fair/poor sets falls through to 'fair' (line 93). Intentional but worth asserting with a test for unknown label future-proofing.",
+    "_analytic_observations treats missing data_quality_flag as 'good' (services/price_intelligence.py:315). Pre-DSS records without the flag will be counted as good — safe for the DSS rollout but may hide quality issues for very old records; a one-time migration to back-classify existing history could be considered.",
+    "Recommendation message for high+alert uses evaluate_alert's 'High likelihood you are paying above…' phrasing (price_intelligence.py:568-573) — confirmed non-accusatory and probabilistic. 'overpaying' never appears anywhere in the response surface area tested."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_dss_price_intelligence.py (created)"
+  ],
+  "success_rate": {
+    "backend": "100% (20/20 HTTP contract + 27/27 unit tests)",
+    "frontend": "not tested (backend-only per request)"
+  },
+  "test_credentials": "demo@test.com/testpassword (manager, 1 HIGH product: Chicken Breast id=2c131d7a-78ad-4715-bdab-2c8e685bb791 + 1 LOW product: Ground Beef 80/20 id=e703a4fe-e389-4aec-8be4-bc34e5b9b8b3 with 3 poor obs). staff@test.com/testpass123 (same tenant, used for cross-user read check).",
+  "seed_data_creation": "No test seed data created — all tests read existing seeded data. Backfill endpoint was invoked (idempotent) and did not produce residual side-effects.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "DSS contract now verified at /app/backend/tests/test_dss_price_intelligence.py. Run: `cd /app/backend && python3 -m pytest tests/test_dss_price_intelligence.py tests/test_dss_confidence.py tests/test_price_intelligence_milestone4.py -v` (47 tests). Seed demo@test.com has HIGH_CPID=2c131d7a-78ad-4715-bdab-2c8e685bb791 (Chicken Breast, 9 good obs + active alert) and LOW_CPID=e703a4fe-e389-4aec-8be4-bc34e5b9b8b3 (Ground Beef 80/20, 3 poor obs). The initial review-request ID for LOW was a typo — the correct id is confirmed above. To add a Medium-confidence product test, seed 3-5 good obs with mid-tier recency (30-90 days) so score lands in 0.60-0.79 — current suite has no medium-level fixture in DB (only asserted via pure unit tests).",
+  "rca of the issue": "N/A — no bugs. One minor friction: review-request document had a typo in LOW_CPID. Verified actual id in price_history via direct Mongo query and corrected test."
+}

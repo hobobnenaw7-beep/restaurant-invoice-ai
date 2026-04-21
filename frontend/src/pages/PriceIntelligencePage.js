@@ -11,13 +11,62 @@ import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianG
 import { toast } from 'sonner';
 import {
   TrendingUp, TrendingDown, Minus, AlertTriangle, Activity, Search, RefreshCw,
-  ArrowRight, Package, BarChart3, Layers, Tag
+  ArrowRight, Package, BarChart3, Layers, Tag, ShieldCheck, ShieldAlert, Shield, Info
 } from 'lucide-react';
+import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 // ── helpers ───────────────────────────────────────────────────────────
 const fmtPrice = (n, unit = '') => `$${Number(n || 0).toFixed(2)}${unit ? `/${unit}` : ''}`;
 const fmtPct = (n) => `${Number(n || 0).toFixed(1)}%`;
 const shortDate = (d) => (d || '').slice(0, 10);
+
+// ── Confidence Badge ──────────────────────────────────────────────────
+// Green = High (>=0.80) · Yellow = Medium (0.60–0.79) · Red = Low (<0.60)
+const CONF_CFG = {
+  high:   { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500', icon: ShieldCheck, label: 'HIGH' },
+  medium: { bg: 'bg-amber-100',   text: 'text-amber-700',   border: 'border-amber-200',   dot: 'bg-amber-500',   icon: ShieldAlert, label: 'MEDIUM' },
+  low:    { bg: 'bg-red-100',     text: 'text-red-700',     border: 'border-red-200',     dot: 'bg-red-500',     icon: Shield,      label: 'LOW' },
+};
+
+function ConfidenceBadge({ confidence, size = 'sm' }) {
+  if (!confidence) return null;
+  const level = confidence.level || 'low';
+  const cfg = CONF_CFG[level] || CONF_CFG.low;
+  const Icon = cfg.icon;
+  const cls = size === 'lg'
+    ? 'px-2.5 py-1 text-[11px]'
+    : 'px-2 py-0.5 text-[10px]';
+  return (
+    <TooltipProvider delayDuration={200}>
+      <UITooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={`inline-flex items-center gap-1 rounded-full border font-bold ${cfg.bg} ${cfg.text} ${cfg.border} ${cls}`}
+            data-testid={`confidence-badge-${level}`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+            <Icon className="w-3 h-3" />
+            {cfg.label} · {Number(confidence.score || 0).toFixed(2)}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-[11px]">
+          <div className="space-y-1.5">
+            <p className="font-semibold">{cfg.label} confidence — score {Number(confidence.score || 0).toFixed(2)}</p>
+            <p className="text-slate-200">{confidence.explanation || ''}</p>
+            {confidence.components && (
+              <ul className="space-y-0.5 text-[10px] text-slate-300 pt-1 border-t border-slate-700">
+                <li>Recency: {Number(confidence.components.recency).toFixed(2)} × {confidence.weights?.recency}</li>
+                <li>Observations: {Number(confidence.components.observations).toFixed(2)} × {confidence.weights?.observations}</li>
+                <li>Identity: {Number(confidence.components.identity).toFixed(2)} × {confidence.weights?.identity}</li>
+                <li>Unit: {Number(confidence.components.unit).toFixed(2)} × {confidence.weights?.unit}</li>
+              </ul>
+            )}
+          </div>
+        </TooltipContent>
+      </UITooltip>
+    </TooltipProvider>
+  );
+}
 
 function TrendArrow({ trend }) {
   if (trend === 'up') return <TrendingUp className="w-3.5 h-3.5 text-red-500" />;
@@ -54,6 +103,35 @@ function AlertBadge({ alert }) {
       <AlertTriangle className="w-3 h-3" />
       +{fmtPct(alert.change_pct)} vs avg
     </span>
+  );
+}
+
+// ── Recommendation panel (DSS guardrail-aware) ─────────────────────────
+function RecommendationPanel({ rec, confidence }) {
+  if (!rec) return null;
+  const level = confidence?.level || rec.level || 'low';
+  const tone = level === 'high'
+    ? { border: 'border-emerald-200', bg: 'bg-emerald-50', text: 'text-emerald-900', icon: ShieldCheck, iconBg: 'bg-emerald-600', ribbon: 'Actionable' }
+    : level === 'medium'
+      ? { border: 'border-amber-200', bg: 'bg-amber-50', text: 'text-amber-900', icon: ShieldAlert, iconBg: 'bg-amber-500', ribbon: 'Review suggested' }
+      : { border: 'border-slate-200', bg: 'bg-slate-50', text: 'text-slate-700', icon: Shield, iconBg: 'bg-slate-400', ribbon: 'Raw data only' };
+  const Icon = tone.icon;
+  return (
+    <div className={`border rounded-xl p-3.5 flex items-start gap-3 ${tone.border} ${tone.bg}`} data-testid={`recommendation-${level}`}>
+      <div className={`w-9 h-9 rounded-xl ${tone.iconBg} flex items-center justify-center flex-shrink-0`}>
+        <Icon className="w-4 h-4 text-white" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap mb-1">
+          <span className={`text-[10px] font-bold uppercase tracking-wider ${tone.text}`}>{tone.ribbon}</span>
+          {rec.action && level === 'high' && (
+            <Badge className="bg-emerald-600 text-white text-[9px] uppercase tracking-wider" data-testid={`rec-action-${rec.action}`}>{rec.action.replace('_', ' ')}</Badge>
+          )}
+        </div>
+        <p className={`text-sm font-heading font-bold ${tone.text}`}>{rec.headline || '—'}</p>
+        {rec.detail && <p className="text-[12px] text-slate-600 mt-0.5 leading-relaxed">{rec.detail}</p>}
+      </div>
+    </div>
   );
 }
 
@@ -108,6 +186,10 @@ function PriceDetailModal({ api, item, onClose }) {
   const stats = history?.stats || {};
   const trend = history?.trend || {};
   const alert = history?.alert;
+  const confidence = history?.confidence;
+  const recommendation = history?.recommendation;
+  const dq = history?.data_quality || {};
+  const isLowConf = confidence?.level === 'low';
 
   return (
     <Dialog open={!!item} onOpenChange={onClose}>
@@ -119,6 +201,7 @@ function PriceDetailModal({ api, item, onClose }) {
             <Badge variant="outline" className="text-[10px] font-mono border-teal-200 text-teal-700 bg-teal-50">
               $/{item.canonical_unit}
             </Badge>
+            <ConfidenceBadge confidence={confidence} size="lg" />
             <TrendBadge trend={trend} />
             {alert && <AlertBadge alert={alert} />}
           </DialogTitle>
@@ -128,26 +211,43 @@ function PriceDetailModal({ api, item, onClose }) {
           <div className="space-y-3 py-4">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
         ) : (
           <div className="space-y-5">
-            {/* Stats row */}
-            <div className="grid grid-cols-4 gap-3">
-              <div className="bg-slate-50 rounded-lg p-3 text-center" data-testid="stat-avg">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Avg</p>
-                <p className="text-lg font-bold text-navy-900 tabular-nums mt-0.5">{fmtPrice(stats.avg)}</p>
+            {/* Recommendation panel (DSS-gated) */}
+            {recommendation && <RecommendationPanel rec={recommendation} confidence={confidence} />}
+
+            {/* Data-quality note */}
+            {(dq.fair > 0 || dq.poor > 0) && (
+              <div className="flex items-start gap-2 text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-testid="pi-quality-note">
+                <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                <span>
+                  {dq.good} of {dq.good + dq.fair + dq.poor} observations passed the data-quality gate and inform the analytics above.
+                  {dq.fair > 0 && <> {dq.fair} fair-quality record(s) are shown in raw history only.</>}
+                  {dq.poor > 0 && <> {dq.poor} poor-quality record(s) are excluded from trend, alerts, and vendor comparisons.</>}
+                </span>
               </div>
-              <div className="bg-emerald-50 rounded-lg p-3 text-center" data-testid="stat-min">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Min</p>
-                <p className="text-lg font-bold text-emerald-600 tabular-nums mt-0.5">{fmtPrice(stats.min)}</p>
+            )}
+
+            {/* Stats row (only when confidence is non-low) */}
+            {!isLowConf && (
+              <div className="grid grid-cols-4 gap-3">
+                <div className="bg-slate-50 rounded-lg p-3 text-center" data-testid="stat-avg">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Avg</p>
+                  <p className="text-lg font-bold text-navy-900 tabular-nums mt-0.5">{fmtPrice(stats.avg)}</p>
+                </div>
+                <div className="bg-emerald-50 rounded-lg p-3 text-center" data-testid="stat-min">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Min</p>
+                  <p className="text-lg font-bold text-emerald-600 tabular-nums mt-0.5">{fmtPrice(stats.min)}</p>
+                </div>
+                <div className="bg-red-50 rounded-lg p-3 text-center" data-testid="stat-max">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Max</p>
+                  <p className="text-lg font-bold text-red-500 tabular-nums mt-0.5">{fmtPrice(stats.max)}</p>
+                </div>
+                <div className="bg-teal-50 rounded-lg p-3 text-center" data-testid="stat-latest">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Latest</p>
+                  <p className="text-lg font-bold text-teal-700 tabular-nums mt-0.5">{fmtPrice(stats.latest)}</p>
+                  <p className="text-[9px] text-slate-400 mt-0.5 truncate">{shortDate(stats.latest_date) || '—'}</p>
+                </div>
               </div>
-              <div className="bg-red-50 rounded-lg p-3 text-center" data-testid="stat-max">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Max</p>
-                <p className="text-lg font-bold text-red-500 tabular-nums mt-0.5">{fmtPrice(stats.max)}</p>
-              </div>
-              <div className="bg-teal-50 rounded-lg p-3 text-center" data-testid="stat-latest">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Latest</p>
-                <p className="text-lg font-bold text-teal-700 tabular-nums mt-0.5">{fmtPrice(stats.latest)}</p>
-                <p className="text-[9px] text-slate-400 mt-0.5 truncate">{shortDate(stats.latest_date) || '—'}</p>
-              </div>
-            </div>
+            )}
 
             {alert && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-3" data-testid="pi-alert-banner">
@@ -155,7 +255,7 @@ function PriceDetailModal({ api, item, onClose }) {
                   <AlertTriangle className="w-4 h-4 text-red-600" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-red-800">Price spike detected</p>
+                  <p className="text-xs font-bold text-red-800">High likelihood of paying above typical</p>
                   <p className="text-[11px] text-red-700 mt-0.5">
                     Latest price <span className="font-bold tabular-nums">{fmtPrice(alert.latest_price)}</span> is{' '}
                     <span className="font-bold">+{fmtPct(alert.change_pct)}</span> above the moving average of{' '}
@@ -166,8 +266,8 @@ function PriceDetailModal({ api, item, onClose }) {
               </div>
             )}
 
-            {/* Chart */}
-            {chartData.length > 0 && (
+            {/* Chart (not for low-confidence) */}
+            {!isLowConf && chartData.length > 0 && (
               <div className="h-52 w-full">
                 <ResponsiveContainer>
                   <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
@@ -182,7 +282,8 @@ function PriceDetailModal({ api, item, onClose }) {
               </div>
             )}
 
-            {/* Vendor comparison */}
+            {/* Vendor comparison (only for non-low confidence) */}
+            {!isLowConf && (
             <div>
               <h3 className="text-xs font-heading font-bold text-navy-900 mb-2 flex items-center gap-1.5">
                 <Layers className="w-3.5 h-3.5 text-teal-600" />
@@ -226,8 +327,9 @@ function PriceDetailModal({ api, item, onClose }) {
                 </TableBody>
               </Table>
             </div>
+            )}
 
-            {/* History */}
+            {/* History — always shown (raw transparency) */}
             <div>
               <h3 className="text-xs font-heading font-bold text-navy-900 mb-2 flex items-center gap-1.5">
                 <BarChart3 className="w-3.5 h-3.5 text-teal-600" />
@@ -242,22 +344,26 @@ function PriceDetailModal({ api, item, onClose }) {
                       <TableHead className="text-[10px]">Raw name</TableHead>
                       <TableHead className="text-[10px] text-right">Price</TableHead>
                       <TableHead className="text-[10px] text-right">Qty</TableHead>
-                      <TableHead className="text-[10px]">Confidence</TableHead>
+                      <TableHead className="text-[10px]">Quality</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(history?.observations || []).slice().reverse().map((o) => (
-                      <TableRow key={o.id} data-testid={`pi-history-row-${o.id}`}>
-                        <TableCell className="text-[11px] tabular-nums text-slate-600">{shortDate(o.invoice_date) || shortDate(o.observed_at)}</TableCell>
-                        <TableCell className="text-[11px] text-navy-900">{o.vendor_name}</TableCell>
-                        <TableCell className="text-[11px] text-slate-500 truncate max-w-[220px]">{o.raw_name}</TableCell>
-                        <TableCell className="text-right tabular-nums text-[11px] font-semibold">{fmtPrice(o.price_per_unit)}</TableCell>
-                        <TableCell className="text-right tabular-nums text-[11px] text-slate-500">{Number(o.quantity || 0).toFixed(1)}</TableCell>
-                        <TableCell className="text-[10px] text-slate-400">
-                          id:{o.identity_match_type}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {(history?.observations || []).slice().reverse().map((o) => {
+                      const flag = o.data_quality_flag || 'good';
+                      const dqColor = flag === 'good' ? 'bg-emerald-100 text-emerald-700' : flag === 'fair' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700';
+                      return (
+                        <TableRow key={o.id} data-testid={`pi-history-row-${o.id}`} className={flag === 'poor' ? 'opacity-60' : ''}>
+                          <TableCell className="text-[11px] tabular-nums text-slate-600">{shortDate(o.invoice_date) || shortDate(o.observed_at)}</TableCell>
+                          <TableCell className="text-[11px] text-navy-900">{o.vendor_name}</TableCell>
+                          <TableCell className="text-[11px] text-slate-500 truncate max-w-[220px]">{o.raw_name}</TableCell>
+                          <TableCell className="text-right tabular-nums text-[11px] font-semibold">{fmtPrice(o.price_per_unit)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-[11px] text-slate-500">{Number(o.quantity || 0).toFixed(1)}</TableCell>
+                          <TableCell>
+                            <span className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${dqColor}`} data-testid={`pi-dq-${flag}`}>{flag}</span>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -324,7 +430,10 @@ export default function PriceIntelligencePage() {
     const upCount = items.filter((i) => i.trend?.trend === 'up').length;
     const downCount = items.filter((i) => i.trend?.trend === 'down').length;
     const totalObs = items.reduce((s, i) => s + (i.stats?.observations || 0), 0);
-    return { total: items.length, alertCount, upCount, downCount, totalObs };
+    const highConf = items.filter((i) => i.confidence?.level === 'high').length;
+    const mediumConf = items.filter((i) => i.confidence?.level === 'medium').length;
+    const lowConf = items.filter((i) => i.confidence?.level === 'low').length;
+    return { total: items.length, alertCount, upCount, downCount, totalObs, highConf, mediumConf, lowConf };
   }, [data]);
 
   return (
@@ -353,9 +462,9 @@ export default function PriceIntelligencePage() {
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Kpi label="Tracked products" value={kpis.total} icon={Tag} iconBg="bg-teal-600" sub={`${kpis.totalObs} observations`} testId="kpi-products" />
-        <Kpi label="Active alerts" value={kpis.alertCount} icon={AlertTriangle} iconBg="bg-red-500" sub=">10% above avg" testId="kpi-alerts" />
-        <Kpi label="Trending up" value={kpis.upCount} icon={TrendingUp} iconBg="bg-amber-500" testId="kpi-up" />
-        <Kpi label="Trending down" value={kpis.downCount} icon={TrendingDown} iconBg="bg-emerald-600" testId="kpi-down" />
+        <Kpi label="High-confidence alerts" value={kpis.alertCount} icon={AlertTriangle} iconBg="bg-red-500" sub="only high conf surfaces" testId="kpi-alerts" />
+        <Kpi label="High confidence" value={kpis.highConf} icon={ShieldCheck} iconBg="bg-emerald-600" sub={`${kpis.mediumConf} medium · ${kpis.lowConf} low`} testId="kpi-high-conf" />
+        <Kpi label="Trending up" value={kpis.upCount} icon={TrendingUp} iconBg="bg-amber-500" sub={`${kpis.downCount} trending down`} testId="kpi-up" />
       </div>
 
       {/* Filters */}
@@ -404,44 +513,57 @@ export default function PriceIntelligencePage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="text-[10px]">Product</TableHead>
+                  <TableHead className="text-[10px]">Confidence</TableHead>
                   <TableHead className="text-[10px]">Unit</TableHead>
                   <TableHead className="text-[10px] text-right">Latest</TableHead>
                   <TableHead className="text-[10px] text-right">Avg</TableHead>
                   <TableHead className="text-[10px] text-right">Min</TableHead>
                   <TableHead className="text-[10px] text-right">Max</TableHead>
                   <TableHead className="text-[10px]">Trend</TableHead>
-                  <TableHead className="text-[10px]">Vendors</TableHead>
+                  <TableHead className="text-[10px]">Recommendation</TableHead>
                   <TableHead className="text-[10px] text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((row) => (
-                  <TableRow key={`${row.canonical_product_id}-${row.canonical_unit}`} data-testid={`pi-row-${row.canonical_product_id}`} className="hover:bg-slate-50/50">
-                    <TableCell className="max-w-[280px]">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-navy-900 truncate">{row.canonical_name}</span>
-                        {row.alert && <AlertBadge alert={row.alert} />}
-                      </div>
-                      {row.category && <p className="text-[10px] text-slate-400 uppercase tracking-wider mt-0.5">{row.category}</p>}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-[10px] font-mono border-teal-200 text-teal-700 bg-teal-50">
-                        $/{row.canonical_unit}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-xs font-semibold">{fmtPrice(row.stats?.latest)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-xs text-slate-600">{fmtPrice(row.stats?.avg)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-xs text-emerald-700">{fmtPrice(row.stats?.min)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-xs text-red-600">{fmtPrice(row.stats?.max)}</TableCell>
-                    <TableCell><TrendBadge trend={row.trend} /></TableCell>
-                    <TableCell className="text-xs text-slate-500">{row.vendor_count} · {(row.vendors || []).slice(0, 2).join(', ')}{(row.vendors || []).length > 2 ? '…' : ''}</TableCell>
-                    <TableCell className="text-right">
-                      <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setSelected(row)} data-testid={`pi-details-btn-${row.canonical_product_id}`}>
-                        Details <ArrowRight className="w-3 h-3 ml-1" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {filtered.map((row) => {
+                  const level = row.confidence?.level || 'low';
+                  const isLow = level === 'low';
+                  return (
+                    <TableRow key={`${row.canonical_product_id}-${row.canonical_unit}`} data-testid={`pi-row-${row.canonical_product_id}`} className={`hover:bg-slate-50/50 ${isLow ? 'opacity-70' : ''}`}>
+                      <TableCell className="max-w-[260px]">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-navy-900 truncate">{row.canonical_name}</span>
+                          {row.alert && level === 'high' && <AlertBadge alert={row.alert} />}
+                        </div>
+                        {row.category && <p className="text-[10px] text-slate-400 uppercase tracking-wider mt-0.5">{row.category}</p>}
+                      </TableCell>
+                      <TableCell><ConfidenceBadge confidence={row.confidence} /></TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-[10px] font-mono border-teal-200 text-teal-700 bg-teal-50">
+                          $/{row.canonical_unit}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-xs font-semibold">{fmtPrice(row.stats?.latest)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-xs text-slate-600">{isLow ? '—' : fmtPrice(row.stats?.avg)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-xs text-emerald-700">{isLow ? '—' : fmtPrice(row.stats?.min)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-xs text-red-600">{isLow ? '—' : fmtPrice(row.stats?.max)}</TableCell>
+                      <TableCell>{isLow ? <span className="text-[10px] text-slate-400">—</span> : <TrendBadge trend={row.trend} />}</TableCell>
+                      <TableCell className="max-w-[220px]">
+                        {row.recommendation ? (
+                          <div className="text-[11px]" data-testid={`pi-rec-cell-${row.canonical_product_id}`}>
+                            <p className={`font-semibold truncate ${level === 'high' ? 'text-emerald-700' : level === 'medium' ? 'text-amber-700' : 'text-slate-400'}`}>{row.recommendation.headline || '—'}</p>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-wider">{row.recommendation.label}</p>
+                          </div>
+                        ) : <span className="text-[10px] text-slate-400">—</span>}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setSelected(row)} data-testid={`pi-details-btn-${row.canonical_product_id}`}>
+                          Details <ArrowRight className="w-3 h-3 ml-1" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

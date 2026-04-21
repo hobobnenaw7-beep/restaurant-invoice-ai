@@ -50,6 +50,48 @@ PRICE_ALERT_PCT_THRESHOLD = 10.0         # percent above moving average
 HIGH_IDENTITY_CONFIDENCE = 0.80
 HIGH_UNIT_CONFIDENCE = {"parser", "memory:user_corrected", "user_corrected", "auto"}
 
+# ── Decision-Support System (DSS) Scoring ─────────────────────────────
+# Insight confidence is a weighted sum of four independently-scored
+# components. Each component returns a value in [0, 1]; weights sum to 1.0.
+#
+#   recency          (weight 0.30) — how fresh is the latest observation
+#   observation_count(weight 0.25) — how many data points inform the insight
+#   identity         (weight 0.25) — mean per-observation identity_confidence
+#   unit             (weight 0.20) — mean per-observation unit quality
+#
+# Final confidence_score -> level mapping:
+#   High    (actionable): >= 0.80
+#   Medium  (review):    0.60 .. 0.79
+#   Low     (raw only):  < 0.60
+INSIGHT_WEIGHTS = {
+    "recency": 0.30,
+    "observations": 0.25,
+    "identity": 0.25,
+    "unit": 0.20,
+}
+HIGH_CONFIDENCE_THRESHOLD = 0.80
+MEDIUM_CONFIDENCE_THRESHOLD = 0.60
+
+# Per-record data quality classification
+#   good : safe for trend / alerts / recommendations / vendor comparisons
+#   fair : show in raw history only; excluded from analytics
+#   poor : always excluded
+_GOOD_UNIT_CONF = {"parser", "user_corrected", "memory:user_corrected", "auto"}
+_FAIR_UNIT_CONF = {"legacy_parser"}
+_POOR_UNIT_CONF = {"review", "conflict", "unknown", ""}
+
+
+def classify_data_quality(*, identity_confidence: float, unit_confidence: str) -> str:
+    """Return data_quality_flag ∈ {good, fair, poor}."""
+    uc = (unit_confidence or "").lower()
+    if uc in _POOR_UNIT_CONF or identity_confidence < 0.60:
+        return "poor"
+    if uc in _FAIR_UNIT_CONF or identity_confidence < HIGH_IDENTITY_CONFIDENCE:
+        return "fair"
+    if uc in _GOOD_UNIT_CONF and identity_confidence >= HIGH_IDENTITY_CONFIDENCE:
+        return "good"
+    return "fair"
+
 
 # ── Vendor key normalization (matches unit_normalizer convention) ────
 def _normalize_vendor_key(vendor: str) -> str:
@@ -225,6 +267,10 @@ async def ingest_purchase_items(
             "identity_match_type": identity_match_type,
             "unit_confidence": unit_conf_label or _unit_confidence_label(item),
             "unit_source": item.get("_unit_source") or "",
+            "data_quality_flag": classify_data_quality(
+                identity_confidence=identity_conf,
+                unit_confidence=unit_conf_label or _unit_confidence_label(item),
+            ),
             "observed_at": invoice_date or now,
             "created_at": now,
         }
@@ -264,11 +310,134 @@ def _sort_observations(obs: list[dict]) -> list[dict]:
     return sorted(obs, key=lambda x: (x.get("observed_at") or "", x.get("created_at") or ""))
 
 
+def _analytic_observations(observations: list[dict]) -> list[dict]:
+    """Keep only `good` quality observations — used by trend/alert/vendor views."""
+    return [o for o in observations if (o.get("data_quality_flag") or "good") == "good"]
+
+
 def _compute_ma(prices: list[float], window: int = 3) -> Optional[float]:
     """Arithmetic mean of the last `window` items, or None if insufficient."""
     if len(prices) < window:
         return None
     return round(sum(prices[-window:]) / window, 4)
+
+
+# ── Insight Confidence Engine ─────────────────────────────────────────
+def _score_recency(latest_observed_at: str) -> tuple[float, int]:
+    """Map age-in-days of the latest observation to a score in [0,1]."""
+    if not latest_observed_at:
+        return 0.0, 9999
+    try:
+        d = datetime.fromisoformat(latest_observed_at[:19]) if "T" in latest_observed_at \
+            else datetime.strptime(latest_observed_at[:10], "%Y-%m-%d")
+    except ValueError:
+        return 0.0, 9999
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    age_days = max(0, (now - d).days)
+    if age_days <= 14:
+        return 1.0, age_days
+    if age_days <= 30:
+        return 0.70, age_days
+    if age_days <= 90:
+        return 0.40, age_days
+    if age_days <= 180:
+        return 0.20, age_days
+    return 0.05, age_days
+
+
+def _score_observations(n: int) -> float:
+    """More observations → higher score."""
+    if n >= 6: return 1.0
+    if n >= 4: return 0.70
+    if n >= 3: return 0.50
+    if n >= 2: return 0.25
+    if n >= 1: return 0.10
+    return 0.0
+
+
+def _score_identity(observations: list[dict]) -> float:
+    """Mean identity_confidence across the sample (already in [0,1])."""
+    if not observations:
+        return 0.0
+    vals = [float(o.get("identity_confidence") or 0) for o in observations]
+    return round(sum(vals) / len(vals), 4) if vals else 0.0
+
+
+def _score_unit(observations: list[dict]) -> float:
+    """Unit normalization quality — weighted average across the sample."""
+    if not observations:
+        return 0.0
+    per_record = {
+        "user_corrected": 1.0, "memory:user_corrected": 1.0,
+        "parser": 0.95, "auto": 0.9,
+        "legacy_parser": 0.5,
+        "conflict": 0.1, "review": 0.0, "unknown": 0.1, "": 0.1,
+    }
+    vals = [per_record.get((o.get("unit_confidence") or "").lower(), 0.3) for o in observations]
+    return round(sum(vals) / len(vals), 4)
+
+
+def compute_insight_confidence(observations: list[dict]) -> dict:
+    """
+    Compute an insight confidence score (0..1) + categorical level.
+
+    Uses INSIGHT_WEIGHTS (recency 0.30, observations 0.25, identity 0.25, unit 0.20).
+    Returns:
+      {
+        score: float,
+        level: 'high'|'medium'|'low',
+        components: {recency, observations, identity, unit},
+        explanation: human-readable string,
+        age_days: int,
+        observations_count: int,
+      }
+    """
+    good = _analytic_observations(observations)
+    n = len(good)
+    latest_obs_at = (good[-1].get("observed_at") or good[-1].get("invoice_date") or "") if good else ""
+    rec_score, age_days = _score_recency(latest_obs_at)
+    obs_score = _score_observations(n)
+    id_score = _score_identity(good)
+    unit_score = _score_unit(good)
+
+    score = round(
+        rec_score * INSIGHT_WEIGHTS["recency"]
+        + obs_score * INSIGHT_WEIGHTS["observations"]
+        + id_score * INSIGHT_WEIGHTS["identity"]
+        + unit_score * INSIGHT_WEIGHTS["unit"],
+        4,
+    )
+
+    if score >= HIGH_CONFIDENCE_THRESHOLD:
+        level = "high"
+    elif score >= MEDIUM_CONFIDENCE_THRESHOLD:
+        level = "medium"
+    else:
+        level = "low"
+
+    if n == 0:
+        explanation = "No high-quality observations available yet."
+    else:
+        explanation = (
+            f"Based on {n} high-quality observation{'s' if n != 1 else ''}, "
+            f"latest {age_days} day{'s' if age_days != 1 else ''} ago, "
+            f"identity strength {id_score:.2f}, unit strength {unit_score:.2f}."
+        )
+
+    return {
+        "score": score,
+        "level": level,
+        "components": {
+            "recency": round(rec_score, 4),
+            "observations": round(obs_score, 4),
+            "identity": round(id_score, 4),
+            "unit": round(unit_score, 4),
+        },
+        "weights": INSIGHT_WEIGHTS,
+        "age_days": age_days,
+        "observations_count": n,
+        "explanation": explanation,
+    }
 
 
 def compute_trend(observations: list[dict]) -> dict:
@@ -280,8 +449,9 @@ def compute_trend(observations: list[dict]) -> dict:
       change_pct: float or None,
       observations_used: int,
     }
+    NOTE: only `good`-quality observations are used.
     """
-    obs = _sort_observations(observations)
+    obs = _sort_observations(_analytic_observations(observations))
     prices = [float(o.get("price_per_unit") or 0) for o in obs]
     prices = [p for p in prices if p > 0]
 
@@ -324,10 +494,10 @@ def compute_trend(observations: list[dict]) -> dict:
 
 def compute_stats(observations: list[dict]) -> dict:
     """
-    Per-product min / max / avg / latest across observations.
+    Per-product min / max / avg / latest across `good`-quality observations.
     Assumes all observations share the same canonical_unit.
     """
-    obs = _sort_observations(observations)
+    obs = _sort_observations(_analytic_observations(observations))
     prices = [float(o.get("price_per_unit") or 0) for o in obs]
     prices = [p for p in prices if p > 0]
     if not prices:
@@ -352,29 +522,25 @@ def compute_stats(observations: list[dict]) -> dict:
 
 def evaluate_alert(observations: list[dict]) -> Optional[dict]:
     """
-    Return an alert dict when the latest price is > MA by PRICE_ALERT_PCT_THRESHOLD
-    with enough observations and high confidence. Otherwise None.
+    Return an alert dict ONLY when:
+      - latest_price > moving_average * (1 + PRICE_ALERT_PCT_THRESHOLD/100)
+      - >= MIN_OBSERVATIONS_FOR_ALERT high-confidence observations
+      - insight confidence level == 'high'  (DSS guardrail — Medium/Low suppressed)
     """
-    obs = _sort_observations(observations)
+    obs = _sort_observations(_analytic_observations(observations))
     if len(obs) < MIN_OBSERVATIONS_FOR_ALERT:
         return None
 
-    # Only count high-confidence observations
-    high_conf = [
-        o for o in obs
-        if float(o.get("identity_confidence") or 0) >= HIGH_IDENTITY_CONFIDENCE
-        and (o.get("unit_confidence") or "") not in ("review", "conflict", "unknown", "")
-    ]
-    if len(high_conf) < MIN_OBSERVATIONS_FOR_ALERT:
-        return None
+    confidence = compute_insight_confidence(observations)
+    if confidence["level"] != "high":
+        return None  # DSS rule: only High-confidence alerts surface
 
-    latest = high_conf[-1]
+    latest = obs[-1]
     latest_price = float(latest.get("price_per_unit") or 0)
     if latest_price <= 0:
         return None
 
-    # Moving average over all prior high-confidence observations (exclude latest)
-    prior = [float(o.get("price_per_unit") or 0) for o in high_conf[:-1]]
+    prior = [float(o.get("price_per_unit") or 0) for o in obs[:-1]]
     prior = [p for p in prior if p > 0]
     if len(prior) < 2:
         return None
@@ -393,11 +559,18 @@ def evaluate_alert(observations: list[dict]) -> Optional[dict]:
         "latest_price": round(latest_price, 4),
         "moving_average": round(ma, 4),
         "change_pct": change_pct,
-        "observations": len(high_conf),
+        "observations": len(obs),
         "latest_vendor": latest.get("vendor_name") or "",
         "latest_invoice_date": latest.get("invoice_date") or "",
         "latest_purchase_id": latest.get("purchase_id") or "",
         "severity": "high" if change_pct >= 20 else "medium",
+        "confidence": confidence,
+        "message": (
+            f"High likelihood you are paying above the recent typical price for "
+            f"{latest.get('canonical_name','this product')} — latest "
+            f"${latest_price:.2f}/{latest.get('canonical_unit','unit')} is "
+            f"~{change_pct:.1f}% above the moving average ${ma:.2f}."
+        ),
     }
 
 
@@ -410,14 +583,14 @@ async def _evaluate_alert_for_product(*, restaurant_id: str, canonical_product_i
     if not obs:
         return None
     alert = evaluate_alert(obs)
-    # Canonical alert record key
     alert_key = {
         "restaurant_id": restaurant_id,
         "type": "price_intelligence",
         "canonical_product_id": canonical_product_id,
     }
     if not alert:
-        # Clear any stale alerts for this product
+        # DSS guardrail: clear any stale alerts when confidence drops below High
+        # or when the price normalises back below threshold.
         await db.alerts.delete_many(alert_key)
         return None
 
@@ -433,12 +606,10 @@ async def _evaluate_alert_for_product(*, restaurant_id: str, canonical_product_i
         "vendor": alert["latest_vendor"],
         "invoice_date": alert["latest_invoice_date"],
         "observations": alert["observations"],
-        "message": (
-            f"{alert['canonical_name']} — latest ${alert['latest_price']:.2f}/"
-            f"{alert['canonical_unit']} is {alert['change_pct']:.1f}% above moving "
-            f"average ${alert['moving_average']:.2f}/{alert['canonical_unit']} "
-            f"({alert['observations']} observations)"
-        ),
+        "confidence_score": alert["confidence"]["score"],
+        "confidence_level": alert["confidence"]["level"],
+        "confidence_explanation": alert["confidence"]["explanation"],
+        "message": alert["message"],
         "is_read": False,
         "updated_at": now,
     }
@@ -477,8 +648,20 @@ async def list_products_summary(restaurant_id: str) -> list[dict]:
         stats = compute_stats(obs_list)
         trend = compute_trend(obs_list)
         alert = evaluate_alert(obs_list)
+        confidence = compute_insight_confidence(obs_list)
+        vendor_comp = _vendor_comparison_from_obs(obs_list)
+        recommendation = build_recommendation(
+            trend=trend, alert=alert, confidence=confidence, vendor_data=vendor_comp,
+        )
         cp = cp_map.get(cpid, {})
-        vendors = sorted({o.get("vendor_name") or "" for o in obs_list if o.get("vendor_name")})
+        good_count = sum(1 for o in obs_list if (o.get("data_quality_flag") or "good") == "good")
+        fair_count = sum(1 for o in obs_list if (o.get("data_quality_flag") or "") == "fair")
+        poor_count = sum(1 for o in obs_list if (o.get("data_quality_flag") or "") == "poor")
+        vendors = sorted({
+            o.get("vendor_name") or ""
+            for o in obs_list
+            if o.get("vendor_name") and (o.get("data_quality_flag") or "good") == "good"
+        })
         out.append({
             "canonical_product_id": cpid,
             "canonical_name": cp.get("canonical_name") or obs_list[-1].get("canonical_name") or "",
@@ -489,59 +672,27 @@ async def list_products_summary(restaurant_id: str) -> list[dict]:
             "vendors": vendors,
             "vendor_count": len(vendors),
             "alert": alert,
+            "confidence": confidence,
+            "recommendation": recommendation,
+            "data_quality": {"good": good_count, "fair": fair_count, "poor": poor_count},
         })
-    out.sort(key=lambda x: (x["alert"] is None, -x["stats"].get("observations", 0), x["canonical_name"]))
+    # High-confidence alerts first, then by confidence level, then by observation depth
+    out.sort(key=lambda x: (
+        0 if x.get("alert") else 1,
+        0 if x.get("confidence", {}).get("level") == "high" else (1 if x.get("confidence", {}).get("level") == "medium" else 2),
+        -x["stats"].get("observations", 0),
+        x["canonical_name"],
+    ))
     return out
 
 
-async def product_history(restaurant_id: str, canonical_product_id: str, canonical_unit: str = "") -> dict:
-    """Return sorted history + stats + trend + alert for a single product+unit."""
-    query: dict[str, Any] = {
-        "restaurant_id": restaurant_id,
-        "canonical_product_id": canonical_product_id,
-    }
-    if canonical_unit:
-        query["canonical_unit"] = canonical_unit
-
-    obs = await db.price_history.find(query, {"_id": 0}).to_list(5000)
-    obs = _sort_observations(obs)
-
-    # If no unit specified, default to the most-observed unit
-    if not canonical_unit and obs:
-        counts: dict[str, int] = {}
-        for o in obs:
-            counts[o.get("canonical_unit") or ""] = counts.get(o.get("canonical_unit") or "", 0) + 1
-        canonical_unit = max(counts, key=counts.get)
-        obs = [o for o in obs if (o.get("canonical_unit") or "") == canonical_unit]
-
-    cp = await db.canonical_products.find_one(
-        {"id": canonical_product_id, "restaurant_id": restaurant_id},
-        {"_id": 0, "id": 1, "canonical_name": 1, "category": 1},
-    )
-
-    return {
-        "canonical_product_id": canonical_product_id,
-        "canonical_name": (cp or {}).get("canonical_name") or (obs[-1].get("canonical_name") if obs else ""),
-        "category": (cp or {}).get("category", ""),
-        "canonical_unit": canonical_unit,
-        "observations": obs,
-        "stats": compute_stats(obs),
-        "trend": compute_trend(obs),
-        "alert": evaluate_alert(obs),
-    }
-
-
-async def product_vendor_comparison(restaurant_id: str, canonical_product_id: str, canonical_unit: str = "") -> dict:
-    """Per-vendor latest / avg / count, with best/worst highlighted."""
-    detail = await product_history(restaurant_id, canonical_product_id, canonical_unit)
-    unit = detail["canonical_unit"]
-    obs = detail["observations"]
-
+def _vendor_comparison_from_obs(obs: list[dict]) -> dict:
+    """Internal helper — computes vendor stats from already-filtered obs list."""
+    good = _analytic_observations(obs)
     buckets: dict[str, list[dict]] = {}
-    for o in obs:
+    for o in good:
         vendor = o.get("vendor_name") or "Unknown"
         buckets.setdefault(vendor, []).append(o)
-
     vendors = []
     for vendor, rows in buckets.items():
         rows = _sort_observations(rows)
@@ -566,14 +717,177 @@ async def product_vendor_comparison(restaurant_id: str, canonical_product_id: st
     if best_price and worst_price and worst_price > 0 and len(vendors) > 1:
         savings_pct = round((1 - best_price / worst_price) * 100, 2)
     return {
-        "canonical_product_id": canonical_product_id,
-        "canonical_name": detail["canonical_name"],
-        "canonical_unit": unit,
         "vendors": vendors,
         "best_vendor": best,
         "worst_vendor": worst,
         "savings_pct": savings_pct,
     }
+
+
+async def product_history(restaurant_id: str, canonical_product_id: str, canonical_unit: str = "") -> dict:
+    """Return sorted history + stats + trend + alert + confidence + recommendation."""
+    query: dict[str, Any] = {
+        "restaurant_id": restaurant_id,
+        "canonical_product_id": canonical_product_id,
+    }
+    if canonical_unit:
+        query["canonical_unit"] = canonical_unit
+
+    obs = await db.price_history.find(query, {"_id": 0}).to_list(5000)
+    obs = _sort_observations(obs)
+
+    # If no unit specified, default to the most-observed unit
+    if not canonical_unit and obs:
+        counts: dict[str, int] = {}
+        for o in obs:
+            counts[o.get("canonical_unit") or ""] = counts.get(o.get("canonical_unit") or "", 0) + 1
+        canonical_unit = max(counts, key=counts.get)
+        obs = [o for o in obs if (o.get("canonical_unit") or "") == canonical_unit]
+
+    cp = await db.canonical_products.find_one(
+        {"id": canonical_product_id, "restaurant_id": restaurant_id},
+        {"_id": 0, "id": 1, "canonical_name": 1, "category": 1},
+    )
+
+    stats = compute_stats(obs)
+    trend = compute_trend(obs)
+    alert = evaluate_alert(obs)
+    confidence = compute_insight_confidence(obs)
+    vendor_comp = _vendor_comparison_from_obs(obs)
+    recommendation = build_recommendation(
+        trend=trend, alert=alert, confidence=confidence, vendor_data=vendor_comp,
+    )
+    good_count = sum(1 for o in obs if (o.get("data_quality_flag") or "good") == "good")
+    fair_count = sum(1 for o in obs if (o.get("data_quality_flag") or "") == "fair")
+    poor_count = sum(1 for o in obs if (o.get("data_quality_flag") or "") == "poor")
+
+    return {
+        "canonical_product_id": canonical_product_id,
+        "canonical_name": (cp or {}).get("canonical_name") or (obs[-1].get("canonical_name") if obs else ""),
+        "category": (cp or {}).get("category", ""),
+        "canonical_unit": canonical_unit,
+        "observations": obs,  # all quality levels for raw transparency
+        "stats": stats,
+        "trend": trend,
+        "alert": alert,
+        "confidence": confidence,
+        "recommendation": recommendation,
+        "data_quality": {"good": good_count, "fair": fair_count, "poor": poor_count},
+    }
+
+
+async def product_vendor_comparison(restaurant_id: str, canonical_product_id: str, canonical_unit: str = "") -> dict:
+    """Per-vendor latest / avg / count — filtered to `good` quality only."""
+    detail = await product_history(restaurant_id, canonical_product_id, canonical_unit)
+    unit = detail["canonical_unit"]
+    comp = _vendor_comparison_from_obs(detail["observations"])
+    return {
+        "canonical_product_id": canonical_product_id,
+        "canonical_name": detail["canonical_name"],
+        "canonical_unit": unit,
+        "vendors": comp["vendors"],
+        "best_vendor": comp["best_vendor"],
+        "worst_vendor": comp["worst_vendor"],
+        "savings_pct": comp["savings_pct"],
+        "confidence": detail["confidence"],
+        "recommendation": detail["recommendation"],
+    }
+
+
+def build_recommendation(*, trend: dict, alert: Optional[dict], confidence: dict,
+                         vendor_data: Optional[dict] = None) -> dict:
+    """
+    DSS Guardrail: translate analytics into an actionable recommendation
+    gated by insight confidence.
+
+    High    → actionable recommendation ("switch_vendor", "renegotiate", etc.)
+    Medium  → descriptive insight tagged Review Suggested
+    Low     → no recommendation; raw-data only
+    """
+    level = confidence.get("level", "low")
+    base = {
+        "level": level,
+        "actionable": level == "high",
+        "label": "Raw data only",
+        "headline": "",
+        "detail": "",
+        "action": None,  # actionable key for the UI: 'switch_vendor'|'renegotiate'|'hold'|'investigate'
+        "tags": [],
+    }
+
+    if level == "low":
+        base["label"] = "Low confidence — raw data only"
+        base["headline"] = "Not enough reliable data yet"
+        base["detail"] = confidence.get("explanation", "")
+        base["tags"] = ["review_suggested", "data_thin"]
+        return base
+
+    # Vendor-switch suggestion (available to High and Medium)
+    vendor_switch = None
+    if vendor_data and vendor_data.get("savings_pct") and vendor_data["savings_pct"] >= 5 \
+            and vendor_data.get("best_vendor") and vendor_data.get("worst_vendor") \
+            and vendor_data["best_vendor"] != vendor_data["worst_vendor"]:
+        vendor_switch = {
+            "best_vendor": vendor_data["best_vendor"],
+            "worst_vendor": vendor_data["worst_vendor"],
+            "savings_pct": vendor_data["savings_pct"],
+        }
+
+    if level == "medium":
+        base["label"] = "Medium confidence — review suggested"
+        if alert:
+            base["headline"] = "Possible price increase (review suggested)"
+            base["detail"] = alert.get("message", "")
+            base["tags"] = ["review_suggested"]
+        elif vendor_switch:
+            base["headline"] = "Possible savings by switching vendors (review suggested)"
+            base["detail"] = (
+                f"{vendor_switch['best_vendor']} appears cheaper than "
+                f"{vendor_switch['worst_vendor']} by ~{vendor_switch['savings_pct']:.1f}% "
+                f"on recent purchases."
+            )
+            base["tags"] = ["review_suggested", "possible_savings"]
+        else:
+            base["headline"] = "Trend observed — review suggested"
+            base["detail"] = f"Trend={trend.get('trend')}, change={trend.get('change_pct')}%"
+            base["tags"] = ["review_suggested"]
+        return base
+
+    # High confidence — actionable
+    base["label"] = "High confidence"
+    if alert:
+        base["headline"] = "Renegotiate or investigate"
+        base["detail"] = alert.get("message", "")
+        base["action"] = "renegotiate"
+        base["tags"] = ["actionable", "above_typical"]
+    elif vendor_switch:
+        base["headline"] = f"Switch to {vendor_switch['best_vendor']}"
+        base["detail"] = (
+            f"Save ~{vendor_switch['savings_pct']:.1f}% by switching from "
+            f"{vendor_switch['worst_vendor']} to {vendor_switch['best_vendor']} "
+            f"on this product."
+        )
+        base["action"] = "switch_vendor"
+        base["tags"] = ["actionable", "savings"]
+    elif trend.get("trend") == "up":
+        base["headline"] = "Prices trending up"
+        base["detail"] = (
+            f"Moving-average price is {trend.get('change_pct')}% higher than the prior window. "
+            "Consider locking in current pricing or investigating alternatives."
+        )
+        base["action"] = "investigate"
+        base["tags"] = ["actionable", "trend_up"]
+    elif trend.get("trend") == "down":
+        base["headline"] = "Prices trending down"
+        base["detail"] = f"Moving-average price is {trend.get('change_pct')}% below the prior window."
+        base["action"] = "hold"
+        base["tags"] = ["actionable", "trend_down"]
+    else:
+        base["headline"] = "Stable pricing"
+        base["detail"] = "No significant deviation from recent norms."
+        base["action"] = "hold"
+        base["tags"] = ["actionable", "stable"]
+    return base
 
 
 async def list_alerts(restaurant_id: str) -> list[dict]:
