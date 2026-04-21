@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
@@ -344,6 +344,9 @@ export function TargetPriceModal({ api, decision, onClose, onSaved }) {
             <Target className="w-4 h-4 text-teal-600" />
             Set target price
           </DialogTitle>
+          <DialogDescription className="text-[11px] text-slate-500">
+            Per-unit target used to compute price_delta_vs_target_pct. Leave blank to fall back to the historical average comparison only.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2.5">

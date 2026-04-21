@@ -47,6 +47,40 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 5: Procurement Decision Engine — FRONTEND COMPLETE (2026-04-21)
+
+### Hybrid UI
+- **Inline summary panel** on Price Intelligence page — "Top procurement actions"
+  grid rendering up to 5 high-confidence actionable cards from
+  `GET /api/procurement/recommendations?only_actionable=true`. View-all button
+  navigates to the dedicated tab.
+- **Dedicated page** at `/procurement-decisions` — full list of decisions from
+  `GET /api/procurement/recommendations`, KPI-strip filters (Total / Switch
+  Vendor / Renegotiate / No Action / Monitor Only), search, Confidence filter
+  (All/High/Medium/Low), Risk filter (All/Low/Medium/High), Full decision cards
+  with action pill, color-coded risk + confidence badges, 3-delta price-context
+  row (vs Avg / vs Target / vs Alt), best-alternative highlight, expandable
+  evidence + uncertainty bullets, observation count + trend indicator.
+- **Target Price Modal** (shared, used from both pages) wraps
+  `PATCH /api/procurement/targets/{cpid}`. Supports set/clear/validate; cards
+  auto-refresh on save.
+
+### Reusable Components
+- `components/procurement/ProcurementUI.js` — `ActionPill`, `ConfidenceBadge`,
+  `RiskBadge`, `DeltaRow`, `InlineDecisionCard`, `FullDecisionCard`,
+  `TargetPriceModal`, plus `REC_CFG`/`CONF_CFG`/`RISK_CFG` color dictionaries.
+
+### Routing & Nav
+- New route `/procurement-decisions` (PermRoute `view_reports`).
+- Sidebar link labelled **Procurement** with `Sparkles` icon.
+
+### Testing — 100% PASS (iteration_89)
+- All 12 flows verified: login, inline summary safety (no low/medium/monitor
+  leaks), probabilistic language ("High likelihood…"), view-all navigation,
+  dedicated tab KPI/search/confidence/risk filters, full-card elements
+  (action pill, risk, confidence, 3 deltas, evidence toggle, best-alt row),
+  Target modal open/validate/save/auto-refresh/clear/sidebar link.
+
 ## Milestone 5: Procurement Decision Engine — BACKEND COMPLETE (2026-04-21)
 
 ### Goal
@@ -281,11 +315,11 @@ alerts (type='price_intelligence'): persisted when threshold hit.
 All Milestone 1-3 deliverables complete. See CHANGELOG.md for details.
 
 ## Upcoming Tasks
-### P0
-- Milestone 5 FRONTEND — hybrid UI: inline summary panel on Price Intelligence page
-  (only high-confidence switch_vendor/renegotiate) + dedicated "Procurement Decisions"
-  tab with full cards (evidence, uncertainty, risk, target-price editor).
-### P1
+### P1 — deferred from M5
+- Decision Audit Log: every time a recommendation is generated or a user
+  accepts/dismisses one, persist to `procurement_decision_events` with
+  `{user_id, canonical_product_id, recommendation_type, generated_at,
+   accepted_by_user, outcome}` so the engine becomes a learning loop.
 - Expand "Smart Market Insights" into 3-panel command center.
 - Integrate product identity into extraction pipeline (auto-resolve during upload).
 ### P2
