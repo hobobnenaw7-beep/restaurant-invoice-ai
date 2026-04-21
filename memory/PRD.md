@@ -3,78 +3,66 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, plus a multi-user permissions and accountability model for team operation.
 
-## Unit Normalization — Layered Decision Engine with Learning Loop — COMPLETE
+## Unit Normalization — Layered Decision Engine — COMPLETE
 
-### Architecture
+### Full Decision Flow
 ```
-Signal 1: Parser (always runs) → parses pack_size text
-Signal 2: Memory (always runs) → looks up vendor+product_code
+Input: item with pack_size, item_code, quantity, total, storage_category
                     ↓
-         ┌─ USER_CORRECTED? ──→ Apply directly (confidence=1.0)
-         │                       unless multiplier out-of-bounds
-         ↓
-         Validation Layer → math check, bounds, category sense
+Signal 1: Parser (always runs pack_size text)
+Signal 2: Memory (always runs vendor+code lookup)
                     ↓
-         Confidence Scoring
+┌─ USER_CORRECTED memory? ──→ Apply directly (conf=1.0)
+│                              UNLESS parser contradicts unit type
+↓
+Drift Detection (category-aware thresholds):
+  frozen/chilled: 10% threshold (strict)
+  dry/chemicals:  25% threshold (tolerant)
+  default:        15%
+  meat keywords:  10% (auto-detected)
                     ↓
-         Conflict Resolution → agree/disagree/review
+  IF drift > threshold → needs_review (memory_drift_detected)
                     ↓
-         Save to memory if new (source=auto)
-```
-
-### Learning Loop
-1. Item arrives with ambiguous pack → flagged needs_review
-2. User edits price/total via PATCH → unit_memory saves as `source=user_corrected`
-3. Next extraction (same product_code) → memory HIT with confidence=1.0
-4. Item auto-normalized, NOT sent back to review
-
-### Protection Rules
-- `user_corrected` NEVER overwritten by `auto` saves
-- `user_corrected` applied directly at confidence=1.0 (no conflict checking)
-- Only rejected if multiplier falls outside bounds (0.5–5000)
-- Auto parsers can still override other auto mappings (latest wins)
-
-### DB Schema: `unit_memory`
-```json
-{
-  "vendor_key": "SYSCO",
-  "product_code": "8880001",
-  "restaurant_id": "...",
-  "canonical_unit": "lb",
-  "multiplier": 10.0,
-  "pack_size": "2/5 LB",
-  "parse_method": "user_corrected",
-  "source": "user_corrected",
-  "version": 1,
-  "corrected_by_user_id": "8245ae5d-...",
-  "corrected_by_name": "Demo User",
-  "last_corrected_at": "2026-04-21T04:35:15+00:00",
-  "times_used": 1,
-  "created_at": "...",
-  "updated_at": "..."
-}
+Recency Bias:
+  >180 days old: memory_conf -= 0.15
+  >90 days old:  memory_conf -= 0.08
+                    ↓
+Validation Layer (math, bounds, category sense)
+                    ↓
+Confidence Scoring + Conflict Resolution
+                    ↓
+Apply or Flag for Review
 ```
 
-## Completed Work
-- Permissions + Accountability model
-- US Foods 2-phase structural extraction
-- Multi-vendor trust gates (zero false trusts)
-- 294-image stress test
-- Multi-signal vendor detection
-- Correction Memory v2
-- Dark image preprocessing
-- Manual Review Workflow
-- Hybrid Item Classification System
-- Unit Normalization + Canonical Unit
+### Drift Thresholds by Category
+| Category | Threshold | Reasoning |
+|----------|-----------|-----------|
+| frozen, chilled | 10% | Perishables — pack sizes are standardized |
+| dry | 25% | Stable goods — vendor may change pack sizes |
+| uncategorized/default | 15% | Balanced |
+| Meat/seafood keywords | 10% | Auto-detected strict even without storage_category |
+
+### Verified Drift Scenarios
+1. **75% drift on frozen meat** → needs_review ✓
+2. **0% drift on dry goods** → normalized ✓
+3. **20% drift on dry (within 25% tolerance)** → normalized ✓
+4. **20% drift on frozen (exceeds 10% threshold)** → needs_review ✓
+
+## Completed Work (Milestone 2 — FULLY CLOSED)
+- Unit Normalization + Canonical Unit Layer
 - Product Memory with cross-format consistency
 - Layered Decision Engine (validation + confidence + conflict)
-- **Manual-to-Memory Learning Loop (user_corrected truth)**
+- Manual-to-Memory Learning Loop (user_corrected truth)
+- **Trust Calibration & Drift Detection (anti-blind-trust)**
+  - Category-aware thresholds
+  - Recency bias (stale memory loses confidence)
+  - User-corrected drift check (parser unit contradiction)
 
 ## Upcoming Tasks
 ### P0
 - Milestone 3 (user to define)
 ### P2
-- Smart Market Insights, AI Chat Assistant, Trash/Restore, Salaries OCR
+- Smart Market Insights, AI Chat Assistant, Trash/Restore
 
 ## Test Credentials
 - Manager: demo@test.com / testpassword

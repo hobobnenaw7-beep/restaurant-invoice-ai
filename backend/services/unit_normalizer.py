@@ -785,13 +785,29 @@ async def normalize_item_with_memory(item: dict, vendor: str = "", restaurant_id
             memory_is_user_corrected = memory.get("source") == "user_corrected"
 
     # ─── TRUTH RULE: user_corrected memory is highest priority ───
-    # If a human validated this mapping, use it directly UNLESS math fails.
+    # If a human validated this mapping, use it directly UNLESS:
+    #   - multiplier is out of bounds
+    #   - parser STRONGLY contradicts (different unit entirely)
     if memory_signal and memory_is_user_corrected:
         mult = memory_signal["multiplier"]
         canon = memory_signal["canonical_unit"]
-        # Quick math sanity: if qty*unit_price≈total, the mapping should produce
-        # a reasonable PPU. Only reject if multiplier is wildly out of bounds.
-        if 0.5 <= mult <= 5000:
+
+        # Check if parser strongly contradicts the user-corrected mapping
+        parser_contradicts_unit = (
+            parser_signal is not None
+            and parser_signal["canonical_unit"] != canon
+        )
+
+        if parser_contradicts_unit:
+            # Parser says different unit than user's correction — flag for review
+            # The product identity may have changed or this is a different variant
+            logger.info(
+                f"DRIFT on user_corrected: {raw_name[:40]} code={item_code} — "
+                f"user_corrected={canon}/{mult}, parser={parser_signal['canonical_unit']}/{parser_signal['multiplier']} "
+                f"→ needs_review (product identity may have changed)"
+            )
+            # Fall through to normal validation (don't auto-apply)
+        elif 0.5 <= mult <= 5000:
             norm_qty = round(qty * mult, 2) if qty > 0 else mult
             denominator = qty * mult if qty > 0 else mult
             ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
@@ -807,6 +823,7 @@ async def normalize_item_with_memory(item: dict, vendor: str = "", restaurant_id
             item["_norm_decision"] = {
                 "parser": {"signal": parser_signal} if parser_signal else None,
                 "memory": {"signal": memory_signal, "source": "user_corrected", "version": memory.get("version", 1)},
+                "drift_detected": False,
                 "reason": "user_corrected_truth",
             }
             logger.info(
@@ -887,11 +904,77 @@ async def normalize_item_with_memory(item: dict, vendor: str = "", restaurant_id
         if parser_signal["method"] in strong_methods:
             parser_conf = min(parser_conf + 0.1, 1.0)
 
+    # ─── Recency Bias: older memory loses confidence ───
+    if memory_signal and memory:
+        from datetime import datetime, timezone
+        updated_str = memory.get("last_corrected_at") or memory.get("updated_at") or ""
+        if updated_str:
+            try:
+                updated_dt = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+                age_days = (datetime.now(timezone.utc) - updated_dt).days
+                if age_days > 180:
+                    memory_conf = max(memory_conf - 0.15, 0.3)
+                elif age_days > 90:
+                    memory_conf = max(memory_conf - 0.08, 0.4)
+            except (ValueError, TypeError):
+                pass
+
+    # ─── Drift Detection: parser vs memory cross-check ───
+    drift_detected = False
+    drift_reason = ""
+    if parser_signal and memory_signal:
+        mem_mult = memory_signal["multiplier"]
+        parse_mult = parser_signal["multiplier"]
+        units_agree = parser_signal["canonical_unit"] == memory_signal["canonical_unit"]
+
+        # Category-aware drift thresholds
+        # Stricter for variable categories (meat, produce, seafood)
+        # More tolerant for stable categories (dry goods, chemicals, shelf-stable)
+        STRICT_CATEGORIES = ("frozen", "chilled")  # meat, seafood, produce
+        STABLE_CATEGORIES = ("dry",)  # dry goods, chemicals, shelf-stable
+
+        if storage_cat in STRICT_CATEGORIES:
+            drift_threshold = 0.10  # 10% — stricter for perishables
+        elif storage_cat in STABLE_CATEGORIES:
+            drift_threshold = 0.25  # 25% — tolerant for stable items
+        else:
+            drift_threshold = 0.15  # 15% — default
+
+        # Also check product name for meat/produce keywords if no storage_cat
+        if not storage_cat:
+            meat_kws = ("BREAST", "WING", "THIGH", "STEAK", "PORK", "SHRIMP", "FISH", "SALMON", "LOBSTER")
+            produce_kws = ("LETTUCE", "TOMATO", "ONION", "AVOCADO", "BERRY", "FRUIT")
+            name_upper = raw_name.upper()
+            if any(kw in name_upper for kw in meat_kws + produce_kws):
+                drift_threshold = 0.10  # Strict for detected perishables
+
+        # Calculate drift ratio
+        if mem_mult > 0 and parse_mult > 0 and units_agree:
+            drift_ratio = abs(mem_mult - parse_mult) / mem_mult
+            if drift_ratio > drift_threshold:
+                drift_detected = True
+                drift_reason = (
+                    f"memory_drift_detected(memory={mem_mult},parser={parse_mult},"
+                    f"drift={drift_ratio:.1%},threshold={drift_threshold:.0%},"
+                    f"category={storage_cat or 'unknown'})"
+                )
+                logger.info(
+                    f"DRIFT DETECTED: {raw_name[:40]} code={item_code} — "
+                    f"memory={mem_mult}, parser={parse_mult}, "
+                    f"drift={drift_ratio:.1%} > threshold={drift_threshold:.0%} "
+                    f"(category={storage_cat or 'unknown'}) → needs_review"
+                )
+
     # ─── Conflict Resolution ───
     chosen_signal = None
     decision_reason = ""
 
-    if parser_signal and memory_signal:
+    # If drift detected → force needs_review regardless of confidence
+    if drift_detected:
+        chosen_signal = None
+        decision_reason = drift_reason
+
+    elif parser_signal and memory_signal:
         # Both signals present — check agreement
         units_agree = parser_signal["canonical_unit"] == memory_signal["canonical_unit"]
         mults_close = abs(parser_signal["multiplier"] - memory_signal["multiplier"]) / max(memory_signal["multiplier"], 1) < 0.05
@@ -957,6 +1040,8 @@ async def normalize_item_with_memory(item: dict, vendor: str = "", restaurant_id
     item["_norm_decision"] = {
         "parser": {"signal": parser_signal, "valid": parser_valid, "conf": parser_conf, "issues": parser_issues} if parser_signal else None,
         "memory": {"signal": memory_signal, "valid": memory_valid, "conf": memory_conf, "issues": memory_issues} if memory_signal else None,
+        "drift_detected": drift_detected,
+        "drift_reason": drift_reason if drift_detected else None,
         "reason": decision_reason,
     }
 
