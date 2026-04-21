@@ -47,6 +47,62 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 4.5: DSS Upgrade (Decision-Support System) — COMPLETE (2026-04-21)
+
+### Insight Confidence Engine (exact scoring)
+```
+score = recency*0.30 + observations*0.25 + identity*0.25 + unit*0.20
+
+recency:     ≤14d→1.0, ≤30d→0.70, ≤90d→0.40, ≤180d→0.20, else 0.05
+observations: ≥6→1.0, ≥4→0.70, ≥3→0.50, ≥2→0.25, ≥1→0.10
+identity:    mean of per-obs identity_confidence (0..1)
+unit:        weighted mean; parser/user_corrected→~1.0, legacy→0.5, review/unknown→~0.1
+
+level = High   if score ≥ 0.80
+      = Medium if 0.60 ≤ score < 0.80
+      = Low    if score < 0.60
+```
+
+### Decision Guardrails
+- **High** → actionable recommendation (`switch_vendor` / `renegotiate` / `investigate` / `hold`)
+- **Medium** → insight labelled "Review suggested", no action button
+- **Low** → raw data only (stats/trend/vendor-comparison hidden in UI)
+- **Alert suppression**: evaluate_alert returns None unless level == "high". Dashboard bell double-guards on `confidence_level == "high"`.
+
+### Data Integrity
+- Every `price_history` record carries `data_quality_flag ∈ {good, fair, poor}`.
+- **poor** records excluded from: trend, stats, evaluate_alert, vendor comparison.
+- **fair** records show in raw history only (not analytics).
+- Ingestion writes the flag; one-time migration back-classified 9 existing records.
+
+### Probabilistic Language
+- Alerts: "High likelihood you are paying above the recent typical price…"
+- Recommendations never contain "overpaying" or imperative verbs for Medium/Low.
+
+### UI — Color-coded confidence
+- **Green** (`ShieldCheck`) = High · **Yellow** (`ShieldAlert`) = Medium · **Red** (`Shield`) = Low
+- Hoverable tooltip breaks down score: "Based on N observations · recency/obs/identity/unit × weights"
+- Recommendation panel uses the same tone (green/amber/slate).
+- Stats/vendor-comparison/chart auto-hide when level = Low.
+- Per-record `GOOD / FAIR / POOR` badge in the raw-history table.
+
+### Testing — 47/47 PASS
+- `test_dss_confidence.py` — 16 pure-function tests
+- `test_price_intelligence_milestone4.py` — 11 trend/alert/stats tests (dates now relative)
+- `test_dss_price_intelligence.py` — 20 HTTP contract tests (iteration_87)
+
+### Sample scored insight (from demo@test.com)
+- Product: Chicken Breast Tender Boneless Jumbo, 9 good observations, latest today
+- Components: recency=1.00, observations=1.00, identity=0.95, unit=0.95
+- Weighted score = 0.30 + 0.25 + 0.2375 + 0.19 = **0.978 → HIGH**
+- Alert surfaced: +28.2% vs MA $3.20, severity high, action=renegotiate
+
+### Low-confidence suppression (same user)
+- Product: Ground Beef 80/20, 0 good + 3 poor observations (identity 0.55, unit "unknown")
+- All poor records filtered out of analytics → 0 good obs
+- score = 0.00 → **LOW**, recommendation = "Not enough reliable data yet · RAW DATA ONLY", action=None
+- Alert = null (correctly suppressed)
+
 ## Milestone 4: Price Intelligence & Market Benchmarking — COMPLETE (2026-04-21)
 
 ### Goal
