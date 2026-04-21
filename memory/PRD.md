@@ -47,15 +47,90 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 4: Price Intelligence & Market Benchmarking — COMPLETE (2026-04-21)
+
+### Goal
+Unit-safe price benchmarks, trend direction, and confidence-based alerts across every
+canonical product — strictly scoped per-restaurant.
+
+### Data Model
+```
+price_history:
+  {id, restaurant_id, canonical_product_id, canonical_name, canonical_unit,
+   price_per_unit, unit_price, quantity, normalization_multiplier,
+   vendor_key, vendor_name, supplier_id,
+   purchase_id, item_index, raw_name, item_code, invoice_date,
+   identity_confidence, identity_match_type,
+   unit_confidence, unit_source,
+   observed_at, created_at}
+
+alerts (type='price_intelligence'): persisted when threshold hit.
+```
+
+### Ingestion Gates (hard rules)
+- canonical_product_id resolved (identity_confidence >= 0.80)
+- canonical_unit present
+- price_per_unit > 0
+- unit_status != "review"
+- Legacy fallback: if pack_unit ∈ (LB, OZ) and normalized_price_per_lb > 0
+  → derive canonical_unit=lb + multiplier from total_case_weight
+
+### Analytics Engine
+- stats: min / max / avg / latest / first (+ latest_vendor / latest_date)
+- trend: Up / Down / Stable / insufficient_data
+  (latest-3 moving average vs prior-3 MA; needs >= 4 observations;
+  |change| < 1% → stable)
+- alert: latest_price > moving_average * 1.10 AND >= 3 high-confidence
+  observations → severity high (>=20%) / medium (10-20%).
+  Stale alerts are auto-cleared on re-evaluation.
+
+### API Endpoints
+- GET  /api/price-intelligence/products — list (stats, trend, vendors, alert)
+- GET  /api/price-intelligence/products/{cpid}/history?canonical_unit=lb
+- GET  /api/price-intelligence/products/{cpid}/vendors?canonical_unit=lb
+- GET  /api/price-intelligence/alerts
+- POST /api/price-intelligence/backfill — one-shot historical ingest (idempotent)
+
+### Pipeline Hooks
+- POST   /api/purchases                 → ingest_purchase_items
+- PUT    /api/purchases/{pid}           → re-ingest on update
+- PATCH  /api/purchases/{pid}/items/{i} → re-ingest on inline edit
+
+### Dashboard Integration
+- /api/dashboard/summary → PI alerts prepended to smart_alerts
+  (surfaces in the existing notification bell).
+
+### Frontend
+- New page `/price-intelligence` (added to sidebar as "Price Intelligence")
+  with KPIs, filters (all/alerts/up/down), product table, and detail modal
+  (price chart with avg reference line, vendor comparison, full history).
+- Inline alert badge on product rows.
+
+### Files
+- /app/backend/services/price_intelligence.py
+- /app/backend/routes/price_intelligence.py
+- /app/backend/routes/purchases.py (hooks)
+- /app/backend/routes/dashboard.py (alert merge)
+- /app/frontend/src/pages/PriceIntelligencePage.js
+- /app/backend/tests/test_price_intelligence_milestone4.py (11 analytics unit tests)
+- /app/backend/tests/test_price_intelligence_endpoints.py (14 endpoint tests)
+
+### Testing
+- 11/11 pure-function tests (trend/alert rules) pass
+- 14/14 endpoint/integration tests pass (iteration_86 — multi-tenant isolation
+  verified, backfill idempotency verified, hooks verified).
+
 ## Completed Work
 All Milestone 1-3 deliverables complete. See CHANGELOG.md for details.
 
 ## Upcoming Tasks
-### P0
+### P1
+- Expand "Smart Market Insights" into 3-panel command center
 - Integrate product identity into extraction pipeline (auto-resolve during upload)
 - Build Product Identity management UI
 ### P2
-- Smart Market Insights, AI Chat Assistant, Trash/Restore
+- AI Chat Assistant page polish, Trash/Restore UI, Salaries OCR upload
+- Inline price-intelligence alert badge next to items in ExpensesPage rows
 
 ## Test Credentials
 - Manager: demo@test.com / testpassword
