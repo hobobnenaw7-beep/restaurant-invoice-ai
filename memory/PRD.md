@@ -16,7 +16,7 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 │   │   ├── vendor_detection.py (Multi-signal detection + confidence routing)
 │   │   ├── correction_memory.py (v2: strong key hierarchy + provenance)
 │   │   ├── storage_classifier.py (Auto-classify + manual override protection)
-│   │   ├── unit_normalizer.py (Pack parsing + price_per_unit calculation)
+│   │   ├── unit_normalizer.py (Pack parse + canonical_unit + price_per_unit + unit_memory)
 │   │   ├── usfoods_structural.py (2-phase extraction + dark image retry)
 │   ├── preprocessing.py (Image processing + dark image enhancement)
 ├── frontend/src/
@@ -24,24 +24,30 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 │   ├── pages/ (ItemsPage, ExpensesPage, etc.)
 ```
 
-## Unit Normalization (Milestone 2) — COMPLETE
+## Unit Normalization & Product Memory (Milestone 2) — COMPLETE
+
+### Canonical Units
+- `lb` — all weight-based items
+- `piece` — all count-based items
+- `gal` — gallon items (converted to lb for PPU)
+- `oz` — reserved for future use
+
 ### Formula
-`price_per_unit = line_total / (quantity × normalized_multiplier)`
+`price_per_unit = line_total / (quantity × normalization_multiplier)`
 
-### Pattern Coverage
-- Sysco: fraction lb (4/10 LB), simple lb (40 LB), OZ, GAL, EA, CS+count
-- Sysco OCR fix: "410LB" → 4/10 = 40 lb (prefix≥2 only, preserves 120LB/150LB as-is)
-- CS prefix stripping: "CS 410 LB" → stripped → "410LB" → fraction fix
-- US Foods / PFG: LB+container (40 LB CS), CT count (6 CT), fraction CT, fraction OZ portions
-- Ambiguous/empty → unit_status='review', price_per_unit=None (flagged, no guess)
-- Fee items → excluded
+### Product Memory Integration
+- **DB Collection**: `unit_memory`
+- **Key**: `vendor_key + product_code`
+- **Flow**: Lookup before parse → reuse if found → save after successful parse
+- **Result**: Same product = identical normalization across invoices
 
-### Test Results
-- 24 pack_size parse patterns: 24/24 pass
-- 4 price formula tests: 4/4 pass
-- 2 before/after JSON examples: verified
-- 2 review flag tests: verified
-- Live Sysco extraction: all items correctly normalized
+### Consistency Proof
+| Pass | Memory Hits | Memory Saves | Source |
+|------|-------------|--------------|--------|
+| 1st extraction | 0 | 9 | parsed_and_saved |
+| 2nd extraction | 9 | 0 | **memory** |
+
+All items produced identical canonical_unit, multiplier, and price_per_unit on both passes.
 
 ## Completed Work
 - Permissions + Accountability model
@@ -53,13 +59,13 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 - Dark image preprocessing
 - Manual Review Workflow
 - Hybrid Item Classification System
-- **Unit Normalization & Price Calculation (Milestone 2)**
+- **Unit Normalization + Canonical Unit + Product Memory (Milestone 2)**
 
 ## Upcoming Tasks
 ### P0
-- Production testing of normalization on US Foods + PFG invoices
+- Milestone 3 (user to define next)
 ### P1
-- Re-enable Product Memory layer integration
+- Multi-user workflow testing
 ### P2
 - Smart Market Insights 3-panel expansion
 - AI Chat Assistant polish

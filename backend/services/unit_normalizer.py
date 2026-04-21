@@ -1,8 +1,17 @@
 """
-Unit Normalization Layer for Sysco Invoice Items.
+Unit Normalization Layer for Invoice Items.
 
 Converts all items into a consistent unit (lb or piece) and calculates price_per_unit.
 Runs after extraction, before saving data.
+
+Canonical units: lb, piece, oz, gal
+All weight-based items normalize to lb. All count-based to piece.
+Gallon items convert to lb via approximate density.
+
+Product Memory Integration:
+  Before parsing, check unit_memory (DB) by vendor + product_code.
+  If a saved mapping exists, reuse it for cross-invoice consistency.
+  After successful normalization, save the mapping for future reuse.
 
 Pack size patterns (Sysco):
 - "40 LB" → 40 lb per case
@@ -12,8 +21,11 @@ Pack size patterns (Sysco):
 - "4/1GAL" → 4 gallons per case (convert gal → lb using product-specific density)
 - "CS1000 EA" → 1000 pieces per case
 - "25 EA" → 25 pieces per case
-- "120-4.5#" → 120 pieces × 4.5 lb each? → flag ambiguous
-- "1508X8X3" → container dimensions → piece-based, 150 count
+
+US Foods / PFG patterns:
+- "40 LB CS", "20 LB BAG" → weight + container suffix
+- "6 CT", "2/24 CT" → piece count
+- "6/4 OZ" → fraction ounce portions
 
 Rules:
 1. All weight-based items normalize to LB
@@ -25,6 +37,111 @@ import re
 import logging
 
 logger = logging.getLogger("restaurant_ai")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Canonical Unit Constants
+# ─────────────────────────────────────────────────────────────────────
+
+CANONICAL_UNITS = ("lb", "piece", "oz", "gal")
+
+# Maps internal unit_type → canonical_unit
+_UNIT_TYPE_TO_CANONICAL = {
+    "lb": "lb",
+    "piece": "piece",
+    "gallon": "gal",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Unit Memory — DB-backed cross-invoice persistence
+# ─────────────────────────────────────────────────────────────────────
+
+def _normalize_vendor_key(vendor: str) -> str:
+    """Normalize vendor name for memory key."""
+    if not vendor:
+        return ""
+    v = vendor.strip().upper()
+    if "SYSCO" in v:
+        return "SYSCO"
+    if "US FOOD" in v or "USFOODS" in v:
+        return "USFOODS"
+    if "PERFORMANCE" in v or "PFG" in v:
+        return "PFG"
+    return re.sub(r'[^A-Z0-9]', '', v)[:20]
+
+
+def _clean_code(code: str) -> str:
+    """Extract digits from product code, min 4."""
+    if not code:
+        return ""
+    digits = re.sub(r'[^0-9]', '', code)
+    return digits if len(digits) >= 4 else ""
+
+
+async def lookup_unit_memory(vendor: str, product_code: str, restaurant_id: str) -> dict:
+    """
+    Check unit_memory for a saved mapping by vendor + product_code.
+    Returns the mapping dict or empty dict.
+    """
+    from core.database import db
+
+    vk = _normalize_vendor_key(vendor)
+    code = _clean_code(product_code)
+    if not vk or not code:
+        return {}
+
+    doc = await db.unit_memory.find_one(
+        {"vendor_key": vk, "product_code": code, "restaurant_id": restaurant_id},
+        {"_id": 0},
+    )
+    if doc:
+        logger.info(
+            f"Unit memory HIT: {vk}:{code} → canonical_unit={doc.get('canonical_unit')}, "
+            f"multiplier={doc.get('multiplier')}, pack={doc.get('pack_size')}"
+        )
+    return doc or {}
+
+
+async def save_unit_memory(
+    vendor: str,
+    product_code: str,
+    restaurant_id: str,
+    canonical_unit: str,
+    multiplier: float,
+    pack_size: str,
+    parse_method: str,
+):
+    """
+    Save or update a unit mapping in unit_memory.
+    Only saves for items with a valid product_code.
+    """
+    from core.database import db
+    from datetime import datetime, timezone
+
+    vk = _normalize_vendor_key(vendor)
+    code = _clean_code(product_code)
+    if not vk or not code or not canonical_unit:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.unit_memory.update_one(
+        {"vendor_key": vk, "product_code": code, "restaurant_id": restaurant_id},
+        {"$set": {
+            "vendor_key": vk,
+            "product_code": code,
+            "restaurant_id": restaurant_id,
+            "canonical_unit": canonical_unit,
+            "multiplier": multiplier,
+            "pack_size": pack_size,
+            "parse_method": parse_method,
+            "updated_at": now,
+        }, "$inc": {"times_used": 1}, "$setOnInsert": {"created_at": now}},
+        upsert=True,
+    )
+    logger.debug(
+        f"Unit memory SAVE: {vk}:{code} → {canonical_unit}, multiplier={multiplier}"
+    )
 
 # ── Regex patterns for parsing pack_size ──
 
@@ -523,11 +640,12 @@ def normalize_item(item: dict) -> dict:
     if unit_type == "lb" and parsed.get("total_weight_lb"):
         weight_per_case = parsed["total_weight_lb"]
         norm_qty = round(qty * weight_per_case, 2) if qty > 0 else weight_per_case
-        # price_per_unit = line_total / (quantity * multiplier)
         denominator = qty * weight_per_case if qty > 0 else weight_per_case
         ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
         item["normalized_quantity"] = norm_qty
         item["normalized_unit"] = "lb"
+        item["canonical_unit"] = "lb"
+        item["normalization_multiplier"] = weight_per_case
         item["price_per_unit"] = ppu
         item["unit_status"] = "normalized"
         item["unit_parse_method"] = parsed["parse_method"]
@@ -540,6 +658,8 @@ def normalize_item(item: dict) -> dict:
         ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
         item["normalized_quantity"] = norm_qty
         item["normalized_unit"] = "lb"
+        item["canonical_unit"] = "gal"
+        item["normalization_multiplier"] = weight_per_case
         item["price_per_unit"] = ppu
         item["unit_status"] = "normalized"
         item["unit_parse_method"] = parsed["parse_method"]
@@ -553,6 +673,8 @@ def normalize_item(item: dict) -> dict:
         ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
         item["normalized_quantity"] = norm_qty
         item["normalized_unit"] = "piece"
+        item["canonical_unit"] = "piece"
+        item["normalization_multiplier"] = float(pieces_per_case)
         item["price_per_unit"] = ppu
         item["unit_status"] = "normalized"
         item["unit_parse_method"] = parsed["parse_method"]
@@ -568,7 +690,123 @@ def normalize_item(item: dict) -> dict:
     return item
 
 
-def normalize_items(items: list) -> dict:
+async def normalize_item_with_memory(item: dict, vendor: str = "", restaurant_id: str = "") -> dict:
+    """
+    Normalize item with Product Memory integration.
+
+    Priority:
+      1. Check unit_memory by vendor + product_code → reuse if found
+      2. Parse pack_size and calculate normally
+      3. Save successful mapping to unit_memory for future reuse
+
+    This ensures the same product is ALWAYS normalized identically
+    across different invoices.
+    """
+    raw_name = (item.get("raw_name") or "").strip()
+    pack_size = (item.get("pack_size") or "").strip()
+    item_code = (item.get("item_code") or "").strip()
+    qty = float(item.get("quantity", 0) or 0)
+    total = float(item.get("total", 0) or 0)
+
+    # Skip fees
+    if _is_fee_item(raw_name):
+        normalize_item(item)
+        return item
+
+    # ── Step 1: Check unit_memory ──
+    memory = await lookup_unit_memory(vendor, item_code, restaurant_id)
+    if memory:
+        multiplier = memory.get("multiplier", 0)
+        canonical_unit = memory.get("canonical_unit", "")
+        if multiplier > 0 and canonical_unit:
+            norm_qty = round(qty * multiplier, 2) if qty > 0 else multiplier
+            denominator = qty * multiplier if qty > 0 else multiplier
+            ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
+            item["normalized_quantity"] = norm_qty
+            item["normalized_unit"] = canonical_unit if canonical_unit != "gal" else "lb"
+            item["canonical_unit"] = canonical_unit
+            item["normalization_multiplier"] = multiplier
+            item["price_per_unit"] = ppu
+            item["unit_status"] = "normalized"
+            item["unit_parse_method"] = f"memory:{memory.get('parse_method', '?')}"
+            item["_unit_source"] = "memory"
+            return item
+
+    # ── Step 2: Normal parse ──
+    normalize_item(item)
+
+    # ── Step 3: Save to memory if successful ──
+    if item.get("unit_status") == "normalized" and item_code:
+        canonical_unit = item.get("canonical_unit", "")
+        multiplier = item.get("normalization_multiplier", 0)
+        if canonical_unit and multiplier > 0:
+            await save_unit_memory(
+                vendor=vendor,
+                product_code=item_code,
+                restaurant_id=restaurant_id,
+                canonical_unit=canonical_unit,
+                multiplier=multiplier,
+                pack_size=pack_size,
+                parse_method=item.get("unit_parse_method", ""),
+            )
+            item["_unit_source"] = "parsed_and_saved"
+
+    return item
+
+
+async def normalize_items_with_memory(items: list, vendor: str = "", restaurant_id: str = "") -> dict:
+    """
+    Normalize all items with Product Memory integration.
+    Returns stats about normalization.
+    """
+    stats = {
+        "total": 0,
+        "normalized_lb": 0,
+        "normalized_piece": 0,
+        "review": 0,
+        "excluded": 0,
+        "memory_hits": 0,
+        "memory_saves": 0,
+        "parse_methods": {},
+    }
+
+    for it in items:
+        if it.get("confidence_level") == "excluded":
+            continue
+        if it.get("row_type") not in ("line_item", "fee", None):
+            continue
+
+        stats["total"] += 1
+        await normalize_item_with_memory(it, vendor=vendor, restaurant_id=restaurant_id)
+
+        status = it.get("unit_status", "review")
+        unit = it.get("normalized_unit")
+        source = it.get("_unit_source", "")
+
+        if status == "normalized" and unit == "lb":
+            stats["normalized_lb"] += 1
+        elif status == "normalized" and unit == "piece":
+            stats["normalized_piece"] += 1
+        elif status == "excluded":
+            stats["excluded"] += 1
+        else:
+            stats["review"] += 1
+
+        if source == "memory":
+            stats["memory_hits"] += 1
+        elif source == "parsed_and_saved":
+            stats["memory_saves"] += 1
+
+        method = it.get("unit_parse_method", "unknown")
+        stats["parse_methods"][method] = stats["parse_methods"].get(method, 0) + 1
+
+    total_normalizable = stats["total"] - stats["excluded"]
+    stats["normalization_rate"] = (
+        round((stats["normalized_lb"] + stats["normalized_piece"]) / total_normalizable, 4)
+        if total_normalizable > 0 else 0
+    )
+
+    return stats
     """
     Normalize all items in an extraction result.
     Returns stats about normalization.

@@ -1051,13 +1051,6 @@ async def _apply_sysco_math_first_gate(extracted: dict) -> None:
 
     extracted["_product_memory_stats"] = memory_stats
 
-    # ── Phase 6: Unit Normalization ──
-    # Converts pack_size into normalized quantity (lb or piece) and price_per_unit.
-    # Runs after all validation. Does NOT affect trust status.
-    from services.unit_normalizer import normalize_items as _normalize_items
-    unit_stats = _normalize_items(items)
-    extracted["_unit_normalization_stats"] = unit_stats
-
 
 
 # ═══════════════════════════════════════════════════════════
@@ -2477,6 +2470,10 @@ Rules:
                 # The routing result may have been updated by the fallback (supplier_name).
                 selected_parser = vendor_routing.selected_parser
 
+                # Store context for normalization (used inside gate functions)
+                extracted["_detected_vendor"] = detected_vendor or ""
+                extracted["_restaurant_id"] = rid
+
                 if selected_parser == "pfg":
                     _validate_pfg_extraction(extracted["items"])
                     _apply_pfg_trust_gate(extracted)
@@ -2515,6 +2512,15 @@ Rules:
                                 it["review_reason"] = f"Review Required (Vendor Logic Pending) — {vendor_label} trust gate not yet implemented"
                             it["vendor_status"] = "pending"
                             it["extraction_source"] = "gpt_vision"
+
+                # ── Unit Normalization (All Vendors, with Product Memory) ──
+                from services.unit_normalizer import normalize_items_with_memory as _normalize_items_mem
+                unit_stats = await _normalize_items_mem(
+                    extracted.get("items", []),
+                    vendor=detected_vendor or "",
+                    restaurant_id=rid,
+                )
+                extracted["_unit_normalization_stats"] = unit_stats
 
                 # ── Trust Decision Audit Trail ──
                 # Every row gets a structured trust_decision showing:
