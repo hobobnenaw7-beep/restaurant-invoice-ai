@@ -50,6 +50,27 @@ async def dashboard_summary(year: int = 0, month: int = 0, user=Depends(get_user
         return sum(s["total_sales"] for s in sales if s.get("report_date", "") >= df and (not dt or s.get("report_date", "") <= dt))
 
     smart_alerts = await generate_smart_alerts(rid)
+
+    # Milestone 4: merge Price Intelligence alerts (stored on db.alerts)
+    pi_alerts = []
+    pi_cursor = db.alerts.find(
+        {"restaurant_id": rid, "type": "price_intelligence"}, {"_id": 0}
+    ).sort("change_pct", -1)
+    async for pi in pi_cursor:
+        pi_alerts.append({
+            "type": "price_increase",
+            "severity": pi.get("severity", "medium"),
+            "item_name": pi.get("item_name", ""),
+            "vendor": pi.get("vendor", ""),
+            "change_pct": pi.get("change_pct", 0),
+            "old_price": pi.get("previous_price", 0),
+            "new_price": pi.get("new_price", 0),
+            "source": "price_intelligence",
+            "canonical_unit": pi.get("canonical_unit", ""),
+        })
+    # Price intelligence alerts take priority in the bell
+    smart_alerts = pi_alerts + smart_alerts
+
     severity_order = {"high": 0, "medium": 1, "low": 2}
     smart_alerts.sort(key=lambda a: severity_order.get(a.get("severity", "low"), 2))
     smart_alerts = smart_alerts[:5]

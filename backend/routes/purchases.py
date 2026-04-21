@@ -177,6 +177,26 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
             await db.alerts.insert_one(alert_doc)
 
     await audit_log(user, "CREATE", "Expense", doc["id"], f'{user["name"]} created expense ${doc.get("total", 0)} ({doc.get("supplier_name", "")})', new_value={"supplier": doc.get("supplier_name"), "total": doc.get("total"), "invoice_date": doc.get("invoice_date"), "items_count": len(doc.get("items", []))})
+
+    # ── Milestone 4: Price Intelligence ingestion ──
+    try:
+        from services.price_intelligence import ingest_purchase_items
+        await ingest_purchase_items(
+            restaurant_id=rid,
+            purchase_id=doc["id"],
+            supplier_name=doc.get("supplier_name") or "",
+            supplier_id=supplier_id or "",
+            invoice_date=doc.get("invoice_date") or "",
+            items=doc.get("items", []),
+        )
+        # Persist any canonical identity fields written onto items during ingest
+        await db.purchases.update_one(
+            {"id": doc["id"], "restaurant_id": rid},
+            {"$set": {"items": doc.get("items", [])}},
+        )
+    except Exception as e:  # never break invoice creation over pricing analytics
+        logger.warning(f"price_intelligence.ingest failed for {doc.get('id')}: {e}")
+
     return doc
 
 
@@ -242,6 +262,27 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
     old_vals = {k: old.get(k) for k in update_data}
     await db.purchases.update_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
     await audit_log(user, "UPDATE", "Expense", pid, f'{user["name"]} updated expense ({old.get("supplier_name", "")})', old_value=old_vals, new_value=update_data)
+
+    # ── Milestone 4: Price Intelligence re-ingestion ──
+    try:
+        updated = await db.purchases.find_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
+        if updated and "items" in update_data:
+            from services.price_intelligence import ingest_purchase_items
+            await ingest_purchase_items(
+                restaurant_id=user["restaurant_id"],
+                purchase_id=pid,
+                supplier_name=updated.get("supplier_name") or "",
+                supplier_id=updated.get("supplier_id") or "",
+                invoice_date=updated.get("invoice_date") or "",
+                items=updated.get("items", []),
+            )
+            await db.purchases.update_one(
+                {"id": pid, "restaurant_id": user["restaurant_id"]},
+                {"$set": {"items": updated.get("items", [])}},
+            )
+    except Exception as e:
+        logger.warning(f"price_intelligence.ingest (update) failed for {pid}: {e}")
+
     return await db.purchases.find_one({"id": pid}, {"_id": 0})
 
 
@@ -443,7 +484,35 @@ async def patch_purchase_item(pid: str, item_index: int, updates: dict, user=Dep
         "edit_entry": edit_entry,
         "purchase_totals": {"subtotal": subtotal, "tax": tax, "total": total},
         "review_status": review_status,
+        "price_intelligence": await _reingest_price_intelligence(pid, user["restaurant_id"]),
     }
+
+
+async def _reingest_price_intelligence(pid: str, restaurant_id: str) -> dict:
+    """Milestone 4: Re-ingest price observations after an inline item edit."""
+    try:
+        updated = await db.purchases.find_one(
+            {"id": pid, "restaurant_id": restaurant_id}, {"_id": 0}
+        )
+        if not updated:
+            return {"inserted": 0, "skipped": 0, "new_alerts": []}
+        from services.price_intelligence import ingest_purchase_items
+        stats = await ingest_purchase_items(
+            restaurant_id=restaurant_id,
+            purchase_id=pid,
+            supplier_name=updated.get("supplier_name") or "",
+            supplier_id=updated.get("supplier_id") or "",
+            invoice_date=updated.get("invoice_date") or "",
+            items=updated.get("items", []),
+        )
+        await db.purchases.update_one(
+            {"id": pid, "restaurant_id": restaurant_id},
+            {"$set": {"items": updated.get("items", [])}},
+        )
+        return stats
+    except Exception as e:
+        logger.warning(f"price_intelligence.ingest (patch) failed for {pid}: {e}")
+        return {"inserted": 0, "skipped": 0, "new_alerts": [], "error": str(e)}
 
 
 @router.get("/purchases/{pid}/edit-history")

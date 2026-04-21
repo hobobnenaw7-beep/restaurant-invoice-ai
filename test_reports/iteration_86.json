@@ -1,0 +1,36 @@
+{
+  "summary": "Milestone 4 — Price Intelligence & Market Benchmarking: BACKEND endpoint + integration testing complete. 25/25 tests pass (11 pre-existing unit tests for analytics pure functions + 14 new endpoint/integration tests). Verified: backfill idempotency, products summary contract & seeded data, product history sort order + 404, vendor comparison contract + 404, alerts contract, dashboard smart_alerts merge (source='price_intelligence'), multi-tenant isolation (same-tenant staff sees same data; cross-tenant does not leak seeded product), POST /api/purchases ingest hook (eligible items inserted; items without canonical fields skipped), PATCH /api/purchases/{pid}/items/{idx} re-ingest hook (idempotent).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_price_intelligence_endpoints.py",
+    "/app/backend/tests/test_price_intelligence_milestone4.py",
+    "/app/test_reports/pytest/pytest_price_intelligence_m4_endpoints.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Minor: PATCH /purchases/{pid}/items/{idx} only accepts editable fields {raw_name, quantity, unit_price, total, pack_size}. Canonical fields (canonical_unit, canonical_product_id, price_per_unit) are re-derived by the downstream normalize_item/resolve pipeline on each edit — this is correct and covered by _reingest_price_intelligence, but the response body's 'price_intelligence.inserted' will only be > 0 if the item already had resolvable canonical fields (or if the normalization pipeline resolves them). This is existing/expected behavior.",
+    "Minor: backfill_from_purchases returns 'purchases_with_items' (a derived count) which was not explicitly mentioned in the contract. Contract (purchases_scanned, observations_inserted, observations_skipped, skip_reasons) is satisfied.",
+    "Alert clearing: _evaluate_alert_for_product correctly deletes stale alerts when condition no longer holds — verified indirectly; idempotent backfill maintains consistent alert state."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_price_intelligence_endpoints.py (created)"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "not tested (backend-only per request)"
+  },
+  "test_credentials": "demo@test.com/testpassword (manager), staff@test.com/testpass123 (staff, same tenant), accountant@test.com/testpass123 (reference user). All from /app/memory/test_credentials.md.",
+  "seed_data_creation": "Tests create TEST_ prefixed purchases during ingest-hook verification and clean them up (DELETE /api/purchases/{id}) at end of each test. No residual TEST_ data should remain.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Milestone 4 price-intelligence backend is fully verified. Test file at /app/backend/tests/test_price_intelligence_endpoints.py covers all 5 PI endpoints + dashboard merge + ingest hooks on create/patch purchase + multi-tenant isolation. Pre-seeded canonical_product_id for demo user: 2c131d7a-78ad-4715-bdab-2c8e685bb791 (unit=lb, 6+ observations). To retest: `cd /app/backend && python3 -m pytest tests/test_price_intelligence_endpoints.py tests/test_price_intelligence_milestone4.py -v` (25 tests). For frontend testing (future), the contracts verified here should be relied upon.",
+  "rca of the issue": "N/A — no bugs found. Initial test failures (3) were in the test script itself (missing subtotal/tax on purchase create payload, and mistaken attempt to PATCH canonical fields which aren't in the editable allowlist). Fixed in test script. All production code behavior is correct."
+}

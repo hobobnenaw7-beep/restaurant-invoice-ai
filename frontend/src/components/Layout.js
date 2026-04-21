@@ -8,7 +8,7 @@ import FloatingAssistant from '@/components/FloatingAssistant';
 import {
   LayoutDashboard, Receipt, DollarSign, Users,
   Package, FileText, FolderArchive, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat, UserCog, ClipboardCheck,
-  TrendingUp, ArrowRightLeft, Clock, ChevronDown, ShoppingCart, Shield, Home, Scale, Brain
+  TrendingUp, ArrowRightLeft, Clock, ChevronDown, ShoppingCart, Shield, Home, Scale, Brain, BarChart3
 } from 'lucide-react';
 
 const mainNav = [

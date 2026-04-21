@@ -22,6 +22,7 @@ import PurchaseDecisionsPage from "@/pages/PurchaseDecisionsPage";
 import AuditLogPage from "@/pages/AuditLogPage";
 import CorrectionMemoryPage from "@/pages/CorrectionMemoryPage";
 import VendorComparisonPage from "@/pages/VendorComparisonPage";
+import PriceIntelligencePage from "@/pages/PriceIntelligencePage";
 import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
 import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import { ShieldOff } from 'lucide-react';
@@ -140,6 +141,7 @@ function App() {
           <Route path="/purchase-decisions" element={<PermRoute perm="view_reports"><PurchaseDecisionsPage /></PermRoute>} />
           <Route path="/audit-log" element={<PermRoute perm="view_users"><AuditLogPage /></PermRoute>} />
           <Route path="/vendor-comparison" element={<PermRoute perm="view_vendors"><VendorComparisonPage /></PermRoute>} />
+          <Route path="/price-intelligence" element={<PermRoute perm="view_reports"><PriceIntelligencePage /></PermRoute>} />
           <Route path="/correction-memory" element={<PermRoute perm="view_expenses"><CorrectionMemoryPage /></PermRoute>} />
           <Route path="*" element={<SmartLanding />} />
         </Routes>
