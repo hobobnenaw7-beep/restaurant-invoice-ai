@@ -131,6 +131,38 @@ _CS_DASH = re.compile(
 # Common liquid → lb conversion (approximate, by product category)
 _GAL_TO_LB = 8.34  # water baseline; sauces ~8.5-9, oils ~7.5
 
+# ── US Foods / PFG additional patterns ──
+
+# "40 LB CS", "20 LB BAG", "50 LB BX" — weight + container suffix
+_LB_CONTAINER = re.compile(
+    r'^(\d+(?:\.\d+)?)\s*(?:LBS?|#)\s*(?:CS|CASE|BX|BOX|BAG|PKG|PK|CTN)$', re.IGNORECASE
+)
+
+# "2/5 LB BAG", "4/10 LB CS", "6/2 LB PKG"
+_FRAC_LB_CONTAINER = re.compile(
+    r'^(\d+)\s*[/X]\s*(\d+(?:\.\d+)?)\s*(?:LBS?|#)\s*(?:CS|CASE|BX|BOX|BAG|PKG|PK|CTN)?$', re.IGNORECASE
+)
+
+# "6 CT", "12 CT", "24 CT", "48 CT" — count-based (pieces per case)
+_CT = re.compile(
+    r'^(\d+)\s*(?:CT|COUNT|PCS?|PC)$', re.IGNORECASE
+)
+
+# "1/50 CT", "2/24 CT" — fraction count
+_FRAC_CT = re.compile(
+    r'^(\d+)\s*[/X]\s*(\d+)\s*(?:CT|COUNT|PCS?)$', re.IGNORECASE
+)
+
+# "4 OZ", "8 OZ", "16 OZ" — single ounce (common for US Foods portioned items)
+_PORTION_OZ = re.compile(
+    r'^(\d+(?:\.\d+)?)\s*OZ$', re.IGNORECASE
+)
+
+# "6/4 OZ", "12/8 OZ" — fraction ounce portions
+_FRAC_PORTION_OZ = re.compile(
+    r'^(\d+)\s*[/X]\s*(\d+(?:\.\d+)?)\s*OZ$', re.IGNORECASE
+)
+
 
 def parse_pack_size(pack_str: str) -> dict:
     """
@@ -158,14 +190,32 @@ def parse_pack_size(pack_str: str) -> dict:
     # OCR correction: "4/0#" → "4/10#", "12/0 LB" → "12/10 LB" (0 is OCR-damaged 10)
     cleaned = re.sub(r'^(\d+)\s*/\s*0\s*(#|LBS?)$', r'\g<1>/10\2', cleaned)
 
-    # ── Simple LB: "40 LB", "150LB", "85LBS", "150#" ──
-    m = _SIMPLE_LB.match(cleaned)
-    if m:
-        lb = float(m.group(1))
-        return {"parsed": True, "total_weight_lb": lb, "total_pieces": None,
-                "unit_type": "lb", "parse_method": "simple_lb", "raw": raw}
+    # ── Strip "CS" prefix for Sysco packs: "CS 410 LB" → "410 LB" ──
+    # Sysco wraps pack sizes in "CS ..." — remove it so patterns match the core value.
+    _cs_prefix_stripped = False
+    cs_prefix_match = re.match(r'^(?:CS\s+)(.+)$', cleaned)
+    if cs_prefix_match:
+        inner = cs_prefix_match.group(1).strip()
+        # Only strip if inner looks like a weight/count pattern (not "CS1000" which is count-based)
+        if re.match(r'^\d+.*(?:LB|#|OZ|GAL|EA|CT)', inner, re.IGNORECASE):
+            cleaned = inner
+            _cs_prefix_stripped = True
 
-    # ── Fraction LB: "4/5 LB", "2/10 LB", "8/5#" ──
+    # ── Sysco concatenated fraction: "410LB" → "4/10 LB" ──
+    # When OCR drops the slash: "410LB" should be "4/10LB" (4 bags × 10 lb = 40 lb)
+    _CONCAT_FRAC = re.compile(r'^(\d)(\d{2,3})\s*(LBS?|#|POUND)$', re.IGNORECASE)
+    m_concat = _CONCAT_FRAC.match(cleaned)
+    if m_concat:
+        prefix = int(m_concat.group(1))
+        suffix = int(m_concat.group(2))
+        unit_str = m_concat.group(3)
+        # Only split when prefix is clearly a bag count (2-9).
+        # prefix=1 is ambiguous: "120LB" is 120 lb, not 1×20 lb.
+        if 2 <= prefix <= 9 and 5 <= suffix <= 30:
+            cleaned = f"{prefix}/{suffix}{unit_str}"
+            logger.debug(f"Pack size OCR fix: '{raw}' → '{cleaned}' (concatenated fraction)")
+
+    # ── Fraction LB: "4/5 LB", "2/10 LB", "8/5#" — check BEFORE simple LB ──
     m = _FRACTION_LB.match(cleaned)
     if m:
         count = int(m.group(1))
@@ -173,6 +223,13 @@ def parse_pack_size(pack_str: str) -> dict:
         total_lb = count * weight
         return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": None,
                 "unit_type": "lb", "parse_method": "fraction_lb", "raw": raw}
+
+    # ── Simple LB: "40 LB", "150LB", "85LBS", "150#" ──
+    m = _SIMPLE_LB.match(cleaned)
+    if m:
+        lb = float(m.group(1))
+        return {"parsed": True, "total_weight_lb": lb, "total_pieces": None,
+                "unit_type": "lb", "parse_method": "simple_lb", "raw": raw}
 
     # ── CS + LB: "CS 40.0 LB", "2 CS 120 LB" ──
     m = _CS_LB.match(cleaned)
@@ -240,6 +297,39 @@ def parse_pack_size(pack_str: str) -> dict:
         total_lb = round(oz / 16, 2)
         return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": None,
                 "unit_type": "lb", "parse_method": "simple_oz", "raw": raw}
+
+    # ── US Foods / PFG patterns ──
+
+    # "40 LB CS", "20 LB BAG", "50 LB BX" — weight + container suffix
+    m = _LB_CONTAINER.match(cleaned)
+    if m:
+        lb = float(m.group(1))
+        return {"parsed": True, "total_weight_lb": lb, "total_pieces": None,
+                "unit_type": "lb", "parse_method": "lb_container", "raw": raw}
+
+    # "6 CT", "12 CT", "24 CT" — piece count
+    m = _CT.match(cleaned)
+    if m:
+        count = int(m.group(1))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": count,
+                "unit_type": "piece", "parse_method": "ct_count", "raw": raw}
+
+    # "1/50 CT", "2/24 CT" — fraction count
+    m = _FRAC_CT.match(cleaned)
+    if m:
+        packs = int(m.group(1))
+        per_pack = int(m.group(2))
+        return {"parsed": True, "total_weight_lb": None, "total_pieces": packs * per_pack,
+                "unit_type": "piece", "parse_method": "frac_ct", "raw": raw}
+
+    # "6/4 OZ", "12/8 OZ" — fraction ounce portions
+    m = _FRAC_PORTION_OZ.match(cleaned)
+    if m:
+        packs = int(m.group(1))
+        oz_each = float(m.group(2))
+        total_lb = round(packs * oz_each / 16, 2)
+        return {"parsed": True, "total_weight_lb": total_lb, "total_pieces": packs,
+                "unit_type": "lb", "parse_method": "frac_portion_oz", "raw": raw}
 
     # ── N CS + count EA: "1 CS1000 EA" → 1000 pcs ──
     m = _N_CS_COUNT_EA.match(cleaned)
@@ -433,7 +523,9 @@ def normalize_item(item: dict) -> dict:
     if unit_type == "lb" and parsed.get("total_weight_lb"):
         weight_per_case = parsed["total_weight_lb"]
         norm_qty = round(qty * weight_per_case, 2) if qty > 0 else weight_per_case
-        ppu = round(unit_price / weight_per_case, 4) if weight_per_case > 0 else None
+        # price_per_unit = line_total / (quantity * multiplier)
+        denominator = qty * weight_per_case if qty > 0 else weight_per_case
+        ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
         item["normalized_quantity"] = norm_qty
         item["normalized_unit"] = "lb"
         item["price_per_unit"] = ppu
@@ -444,7 +536,8 @@ def normalize_item(item: dict) -> dict:
     elif unit_type == "gallon" and parsed.get("total_weight_lb"):
         weight_per_case = parsed["total_weight_lb"]
         norm_qty = round(qty * weight_per_case, 2) if qty > 0 else weight_per_case
-        ppu = round(unit_price / weight_per_case, 4) if weight_per_case > 0 else None
+        denominator = qty * weight_per_case if qty > 0 else weight_per_case
+        ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
         item["normalized_quantity"] = norm_qty
         item["normalized_unit"] = "lb"
         item["price_per_unit"] = ppu
@@ -456,7 +549,8 @@ def normalize_item(item: dict) -> dict:
     elif unit_type == "piece" and parsed.get("total_pieces"):
         pieces_per_case = parsed["total_pieces"]
         norm_qty = round(qty * pieces_per_case, 2) if qty > 0 else float(pieces_per_case)
-        ppu = round(unit_price / pieces_per_case, 4) if pieces_per_case > 0 else None
+        denominator = qty * pieces_per_case if qty > 0 else float(pieces_per_case)
+        ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
         item["normalized_quantity"] = norm_qty
         item["normalized_unit"] = "piece"
         item["price_per_unit"] = ppu

@@ -9,70 +9,61 @@ Build a deterministic, rule-based Invoice Review and Correction Pipeline with a 
 ├── backend/
 │   ├── core/ (auth, permissions, models, database)
 │   ├── routes/
-│   │   ├── upload.py (Extraction pipeline, multi-signal routing, correction apply, storage classify)
-│   │   ├── purchases.py (CRUD + inline PATCH edit + verify + correction memory hook)
-│   │   ├── items.py (CRUD + PATCH storage-category with manual override + filter)
-│   │   ├── correction_memory.py (CRUD for correction management)
-│   │   ├── auth.py, sales.py, other_expenses.py, records.py, settings.py
+│   │   ├── upload.py (Extraction pipeline, routing, correction, classification, normalization)
+│   │   ├── purchases.py (CRUD + inline edit + verify + correction memory)
+│   │   ├── items.py (CRUD + storage-category + filter)
 │   ├── services/
 │   │   ├── vendor_detection.py (Multi-signal detection + confidence routing)
 │   │   ├── correction_memory.py (v2: strong key hierarchy + provenance)
-│   │   ├── storage_classifier.py (Auto-classify by section headers + keywords, manual protection)
+│   │   ├── storage_classifier.py (Auto-classify + manual override protection)
+│   │   ├── unit_normalizer.py (Pack parsing + price_per_unit calculation)
 │   │   ├── usfoods_structural.py (2-phase extraction + dark image retry)
-│   ├── preprocessing.py (Image processing + dark image detection/enhancement)
+│   ├── preprocessing.py (Image processing + dark image enhancement)
 ├── frontend/src/
-│   ├── components/
-│   │   ├── InlineReviewPanel.js (Inline edit cells + Mark Verified)
-│   │   ├── InvoiceReviewDialog.js (Full review dialog with audit trail)
-│   ├── pages/
-│   │   ├── ItemsPage.js (Storage category column, filter tabs, dropdown edit)
-│   │   ├── ExpensesPage.js (Needs Review filter + InlineReviewPanel)
+│   ├── components/ (InlineReviewPanel, InvoiceReviewDialog)
+│   ├── pages/ (ItemsPage, ExpensesPage, etc.)
 ```
 
-## Hybrid Item Classification System — COMPLETE
-### Schema
-- `storage_category`: enum (dry, chilled, frozen)
-- `category_source`: enum (auto, manual, default: auto)
+## Unit Normalization (Milestone 2) — COMPLETE
+### Formula
+`price_per_unit = line_total / (quantity × normalized_multiplier)`
 
-### Auto-Classification
-- Section headers: FROZEN, DRY, REFRIGERATED → classify items under each section
-- Product name keywords: IQF→frozen, FRESH→chilled, RICE→dry
-- Applied during extraction pipeline (upload.py)
+### Pattern Coverage
+- Sysco: fraction lb (4/10 LB), simple lb (40 LB), OZ, GAL, EA, CS+count
+- Sysco OCR fix: "410LB" → 4/10 = 40 lb (prefix≥2 only, preserves 120LB/150LB as-is)
+- CS prefix stripping: "CS 410 LB" → stripped → "410LB" → fraction fix
+- US Foods / PFG: LB+container (40 LB CS), CT count (6 CT), fraction CT, fraction OZ portions
+- Ambiguous/empty → unit_status='review', price_per_unit=None (flagged, no guess)
+- Fee items → excluded
 
-### Manual Override Protection
-- UI dropdown sets `category_source=manual`
-- Parser NEVER overwrites manual assignments, even if section header disagrees
-- Manual categories reused for future invoices via product_code lookup
-
-### UI
-- Filter tabs: All Items | Frozen | Chilled | Dry
-- Storage column with inline dropdown per item
-- "manual" badge shown when category_source=manual
+### Test Results
+- 24 pack_size parse patterns: 24/24 pass
+- 4 price formula tests: 4/4 pass
+- 2 before/after JSON examples: verified
+- 2 review flag tests: verified
+- Live Sysco extraction: all items correctly normalized
 
 ## Completed Work
-- Permissions + Accountability model (21 perms, 4 roles)
+- Permissions + Accountability model
 - US Foods 2-phase structural extraction
 - Multi-vendor trust gates (zero false trusts)
-- 294-image stress test — COMPLETE
-- Multi-signal vendor detection + confidence routing — COMPLETE
-- Correction Memory v2 (strong key hierarchy + provenance) — COMPLETE
-- Dark image preprocessing layer — COMPLETE
-- Manual Review Workflow (inline edit + verify + audit) — COMPLETE
-- **Hybrid Item Classification System — COMPLETE**
+- 294-image stress test
+- Multi-signal vendor detection
+- Correction Memory v2
+- Dark image preprocessing
+- Manual Review Workflow
+- Hybrid Item Classification System
+- **Unit Normalization & Price Calculation (Milestone 2)**
 
 ## Upcoming Tasks
 ### P0
-- Production testing: end-to-end upload → classify → review → verify cycle
-- Test manual override on real extraction data
-
+- Production testing of normalization on US Foods + PFG invoices
 ### P1
 - Re-enable Product Memory layer integration
-- Multi-user workflow testing
-
 ### P2
 - Smart Market Insights 3-panel expansion
 - AI Chat Assistant polish
-- Trash/Restore UI for soft-deleted records
+- Trash/Restore UI
 - OCR/Image Upload for Salaries tab
 
 ## Test Credentials
