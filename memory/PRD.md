@@ -47,6 +47,107 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 5: Procurement Decision Engine — BACKEND COMPLETE (2026-04-21)
+
+### Goal
+Convert high-confidence pricing insights into decision-ready procurement
+recommendations with explicit evidence, uncertainty and risk.
+
+### Decision Flow
+```
+1. GUARDRAILS (fail-closed → monitor_only)
+   - insight confidence level == 'high' AND score >= 0.80
+   - good-quality observation count >= 3
+   - identity_confidence and unit_confidence both high
+   (data_quality_flag filtering upstream already enforces per-record checks)
+
+2. SIGNALS (unit-safe)
+   - delta_vs_avg       = (current - hist_avg) / hist_avg
+   - delta_vs_target    = (current - target) / target  (if target set)
+   - delta_vs_alt       = (current - best_alt) / current
+   - alt_evidence_depth = # good observations for alt vendor
+   - alt_recent         = alt appears in last 6 observations
+
+3. RULES (first match wins)
+   a) cheaper alt >=5% AND alt_evidence_depth >=2 AND alt_recent
+      → switch_vendor
+   b) delta_vs_avg >= 10%  OR  delta_vs_target >= 5%
+      → renegotiate
+   c) |delta_vs_avg| <= 3%
+      → no_action
+   d) fallback
+      → monitor_only
+
+4. RISK + DECISION_CONFIDENCE
+   risk_level ∈ {low, medium, high} — scales with evidence depth
+   decision_confidence = insight_score * evidence_scale (derated if thin alt)
+   monitor_only is capped at 0.50 decision_confidence
+```
+
+### API Endpoints
+- GET   /api/procurement/recommendations[?only_actionable=true]
+  Returns {items, total, breakdown{switch_vendor,renegotiate,no_action,monitor_only}}
+  `only_actionable=true` safety filter — only high-confidence switch_vendor/renegotiate.
+- GET   /api/procurement/recommendations/{canonical_product_id}[?canonical_unit=lb]
+- PATCH /api/procurement/targets/{canonical_product_id}
+  Body: `{target_price_per_unit, canonical_unit}` — null clears.
+
+### Output Model (per decision)
+canonical_product_id, canonical_name, canonical_unit, category,
+recommendation_type, decision_confidence, confidence_level, insight_confidence,
+risk_level, reason_summary, evidence[], uncertainty[],
+current_vendor, current_price_per_unit,
+target_price_per_unit, historical_average_price_per_unit,
+best_alternative_vendor, best_alternative_price_per_unit, best_alternative_observations,
+price_delta_vs_avg_pct, price_delta_vs_target_pct, price_delta_vs_alternative_pct,
+observation_count, alert, trend, status,
+guardrails_passed, guardrail_failures[], generated_at
+
+### Sample Decisions (from tests + live data)
+
+**switch_vendor:**
+```
+recommendation_type=switch_vendor, decision_confidence=0.98, risk=medium
+reason: "High likelihood of savings by switching Chicken Breast from
+         Sysco Restaurant Supply to US Foods (~16.7% lower across 4 observations)."
+evidence:
+  - Sysco Restaurant Supply currently at $4.20/lb.
+  - 8.0% above your own recent average of $3.89/lb across 9 observations.
+  - 12.0% above the target price of $3.75/lb.
+  - Alternative vendor US Foods has been $3.50/lb (16.7% cheaper) across 4 obs.
+uncertainty:
+  - Alternative-vendor comparison is based on only 4 observation(s); prices may vary.
+```
+
+**renegotiate (live):**
+```
+recommendation_type=renegotiate, decision_confidence=0.98, risk=low
+reason: "High likelihood you are paying more than recent typical for
+         Chicken Breast ... (24.3% above target) with no strong alternative
+         vendor available — renegotiation suggested."
+```
+
+**monitor_only:**
+```
+recommendation_type=monitor_only, decision_confidence ≤ 0.50, risk=high
+reason: "Not enough reliable evidence to recommend a specific action ...
+         continue to monitor."
+```
+
+### Files
+- /app/backend/services/procurement_decisions.py
+- /app/backend/routes/procurement.py
+- /app/backend/server.py (router registration)
+- /app/backend/tests/test_procurement_decisions.py (17 unit tests)
+- /app/backend/tests/test_procurement_api.py (14 API contract tests, from iteration_88)
+- /app/backend/tests/conftest.py (sys.path fix)
+
+### Testing — 31/31 PASS
+- Unit: guardrails, switch_vendor rule, renegotiate rule, no_action, monitor_only,
+  risk scaling, decision_confidence bounds, probabilistic language, output-model shape.
+- API: list+breakdown, single-product, 404, only_actionable safety filter,
+  target-price set/clear/validate, multi-tenant isolation, auth.
+
 ## Milestone 4.5: DSS Upgrade (Decision-Support System) — COMPLETE (2026-04-21)
 
 ### Insight Confidence Engine (exact scoring)
@@ -180,13 +281,17 @@ alerts (type='price_intelligence'): persisted when threshold hit.
 All Milestone 1-3 deliverables complete. See CHANGELOG.md for details.
 
 ## Upcoming Tasks
+### P0
+- Milestone 5 FRONTEND — hybrid UI: inline summary panel on Price Intelligence page
+  (only high-confidence switch_vendor/renegotiate) + dedicated "Procurement Decisions"
+  tab with full cards (evidence, uncertainty, risk, target-price editor).
 ### P1
-- Expand "Smart Market Insights" into 3-panel command center
-- Integrate product identity into extraction pipeline (auto-resolve during upload)
-- Build Product Identity management UI
+- Expand "Smart Market Insights" into 3-panel command center.
+- Integrate product identity into extraction pipeline (auto-resolve during upload).
 ### P2
-- AI Chat Assistant page polish, Trash/Restore UI, Salaries OCR upload
-- Inline price-intelligence alert badge next to items in ExpensesPage rows
+- AI Chat Assistant page polish, Trash/Restore UI, Salaries OCR upload.
+- Inline price-intelligence alert badge next to items in ExpensesPage rows.
+- Nightly digest emailer for top-3 actionable procurement decisions.
 
 ## Test Credentials
 - Manager: demo@test.com / testpassword
