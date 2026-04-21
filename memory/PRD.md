@@ -3,45 +3,57 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, plus a multi-user permissions and accountability model for team operation.
 
-## Unit Normalization — Layered Decision Engine (Milestone 2) — COMPLETE
+## Unit Normalization — Layered Decision Engine with Learning Loop — COMPLETE
 
 ### Architecture
 ```
 Signal 1: Parser (always runs) → parses pack_size text
 Signal 2: Memory (always runs) → looks up vendor+product_code
                     ↓
-         Validation Layer:
-           - Math cross-check (qty × price ≈ total)
-           - Multiplier bounds check (0.5 – 5000)
-           - Category-unit sense check (meat→lb, eggs→piece)
+         ┌─ USER_CORRECTED? ──→ Apply directly (confidence=1.0)
+         │                       unless multiplier out-of-bounds
+         ↓
+         Validation Layer → math check, bounds, category sense
                     ↓
-         Confidence Scoring:
-           - Base: 0.7
-           - Parser boost: +0.1 for strong methods
-           - Memory boost: +0.1 per historical usage
+         Confidence Scoring
                     ↓
-         Conflict Resolution:
-           - Agree → high confidence normalized
-           - Disagree on unit → needs_review (NEVER blind trust)
-           - Multiplier out of bounds → parser wins
-           - Only memory available → use if valid
+         Conflict Resolution → agree/disagree/review
+                    ↓
+         Save to memory if new (source=auto)
 ```
 
-### Decision Outcomes
-| Scenario | Outcome | Source |
-|----------|---------|--------|
-| Parser + Memory agree | normalized (0.9 conf) | validated_agreement |
-| Only parser (no memory) | normalized (save to memory) | parsed_and_saved |
-| Only memory (parser fails) | normalized if valid | memory |
-| Unit disagreement | **needs_review** | conflict |
-| Multiplier out of bounds | parser wins | parser |
-| Both invalid | **needs_review** | conflict |
+### Learning Loop
+1. Item arrives with ambiguous pack → flagged needs_review
+2. User edits price/total via PATCH → unit_memory saves as `source=user_corrected`
+3. Next extraction (same product_code) → memory HIT with confidence=1.0
+4. Item auto-normalized, NOT sent back to review
 
-### Verified Test Cases
-1. Unit disagreement (Memory=piece, Parser=lb) → **needs_review** ✓
-2. Agreement (Memory=lb/40, Parser=lb/40) → normalized ✓
-3. Out-of-bounds multiplier (Memory=9999) → parser wins ✓
-4. Memory-only (parser fails) → memory accepted if valid ✓
+### Protection Rules
+- `user_corrected` NEVER overwritten by `auto` saves
+- `user_corrected` applied directly at confidence=1.0 (no conflict checking)
+- Only rejected if multiplier falls outside bounds (0.5–5000)
+- Auto parsers can still override other auto mappings (latest wins)
+
+### DB Schema: `unit_memory`
+```json
+{
+  "vendor_key": "SYSCO",
+  "product_code": "8880001",
+  "restaurant_id": "...",
+  "canonical_unit": "lb",
+  "multiplier": 10.0,
+  "pack_size": "2/5 LB",
+  "parse_method": "user_corrected",
+  "source": "user_corrected",
+  "version": 1,
+  "corrected_by_user_id": "8245ae5d-...",
+  "corrected_by_name": "Demo User",
+  "last_corrected_at": "2026-04-21T04:35:15+00:00",
+  "times_used": 1,
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
 
 ## Completed Work
 - Permissions + Accountability model
@@ -54,14 +66,13 @@ Signal 2: Memory (always runs) → looks up vendor+product_code
 - Manual Review Workflow
 - Hybrid Item Classification System
 - Unit Normalization + Canonical Unit
-- Product Memory Integration
-- **Layered Decision Engine (validation + confidence + conflict resolution)**
+- Product Memory with cross-format consistency
+- Layered Decision Engine (validation + confidence + conflict)
+- **Manual-to-Memory Learning Loop (user_corrected truth)**
 
 ## Upcoming Tasks
 ### P0
 - Milestone 3 (user to define)
-### P1
-- Multi-user workflow testing
 ### P2
 - Smart Market Insights, AI Chat Assistant, Trash/Restore, Salaries OCR
 

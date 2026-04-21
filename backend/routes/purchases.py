@@ -359,9 +359,9 @@ async def patch_purchase_item(pid: str, item_index: int, updates: dict, user=Dep
     )
 
     # Save correction to memory (explicit save via PATCH = user confirmed)
-    # RULE: Only NAME corrections create memory entries.
-    # Price/quantity edits are stored as audit data only, NOT as permanent
-    # correction rules (per user requirement: no blind pricing memory).
+    # RULE: Only NAME corrections create correction_memory entries.
+    # Price/quantity edits are stored as audit data only.
+    # RULE: Unit corrections (price on needs_review items) save to unit_memory.
     if changes:
         name_changed = "raw_name" in changes
         if name_changed:
@@ -382,6 +382,58 @@ async def patch_purchase_item(pid: str, item_index: int, updates: dict, user=Dep
                 product_code=item_code,
                 pack_size=pack,
             )
+
+        # Unit memory sync: when user fills in price/total on a review item,
+        # AND the item has normalization data, save as user_corrected truth.
+        price_or_total_changed = "unit_price" in changes or "total" in changes
+        item_code = (updated_item.get("item_code") or "").strip()
+        has_norm = updated_item.get("canonical_unit") and updated_item.get("normalization_multiplier")
+        was_review = old_item.get("unit_status") == "review" or old_item.get("_unit_source") == "conflict"
+
+        if price_or_total_changed and item_code and has_norm:
+            from services.unit_normalizer import save_unit_memory
+            vendor_name = purchase.get("supplier_name") or purchase.get("detected_vendor") or ""
+            await save_unit_memory(
+                vendor=vendor_name,
+                product_code=item_code,
+                restaurant_id=user["restaurant_id"],
+                canonical_unit=updated_item["canonical_unit"],
+                multiplier=updated_item["normalization_multiplier"],
+                pack_size=(updated_item.get("pack_size") or "").strip(),
+                parse_method="user_corrected",
+                source="user_corrected",
+                corrected_by_user_id=user["id"],
+                corrected_by_name=user.get("name", ""),
+            )
+        elif was_review and item_code and not has_norm:
+            # User resolved a review item — try to derive multiplier from the edit
+            new_total = float(updated_item.get("total", 0) or 0)
+            new_price = float(updated_item.get("unit_price", 0) or 0)
+            new_qty = float(updated_item.get("quantity", 0) or 0)
+            pack_str = (updated_item.get("pack_size") or "").strip()
+
+            if new_total > 0 and new_qty > 0 and new_price > 0 and pack_str:
+                from services.unit_normalizer import parse_pack_size, save_unit_memory
+                parsed = parse_pack_size(pack_str)
+                if parsed["parsed"]:
+                    mult = parsed.get("total_weight_lb") or parsed.get("total_pieces")
+                    unit_type = parsed.get("unit_type")
+                    canon_map = {"lb": "lb", "piece": "piece", "gallon": "gal"}
+                    canon = canon_map.get(unit_type, "")
+                    if mult and canon:
+                        vendor_name = purchase.get("supplier_name") or purchase.get("detected_vendor") or ""
+                        await save_unit_memory(
+                            vendor=vendor_name,
+                            product_code=item_code,
+                            restaurant_id=user["restaurant_id"],
+                            canonical_unit=canon,
+                            multiplier=float(mult),
+                            pack_size=pack_str,
+                            parse_method="user_corrected",
+                            source="user_corrected",
+                            corrected_by_user_id=user["id"],
+                            corrected_by_name=user.get("name", ""),
+                        )
 
     return {
         "item": {k: v for k, v in updated_item.items() if k != "_id"},

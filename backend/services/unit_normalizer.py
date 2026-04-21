@@ -82,6 +82,7 @@ def _clean_code(code: str) -> str:
 async def lookup_unit_memory(vendor: str, product_code: str, restaurant_id: str) -> dict:
     """
     Check unit_memory for a saved mapping by vendor + product_code.
+    Prioritizes user_corrected mappings over auto-parsed ones.
     Returns the mapping dict or empty dict.
     """
     from core.database import db
@@ -96,9 +97,10 @@ async def lookup_unit_memory(vendor: str, product_code: str, restaurant_id: str)
         {"_id": 0},
     )
     if doc:
+        source = doc.get("source", "auto")
         logger.info(
             f"Unit memory HIT: {vk}:{code} → canonical_unit={doc.get('canonical_unit')}, "
-            f"multiplier={doc.get('multiplier')}, pack={doc.get('pack_size')}"
+            f"multiplier={doc.get('multiplier')}, source={source}"
         )
     return doc or {}
 
@@ -111,10 +113,19 @@ async def save_unit_memory(
     multiplier: float,
     pack_size: str,
     parse_method: str,
+    source: str = "auto",
+    corrected_by_user_id: str = "",
+    corrected_by_name: str = "",
 ):
     """
     Save or update a unit mapping in unit_memory.
-    Only saves for items with a valid product_code.
+
+    source values:
+      - "auto" — parser-derived (default)
+      - "user_corrected" — human-validated (highest priority)
+
+    Priority rule: user_corrected ALWAYS overwrites auto.
+    Auto NEVER overwrites user_corrected (preserves human truth).
     """
     from core.database import db
     from datetime import datetime, timezone
@@ -125,22 +136,49 @@ async def save_unit_memory(
         return
 
     now = datetime.now(timezone.utc).isoformat()
+
+    # Check if existing mapping is user_corrected
+    existing = await db.unit_memory.find_one(
+        {"vendor_key": vk, "product_code": code, "restaurant_id": restaurant_id},
+        {"_id": 0, "source": 1, "version": 1},
+    )
+
+    # Protection: auto NEVER overwrites user_corrected
+    if existing and existing.get("source") == "user_corrected" and source == "auto":
+        logger.debug(
+            f"Unit memory SKIP: {vk}:{code} — existing user_corrected mapping preserved"
+        )
+        return
+
+    version = (existing.get("version", 0) if existing else 0) + 1
+
+    update_fields = {
+        "vendor_key": vk,
+        "product_code": code,
+        "restaurant_id": restaurant_id,
+        "canonical_unit": canonical_unit,
+        "multiplier": multiplier,
+        "pack_size": pack_size,
+        "parse_method": parse_method,
+        "source": source,
+        "version": version,
+        "updated_at": now,
+    }
+
+    if source == "user_corrected":
+        update_fields["last_corrected_at"] = now
+        update_fields["corrected_by_user_id"] = corrected_by_user_id
+        update_fields["corrected_by_name"] = corrected_by_name
+
     await db.unit_memory.update_one(
         {"vendor_key": vk, "product_code": code, "restaurant_id": restaurant_id},
-        {"$set": {
-            "vendor_key": vk,
-            "product_code": code,
-            "restaurant_id": restaurant_id,
-            "canonical_unit": canonical_unit,
-            "multiplier": multiplier,
-            "pack_size": pack_size,
-            "parse_method": parse_method,
-            "updated_at": now,
-        }, "$inc": {"times_used": 1}, "$setOnInsert": {"created_at": now}},
+        {"$set": update_fields, "$inc": {"times_used": 1},
+         "$setOnInsert": {"created_at": now}},
         upsert=True,
     )
-    logger.debug(
-        f"Unit memory SAVE: {vk}:{code} → {canonical_unit}, multiplier={multiplier}"
+    logger.info(
+        f"Unit memory SAVE [{source}]: {vk}:{code} → {canonical_unit}, "
+        f"multiplier={multiplier}, version={version}"
     )
 
 # ── Regex patterns for parsing pack_size ──
@@ -738,11 +776,49 @@ async def normalize_item_with_memory(item: dict, vendor: str = "", restaurant_id
     # ─── Signal 2: Memory (always runs) ───
     memory = await lookup_unit_memory(vendor, item_code, restaurant_id)
     memory_signal = None
+    memory_is_user_corrected = False
     if memory:
         mem_mult = memory.get("multiplier", 0)
         mem_unit = memory.get("canonical_unit", "")
         if mem_mult > 0 and mem_unit:
             memory_signal = {"canonical_unit": mem_unit, "multiplier": mem_mult, "method": f"memory:{memory.get('parse_method', '?')}"}
+            memory_is_user_corrected = memory.get("source") == "user_corrected"
+
+    # ─── TRUTH RULE: user_corrected memory is highest priority ───
+    # If a human validated this mapping, use it directly UNLESS math fails.
+    if memory_signal and memory_is_user_corrected:
+        mult = memory_signal["multiplier"]
+        canon = memory_signal["canonical_unit"]
+        # Quick math sanity: if qty*unit_price≈total, the mapping should produce
+        # a reasonable PPU. Only reject if multiplier is wildly out of bounds.
+        if 0.5 <= mult <= 5000:
+            norm_qty = round(qty * mult, 2) if qty > 0 else mult
+            denominator = qty * mult if qty > 0 else mult
+            ppu = round(total / denominator, 4) if denominator > 0 and total != 0 else None
+            item["normalized_quantity"] = norm_qty
+            item["normalized_unit"] = canon if canon != "gal" else "lb"
+            item["canonical_unit"] = canon
+            item["normalization_multiplier"] = mult
+            item["price_per_unit"] = ppu
+            item["unit_status"] = "normalized"
+            item["unit_parse_method"] = memory_signal["method"]
+            item["_unit_source"] = "user_corrected"
+            item["_unit_confidence"] = 1.0
+            item["_norm_decision"] = {
+                "parser": {"signal": parser_signal} if parser_signal else None,
+                "memory": {"signal": memory_signal, "source": "user_corrected", "version": memory.get("version", 1)},
+                "reason": "user_corrected_truth",
+            }
+            logger.info(
+                f"Unit normalization: user_corrected truth applied for "
+                f"{raw_name[:40]} code={item_code} → {canon}/{mult}"
+            )
+            return item
+        else:
+            logger.warning(
+                f"Unit normalization: user_corrected mapping for {item_code} has "
+                f"out-of-bounds multiplier={mult} — falling through to validation"
+            )
 
     # ─── Validation Layer ───
     def _validate_signal(sig):
