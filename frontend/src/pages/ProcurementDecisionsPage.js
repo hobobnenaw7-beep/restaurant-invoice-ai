@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import {
   FullDecisionCard, TargetPriceModal, REC_CFG,
 } from '@/components/procurement/ProcurementUI';
+import { PurchaseSuggestionModal } from '@/components/procurement/PurchaseSuggestionModal';
 
 function Kpi({ label, value, icon: Icon, iconBg, sub, testId, active, onClick }) {
   return (
@@ -49,6 +50,7 @@ export default function ProcurementDecisionsPage() {
   const [confidenceFilter, setConfidenceFilter] = useState('all'); // all | high | medium | low
   const [riskFilter, setRiskFilter] = useState('all');           // all | low | medium | high
   const [targetFor, setTargetFor] = useState(null);
+  const [suggestFor, setSuggestFor] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -179,6 +181,7 @@ export default function ProcurementDecisionsPage() {
               key={`${d.canonical_product_id}-${d.canonical_unit}`}
               decision={d}
               onSetTarget={setTargetFor}
+              onPrepareSuggestion={setSuggestFor}
               defaultExpanded={d.recommendation_type === 'switch_vendor' || d.recommendation_type === 'renegotiate'}
             />
           ))
@@ -190,6 +193,11 @@ export default function ProcurementDecisionsPage() {
         decision={targetFor}
         onClose={() => setTargetFor(null)}
         onSaved={load}
+      />
+      <PurchaseSuggestionModal
+        api={api}
+        decision={suggestFor}
+        onClose={() => setSuggestFor(null)}
       />
     </div>
   );

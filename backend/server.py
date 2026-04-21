@@ -34,6 +34,7 @@ from routes.profit_dashboard import router as profit_dashboard_router
 from routes.product_identity import router as product_identity_router
 from routes.price_intelligence import router as price_intelligence_router
 from routes.procurement import router as procurement_router
+from routes.procurement_suggestions import router as procurement_suggestions_router
 
 # --- App setup ---
 app = FastAPI()
@@ -76,6 +77,7 @@ api_router.include_router(profit_dashboard_router)
 api_router.include_router(product_identity_router)
 api_router.include_router(price_intelligence_router)
 api_router.include_router(procurement_router)
+api_router.include_router(procurement_suggestions_router)
 
 app.include_router(api_router)
 

@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } from 'recharts';
 import { toast } from 'sonner';
 import { InlineDecisionCard, TargetPriceModal } from '@/components/procurement/ProcurementUI';
+import { PurchaseSuggestionModal } from '@/components/procurement/PurchaseSuggestionModal';
 import { Sparkles, ArrowRight as ArrowRightIcon } from 'lucide-react';
 import {
   TrendingUp, TrendingDown, Minus, AlertTriangle, Activity, Search, RefreshCw,
@@ -390,6 +391,7 @@ export default function PriceIntelligencePage() {
   const [backfilling, setBackfilling] = useState(false);
   const [actionable, setActionable] = useState([]);
   const [targetFor, setTargetFor] = useState(null);
+  const [suggestFor, setSuggestFor] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -508,7 +510,7 @@ export default function PriceIntelligencePage() {
                   key={d.canonical_product_id}
                   decision={d}
                   onOpen={() => navigate('/procurement-decisions')}
-                  onSetTarget={setTargetFor}
+                  onPrepareSuggestion={setSuggestFor}
                 />
               ))}
             </div>
@@ -621,6 +623,7 @@ export default function PriceIntelligencePage() {
 
       <PriceDetailModal api={api} item={selected} onClose={() => setSelected(null)} />
       <TargetPriceModal api={api} decision={targetFor} onClose={() => setTargetFor(null)} onSaved={load} />
+      <PurchaseSuggestionModal api={api} decision={suggestFor} onClose={() => setSuggestFor(null)} />
     </div>
   );
 }

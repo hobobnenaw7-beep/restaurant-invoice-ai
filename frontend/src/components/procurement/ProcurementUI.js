@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 import {
   ShieldCheck, ShieldAlert, Shield, AlertTriangle,
   RefreshCw, Target, DollarSign, ArrowRightLeft, Eye, MessageSquare,
-  TrendingUp, TrendingDown,
+  TrendingUp, TrendingDown, Sparkles,
 } from 'lucide-react';
 
 // ── helpers ────────────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ export function DeltaRow({ decision }) {
 }
 
 // ── Compact inline card (for summary panel) ───────────────────────────
-export function InlineDecisionCard({ decision, onOpen, onSetTarget }) {
+export function InlineDecisionCard({ decision, onOpen, onPrepareSuggestion }) {
   const cfg = REC_CFG[decision.recommendation_type] || REC_CFG.monitor_only;
   return (
     <div
@@ -159,14 +159,14 @@ export function InlineDecisionCard({ decision, onOpen, onSetTarget }) {
             → {decision.best_alternative_vendor}
           </Badge>
         )}
-        {onSetTarget && (
+        {onPrepareSuggestion && (
           <Button
-            size="sm" variant="ghost"
-            className="h-6 px-2 text-[10px] ml-auto hover:bg-white"
-            onClick={(e) => { e.stopPropagation(); onSetTarget(decision); }}
-            data-testid={`inline-target-btn-${decision.canonical_product_id}`}
+            size="sm"
+            className="h-6 px-2 text-[10px] ml-auto gap-1 bg-teal-600 hover:bg-teal-700"
+            onClick={(e) => { e.stopPropagation(); onPrepareSuggestion(decision); }}
+            data-testid={`inline-prepare-btn-${decision.canonical_product_id}`}
           >
-            <Target className="w-3 h-3 mr-1" /> Target
+            <Sparkles className="w-3 h-3" /> Prepare Suggestion
           </Button>
         )}
       </div>
@@ -175,7 +175,7 @@ export function InlineDecisionCard({ decision, onOpen, onSetTarget }) {
 }
 
 // ── Full decision card (expanded, for detail view) ─────────────────────
-export function FullDecisionCard({ decision, onSetTarget, defaultExpanded = false }) {
+export function FullDecisionCard({ decision, onSetTarget, onPrepareSuggestion, defaultExpanded = false }) {
   const [showEvidence, setShowEvidence] = useState(defaultExpanded);
   const [showUncertainty, setShowUncertainty] = useState(false);
   const cfg = REC_CFG[decision.recommendation_type] || REC_CFG.monitor_only;
@@ -270,15 +270,28 @@ export function FullDecisionCard({ decision, onSetTarget, defaultExpanded = fals
           {decision.trend?.trend === 'up' && <span className="text-red-500"><TrendingUp className="inline w-3 h-3" /> Trending up</span>}
           {decision.trend?.trend === 'down' && <span className="text-emerald-500"><TrendingDown className="inline w-3 h-3" /> Trending down</span>}
         </div>
-        <Button
-          size="sm" variant="outline"
-          className="h-7 px-2.5 text-[10px] gap-1.5"
-          onClick={() => onSetTarget?.(decision)}
-          data-testid={`fc-target-btn-${decision.canonical_product_id}`}
-        >
-          <Target className="w-3 h-3" />
-          {decision.target_price_per_unit ? `Target: ${fmtPrice(decision.target_price_per_unit)}` : 'Set target'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm" variant="ghost"
+            className="h-7 px-2.5 text-[10px] gap-1.5 text-slate-600"
+            onClick={() => onSetTarget?.(decision)}
+            data-testid={`fc-target-btn-${decision.canonical_product_id}`}
+          >
+            <Target className="w-3 h-3" />
+            {decision.target_price_per_unit ? `Target: ${fmtPrice(decision.target_price_per_unit)}` : 'Set target'}
+          </Button>
+          {(decision.recommendation_type === 'switch_vendor' || decision.recommendation_type === 'renegotiate') && decision.confidence_level === 'high' && (
+            <Button
+              size="sm"
+              className="h-7 px-3 text-[10px] gap-1.5 bg-teal-600 hover:bg-teal-700"
+              onClick={() => onPrepareSuggestion?.(decision)}
+              data-testid={`fc-prepare-suggestion-btn-${decision.canonical_product_id}`}
+            >
+              <Sparkles className="w-3 h-3" />
+              Prepare Purchase Suggestion
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
