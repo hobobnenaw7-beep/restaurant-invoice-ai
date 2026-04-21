@@ -1,0 +1,44 @@
+{
+  "summary": "Milestone 5 (Procurement Decision Engine — backend only) tested end-to-end. All 17 pure-function decision-rule unit tests and all 14 new live-API integration tests pass (31/31). API contract, guardrails, only_actionable safety filter, target-price lifecycle (set/clear/validate), multi-tenant auth enforcement, reason-summary language, and sort order all verified against the public ingress URL with seeded demo data.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/procurement/recommendations (and others)", "issue": "Endpoints rely on the `user` object returned by `get_user` containing `restaurant_id`. This works for demo@test.com but is untested for edge cases where user record is missing that field — would throw 500 (KeyError). Consider defensive `user.get('restaurant_id')` with explicit 401/403."},
+      {"endpoint": "tests/test_procurement_decisions.py", "issue": "Unit tests cannot be collected without PYTHONPATH=/app/backend (no conftest.py adds rootdir). Not a prod bug, but CI/regression runs will fail unless wrapper sets PYTHONPATH. Consider adding /app/backend/tests/conftest.py with sys.path insertion."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_procurement_decisions.py",
+    "/app/backend/tests/test_procurement_api.py",
+    "/app/test_reports/pytest/pytest_procurement_api.xml"
+  ],
+  "action_items": [
+    "Optional: add /app/backend/tests/conftest.py inserting /app/backend into sys.path so `pytest tests/test_procurement_decisions.py` works without PYTHONPATH override.",
+    "Optional: defensive handling if `user['restaurant_id']` is missing in routes/procurement.py (return 401/403 rather than KeyError→500)."
+  ],
+  "critical_code_review_comments": [
+    "services/procurement_decisions.py is 620 lines — still readable and well-sectioned, under the 700-line threshold. Clean separation between pure decision builder, DB aggregation, and helpers. OK.",
+    "Guardrail logic correctly fail-closed: empty `good` observations ⇒ explicit 'no_good_observations' failure before any rule evaluation. Verified against seeded Ground Beef (POOR-only) fixture → monitor_only with low confidence as spec requires.",
+    "only_actionable filter in recommendations_for_restaurant correctly drops both non-actionable types AND non-high confidence — safety rule for inline summary verified.",
+    "Sort stable & deterministic: actionable priority → desc decision_confidence → canonical_name tie-breaker. Verified on live data.",
+    "Target-price lifecycle: PATCH persists target_price_per_unit + target_unit idempotently; passing null correctly clears both; non-positive values rejected with 400; unknown canonical_product_id yields 404. Downstream GET correctly picks it up because recommendations_for_restaurant / recommendation_for_product load canonical_products and gate target on matching canonical_unit.",
+    "Reason summary uses probabilistic language (starts with 'High likelihood ...' or 'within your recent typical ...'); no 'overpaying' or imperative commands detected for medium/low confidence items in live data.",
+    "Mongo `_id` correctly excluded via projection {'_id': 0} in both price_history and canonical_products reads.",
+    "Multi-tenant isolation enforced via restaurant_id scope on every DB query (price_history + canonical_products)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_procurement_api.py (NEW - 14 live-API integration tests)"
+  ],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "demo@test.com / testpassword (primary), staff@test.com / testpass123 (secondary). Both authenticated successfully.",
+  "seed_data_creation": "No new seed data created. Used existing Chicken Breast (2c131d7a...) with 10 good observations and Ground Beef 80/20 (e703a4fe...) with POOR-only observations as specified in the review request.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Procurement Decision API is stable. Test harness at /app/backend/tests/test_procurement_api.py covers list, single-product, target-price CRUD, only_actionable safety filter, multi-tenant, auth enforcement, and language checks. Run with: cd /app/backend && PYTHONPATH=/app/backend pytest tests/test_procurement_api.py tests/test_procurement_decisions.py -v. Note that unit tests need PYTHONPATH=/app/backend because tests/ lacks a conftest.py.",
+  "rca of the issue": "No issues to RCA — all tests pass on first run."
+}
