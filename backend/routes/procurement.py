@@ -38,7 +38,7 @@ async def list_recommendations(
     user=Depends(get_user),
 ):
     items = await recommendations_for_restaurant(
-        user["restaurant_id"], only_actionable=only_actionable
+        user["restaurant_id"], only_actionable=only_actionable, user_id=user.get("id")
     )
     return {
         "items": items,

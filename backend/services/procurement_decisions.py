@@ -488,7 +488,7 @@ def _reason_summary(
 # DB-backed aggregations (consumed by the API layer)
 # ──────────────────────────────────────────────────────────────────────
 async def recommendations_for_restaurant(
-    restaurant_id: str, *, only_actionable: bool = False
+    restaurant_id: str, *, only_actionable: bool = False, user_id: Optional[str] = None
 ) -> list[dict]:
     """Build decisions for every (canonical_product, canonical_unit) bucket."""
     obs_by_key: dict[tuple, list[dict]] = {}
@@ -539,6 +539,21 @@ async def recommendations_for_restaurant(
         -float(d.get("decision_confidence") or 0),
         d.get("canonical_name", ""),
     ))
+
+    # Decision Audit Log hook — idempotent upsert per (tenant, cpid, rec_type).
+    # Wrapped so an audit write failure never breaks recommendation delivery.
+    try:
+        from services.procurement_audit import record_recommendation_generated
+        for d in out:
+            try:
+                await record_recommendation_generated(
+                    restaurant_id=restaurant_id, user_id=user_id, decision=d,
+                )
+            except Exception as e:   # pragma: no cover
+                logger.warning(f"audit upsert failed for {d.get('canonical_product_id')}: {e}")
+    except Exception as e:   # pragma: no cover
+        logger.warning(f"audit module unavailable: {e}")
+
     return out
 
 

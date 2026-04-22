@@ -62,6 +62,21 @@ async def log_event(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await db.procurement_suggestion_events.insert_one(doc)
+
+    # Decision Audit Log — stamp interaction timestamps on the open audit record.
+    # Non-fatal: audit failures must never block the user-facing flow.
+    try:
+        from services.procurement_audit import record_interaction
+        await record_interaction(
+            restaurant_id=user["restaurant_id"],
+            canonical_product_id=canonical_product_id,
+            recommendation_type=recommendation_type,
+            event_type=event_type,
+            suggestion_id=(metadata or {}).get("suggestion_id"),
+        )
+    except Exception as e:   # pragma: no cover
+        logger.warning(f"audit interaction write failed: {e}")
+
     return {k: v for k, v in doc.items() if k != "_id"}
 
 
@@ -116,6 +131,18 @@ async def save_suggestion(
         "created_at": now,
     }
     await db.procurement_suggestions.insert_one(doc)
+
+    # Decision Audit Log — link the saved suggestion to its audit record.
+    try:
+        from services.procurement_audit import link_suggestion
+        await link_suggestion(
+            restaurant_id=user["restaurant_id"],
+            canonical_product_id=canonical_product_id,
+            recommendation_type=recommendation_type,
+            suggestion_id=doc["id"],
+        )
+    except Exception as e:   # pragma: no cover
+        logger.warning(f"audit link_suggestion failed: {e}")
 
     # Mirror the confirm event for completeness
     await log_event(
@@ -188,6 +215,22 @@ async def record_outcome(
             "outcome_note_present": bool(outcome_note),
         },
     )
+
+    # Decision Audit Log — finalize the audit record with the terminal outcome.
+    try:
+        from services.procurement_audit import finalize_outcome
+        await finalize_outcome(
+            restaurant_id=user["restaurant_id"],
+            canonical_product_id=suggestion.get("canonical_product_id", ""),
+            recommendation_type=suggestion.get("recommendation_type", ""),
+            suggestion_id=suggestion_id,
+            outcome_type=outcome_type,
+            outcome_note=outcome_note,
+            user_id=user.get("id"),
+        )
+    except Exception as e:   # pragma: no cover
+        logger.warning(f"audit finalize_outcome failed: {e}")
+
     return suggestion
 
 
