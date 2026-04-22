@@ -47,6 +47,43 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 12: Command Center Advisory-Only Polish (2026-02-13)
+
+### Refinements on top of Milestone 10
+- **Advisory-only button wording** on Decision Engine cards:
+  * `Accept` → **"Save Suggestion"** (teal · Sparkles icon)
+  * `Dismiss` → **"Review Later"** (outline · Clock icon)
+  * data-testids updated: `decision-save-suggestion-{cpid}` / `decision-review-later-{cpid}`
+  * Info bar copy: "Save Suggestion opens the acknowledgment modal. Review Later
+    is session-only — advisory only, no purchase is executed."
+- **Forbidden execution verbs banned** on the Decision Engine surface:
+  no "Accept", "Approve", "Execute" in user-visible text.
+- **Intent-preserving redirects** from legacy routes now carry `?panel=`:
+  | Legacy | → |
+  |---|---|
+  | `/purchase-decisions`, `/procurement/smart-purchases` | `/procurement?panel=decisions` |
+  | `/price-intelligence`, `/procurement/price-insights`  | `/procurement?panel=market` |
+  | `/procurement-decisions`, `/procurement/decisions`    | `/procurement?panel=decisions` |
+  | `/procurement/inbox`, `/procurement/suggestions`      | `/procurement?panel=suggestions` |
+- **Panel focus via URL**: `/procurement?panel=market|decisions|suggestions`
+  adds subtle teal focus ring on the chosen panel + scrolls it into view on
+  mobile. Exposed as `data-panel-focus="true|false"` on each
+  `panel-{name}-wrap` element for deep-link robustness.
+- **Zero backend changes** — `git status backend/` clean except an untracked
+  pytest log file. All APIs reused verbatim.
+
+### Reused APIs (unchanged list)
+- `GET /api/price-intelligence/products`
+- `GET /api/procurement/recommendations`
+- `GET /api/procurement/suggestions?status=saved_for_review`
+- `PATCH /api/procurement/suggestions/{id}/outcome`
+- `POST /api/procurement/events` + `POST /api/procurement/suggestions`
+
+### Files
+- /app/frontend/src/pages/ProcurementCommandCenterPage.js (wording + panel focus)
+- /app/frontend/src/App.js (8 legacy redirects now carry `?panel=`)
+
+
 ## Milestone 11: Expenses — Dedicated Sub-Pages (2026-02-13)
 
 ### Goal
