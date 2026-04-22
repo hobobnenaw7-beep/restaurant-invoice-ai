@@ -9,6 +9,7 @@
  *   - Once a suggestion is acted_on / not_pursued, it leaves the unresolved queue.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -20,7 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  CheckCircle2, XCircle, Inbox, Search, RefreshCw, ArrowRight, Clock, FileText, Sparkles,
+  CheckCircle2, XCircle, Inbox, Search, RefreshCw, ArrowRight, Clock, FileText, Sparkles, ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -255,16 +256,23 @@ export default function ProcurementInboxPage() {
 
   return (
     <div className="space-y-6" data-testid="procurement-inbox-page">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-1 text-[11px] text-slate-500" data-testid="history-breadcrumb">
+        <Link to="/procurement" className="hover:text-navy-900 transition-colors">Procurement</Link>
+        <ChevronRight className="w-3 h-3 text-slate-300" />
+        <span className="font-semibold text-navy-900">Saved History</span>
+      </div>
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="font-heading text-2xl font-extrabold text-navy-900 tracking-tight flex items-center gap-2">
             <Inbox className="w-5 h-5 text-teal-600" />
-            Saved Suggestions Inbox
+            Saved History
           </h1>
           <p className="text-sm text-slate-500 mt-1 max-w-2xl">
-            Review drafts you saved and record whether you acted on them. This feedback is
-            advisory only — no purchases, no vendor communication.
+            Insights you saved and the outcomes you recorded. This is a reference /
+            audit view — the live action screen is <Link to="/procurement" className="text-teal-700 hover:underline font-semibold">Procurement</Link>.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={load} className="gap-1.5" data-testid="inbox-refresh-btn">

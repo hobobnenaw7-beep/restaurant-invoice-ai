@@ -9,7 +9,7 @@
  *
  * Strict rules:
  *   - ZERO new backend endpoints. Only composes existing APIs.
- *   - Save Suggestion = opens PurchaseSuggestionModal (user must still acknowledge risk).
+ *   - Save Insight = opens PurchaseSuggestionModal (user must still acknowledge risk).
  *   - Dismiss = session-local hide (does not mutate any server state).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,10 +22,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Textarea } from '@/components/ui/textarea';
 import {
-  TrendingUp, TrendingDown, ArrowRight, ArrowRightLeft, Sparkles, Inbox,
-  RefreshCw, CheckCircle2, XCircle, AlertTriangle, BarChart3, LineChart, Eye,
+  TrendingUp, TrendingDown, ArrowRight, Sparkles, Inbox,
+  RefreshCw, AlertTriangle, BarChart3, LineChart, Eye,
   Info, Clock, ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -230,9 +229,9 @@ function DecisionCard({ d, onAccept, onDismiss, onViewDetails }) {
             size="sm"
             className="h-7 px-3 text-[10px] gap-1 bg-teal-600 hover:bg-teal-700"
             onClick={() => onAccept(d)}
-            data-testid={`decision-save-suggestion-${d.canonical_product_id}`}
+            data-testid={`decision-save-insight-${d.canonical_product_id}`}
           >
-            <Sparkles className="w-3 h-3" /> Save Suggestion
+            <Sparkles className="w-3 h-3" /> Save Insight
           </Button>
         </div>
       </div>
@@ -259,7 +258,7 @@ function DecisionEnginePanel({ decisions, loading, onAccept, onDismiss, onViewDe
       </div>
       <div className="px-4 py-2 bg-teal-50/40 border-b border-teal-100 text-[10px] text-teal-800 flex items-start gap-1.5">
         <Info className="w-3 h-3 flex-shrink-0 mt-0.5" />
-        <span>Only high-confidence items (score ≥ 0.80, ≥ 3 observations) — top {DECISION_MAX_CARDS}. <strong>Save Suggestion</strong> opens the acknowledgment modal. <strong>Review Later</strong> is session-only — advisory only, no purchase is executed.</span>
+        <span>Only high-confidence items (score ≥ 0.80, ≥ 3 observations) — top {DECISION_MAX_CARDS}. <strong>Save Insight</strong> opens the acknowledgment modal. <strong>Review Later</strong> is session-only — advisory only, no purchase is executed.</span>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {loading ? (
@@ -365,84 +364,23 @@ function DecisionDetailsModal({ decision, onClose }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// RIGHT PANEL — Suggestions / To Review
+// RIGHT PANEL — Triage (Needs Review / Low Confidence / Missing Data)
 // ══════════════════════════════════════════════════════════════════
-function NotPursuedModal({ suggestion, onClose, onSubmit, submitting }) {
-  const [note, setNote] = useState('');
-  useEffect(() => { if (!suggestion) setNote(''); }, [suggestion]);
-  if (!suggestion) return null;
-  return (
-    <Dialog open={!!suggestion} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md" data-testid="right-not-pursued-modal">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <XCircle className="w-4 h-4 text-slate-500" /> Ignore suggestion
-          </DialogTitle>
-          <DialogDescription className="text-[11px] text-slate-500">
-            Optional correction / reason. No purchasing action is taken.
-          </DialogDescription>
-        </DialogHeader>
-        <Textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder="e.g., contract locked, quality concerns…"
-          className="text-xs min-h-[80px]"
-          data-testid="right-not-pursued-note"
-        />
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={submitting} data-testid="right-not-pursued-cancel">Cancel</Button>
-          <Button
-            onClick={() => onSubmit(note)}
-            disabled={submitting}
-            className="bg-slate-700 hover:bg-slate-800"
-            data-testid="right-not-pursued-confirm"
-          >Confirm</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
+function ReviewRow({ d, onPromote, category }) {
+  const labels = { needs_review: 'needs review', low_confidence: 'low conf', missing_data: 'missing data' };
+  const cls = {
+    needs_review:   'border-amber-200 bg-amber-50/40',
+    low_confidence: 'border-slate-200 bg-slate-50/40',
+    missing_data:   'border-slate-200 bg-white',
+  }[category] || 'border-slate-200 bg-white';
+  const badgeCls = {
+    needs_review:   'bg-amber-100 text-amber-700',
+    low_confidence: 'bg-slate-200 text-slate-700',
+    missing_data:   'bg-slate-100 text-slate-500',
+  }[category] || 'bg-slate-100 text-slate-600';
 
-function SavedSuggestionRow({ s, onAcceptOutcome, onIgnore }) {
   return (
-    <div className="border border-amber-200 rounded-lg p-2.5 bg-amber-50/40 space-y-1.5" data-testid={`right-saved-row-${s.id}`}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="text-[12px] font-semibold text-navy-900 truncate">{s.canonical_name}</p>
-          <p className="text-[10px] text-slate-500 truncate">
-            {s.current_vendor || '—'} <ArrowRight className="inline w-2.5 h-2.5" /> <span className="font-medium text-navy-900">{s.recommended_vendor || '—'}</span>
-          </p>
-        </div>
-        <Badge className="bg-amber-100 text-amber-700 text-[9px] font-bold uppercase h-4">saved</Badge>
-      </div>
-      <p className="text-[10px] text-slate-400 flex items-center gap-1"><Clock className="w-2.5 h-2.5" /> {relTime(s.created_at)}</p>
-      <div className="flex items-center gap-1.5 pt-1 border-t border-amber-100">
-        <Button
-          size="sm" variant="outline"
-          className="h-6 px-2 text-[10px] gap-1 border-slate-300 text-slate-600"
-          onClick={() => onIgnore(s)}
-          data-testid={`right-ignore-btn-${s.id}`}
-        >
-          <XCircle className="w-3 h-3" /> Ignore
-        </Button>
-        <Button
-          size="sm"
-          className="h-6 px-2 text-[10px] gap-1 bg-emerald-600 hover:bg-emerald-700"
-          onClick={() => onAcceptOutcome(s)}
-          data-testid={`right-acted-btn-${s.id}`}
-        >
-          <CheckCircle2 className="w-3 h-3" /> Acted on
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function ReviewRow({ d, onPromote }) {
-  // Low-confidence / monitor_only / missing-data rows (promote to decision = open modal)
-  const label = d.confidence_level && d.confidence_level !== 'high' ? d.confidence_level : 'monitor';
-  return (
-    <div className="border border-slate-200 rounded-lg p-2.5 bg-white space-y-1.5" data-testid={`right-review-row-${d.canonical_product_id}`}>
+    <div className={`border rounded-lg p-2.5 space-y-1.5 ${cls}`} data-testid={`right-review-row-${d.canonical_product_id}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="text-[12px] font-semibold text-navy-900 truncate">{d.canonical_name}</p>
@@ -450,11 +388,11 @@ function ReviewRow({ d, onPromote }) {
             {d.current_vendor || '—'}{d.best_alternative_vendor && <> · alt {d.best_alternative_vendor}</>}
           </p>
         </div>
-        <Badge variant="outline" className="text-[9px] font-bold uppercase h-4 capitalize">{label}</Badge>
+        <Badge className={`text-[9px] font-bold uppercase h-4 ${badgeCls}`}>{labels[category] || 'review'}</Badge>
       </div>
       <p className="text-[10px] text-slate-500 line-clamp-2 italic">{d.reason_summary}</p>
       <div className="flex items-center justify-between pt-1 border-t border-slate-100">
-        <span className="text-[9px] text-slate-400">{d.observation_count} obs</span>
+        <span className="text-[9px] text-slate-400">{d.observation_count || 0} obs</span>
         <Button
           size="sm" variant="ghost"
           className="h-6 px-2 text-[10px] gap-1 text-teal-700 hover:bg-teal-50"
@@ -468,19 +406,30 @@ function ReviewRow({ d, onPromote }) {
   );
 }
 
-function SuggestionsPanel({
-  savedSuggestions, reviewDecisions, loading,
-  onAcceptOutcome, onIgnore, onPromote, onRefresh,
-}) {
-  const [tab, setTab] = useState('saved');  // saved | review
-  const items = tab === 'saved' ? savedSuggestions : reviewDecisions;
+// Mutually-exclusive triage: missing_data wins over low_confidence wins over needs_review.
+function triageBucket(d) {
+  const obs = d.observation_count || 0;
+  const conf = (d.confidence_level || '').toLowerCase();
+  if (d.recommendation_type === 'monitor_only' || obs < DECISION_MIN_OBS || !conf) return 'missing_data';
+  if (conf === 'low') return 'low_confidence';
+  return 'needs_review'; // medium-confidence or otherwise-kept-out-of-center
+}
+
+function SuggestionsPanel({ reviewDecisions, loading, onPromote, onRefresh }) {
+  const [tab, setTab] = useState('needs_review');
+  const grouped = useMemo(() => {
+    const out = { needs_review: [], low_confidence: [], missing_data: [] };
+    (reviewDecisions || []).forEach(d => { out[triageBucket(d)].push(d); });
+    return out;
+  }, [reviewDecisions]);
+  const items = grouped[tab] || [];
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 flex flex-col h-full" data-testid="panel-suggestions">
       <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Inbox className="w-4 h-4 text-teal-600" />
-          <h2 className="text-[13px] font-bold text-navy-900">Suggestions</h2>
+          <h2 className="text-[13px] font-bold text-navy-900">Triage</h2>
         </div>
         <button
           onClick={onRefresh}
@@ -490,39 +439,46 @@ function SuggestionsPanel({
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
-      <div className="flex items-center gap-1 p-0.5 mx-3 mt-3 bg-slate-100 rounded-lg" role="tablist">
-        <button
-          onClick={() => setTab('saved')}
-          className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-md transition-colors ${tab === 'saved' ? 'bg-white text-navy-900 shadow-sm' : 'text-slate-500'}`}
-          data-testid="right-tab-saved"
-        >
-          Saved ({savedSuggestions.length})
-        </button>
-        <button
-          onClick={() => setTab('review')}
-          className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-md transition-colors ${tab === 'review' ? 'bg-white text-navy-900 shadow-sm' : 'text-slate-500'}`}
-          data-testid="right-tab-review"
-        >
-          To review ({reviewDecisions.length})
-        </button>
+
+      <div className="grid grid-cols-3 gap-1 p-0.5 mx-3 mt-3 bg-slate-100 rounded-lg" role="tablist">
+        {[
+          { k: 'needs_review',   label: 'Needs Review' },
+          { k: 'low_confidence', label: 'Low Conf.' },
+          { k: 'missing_data',   label: 'Missing Data' },
+        ].map(t => (
+          <button
+            key={t.k}
+            onClick={() => setTab(t.k)}
+            className={`text-[10px] font-semibold px-1.5 py-1 rounded-md transition-colors ${tab === t.k ? 'bg-white text-navy-900 shadow-sm' : 'text-slate-500'}`}
+            data-testid={`right-tab-${t.k.replace(/_/g, '-')}`}
+          >
+            {t.label} ({grouped[t.k].length})
+          </button>
+        ))}
       </div>
+
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {loading ? (
           [1,2,3].map(i => <Skeleton key={i} className="h-16 w-full rounded-lg" />)
         ) : items.length === 0 ? (
-          <div className="text-center py-10" data-testid={`right-empty-${tab}`}>
+          <div className="text-center py-10" data-testid={`right-empty-${tab.replace(/_/g, '-')}`}>
             <Inbox className="w-7 h-7 text-slate-300 mx-auto mb-2" />
             <p className="text-xs text-slate-400">
-              {tab === 'saved'
-                ? 'No saved suggestions awaiting outcome.'
-                : 'No low-confidence items to review.'}
+              {tab === 'needs_review'   && 'Nothing currently needs review.'}
+              {tab === 'low_confidence' && 'No low-confidence items right now.'}
+              {tab === 'missing_data'   && 'All tracked items have enough data.'}
             </p>
           </div>
-        ) : tab === 'saved' ? (
-          items.map(s => <SavedSuggestionRow key={s.id} s={s} onAcceptOutcome={onAcceptOutcome} onIgnore={onIgnore} />)
         ) : (
-          items.map(d => <ReviewRow key={d.canonical_product_id} d={d} onPromote={onPromote} />)
+          items.map(d => <ReviewRow key={d.canonical_product_id} d={d} onPromote={onPromote} category={tab} />)
         )}
+      </div>
+
+      <div className="px-4 py-2 border-t border-slate-100 text-[10px] text-slate-500 flex items-center justify-between">
+        <span>Live triage · advisory only</span>
+        <Link to="/procurement/history" className="text-teal-700 hover:underline font-semibold" data-testid="right-history-link">
+          Saved history →
+        </Link>
       </div>
     </div>
   );
@@ -542,8 +498,6 @@ export default function ProcurementCommandCenterPage() {
   const [dismissed, setDismissed] = useState(() => new Set()); // session-only
   const [preparing, setPreparing] = useState(null);  // PurchaseSuggestionModal
   const [detailsFor, setDetailsFor] = useState(null); // DecisionDetailsModal
-  const [ignoreFor, setIgnoreFor] = useState(null); // NotPursuedModal
-  const [submittingIgnore, setSubmittingIgnore] = useState(false);
 
   // ─ Load Market ────────────────────────────────────────────────
   const loadMarket = useCallback(async () => {
@@ -565,17 +519,17 @@ export default function ProcurementCommandCenterPage() {
     finally { setLoadingRecs(false); }
   }, [api]);
 
-  // ─ Load Saved Suggestions (saved_for_review only) ─────────────
-  const loadSuggestions = useCallback(async () => {
+  // ─ Saved count (small metric; live history lives at /procurement/history) ─
+  const loadSavedCount = useCallback(async () => {
     setLoadingSuggestions(true);
     try {
       const r = await api.get('/procurement/suggestions?status=saved_for_review');
       setSuggestions(r.data?.items || []);
-    } catch { toast.error('Failed to load suggestions'); }
+    } catch { /* silent */ }
     finally { setLoadingSuggestions(false); }
   }, [api]);
 
-  useEffect(() => { loadMarket(); loadRecs(); loadSuggestions(); }, [loadMarket, loadRecs, loadSuggestions]);
+  useEffect(() => { loadMarket(); loadRecs(); loadSavedCount(); }, [loadMarket, loadRecs, loadSavedCount]);
 
   // ─ Center panel: filter + cap ────────────────────────────────
   const centerDecisions = useMemo(() => {
@@ -587,14 +541,11 @@ export default function ProcurementCommandCenterPage() {
       .slice(0, DECISION_MAX_CARDS);
   }, [recommendations, dismissed]);
 
-  // ─ Right panel: low-confidence / monitor / missing-data ──────
+  // ─ Right panel: everything NOT in center — triaged by SuggestionsPanel ──
   const reviewDecisions = useMemo(() => {
     return (recommendations || [])
       .filter(d => !centerDecisions.find(c => c.canonical_product_id === d.canonical_product_id))
-      .filter(d => d.recommendation_type === 'monitor_only'
-                || (d.confidence_level && d.confidence_level !== 'high')
-                || (d.observation_count || 0) < DECISION_MIN_OBS)
-      .slice(0, 10);
+      .slice(0, 20);
   }, [recommendations, centerDecisions]);
 
   // ─ Handlers ──────────────────────────────────────────────────
@@ -606,28 +557,25 @@ export default function ProcurementCommandCenterPage() {
   const handlePromote = (d) => setPreparing(d);
   const handleViewDetails = (d) => setDetailsFor(d);
 
-  const handleAcceptOutcome = async (s) => {
-    try {
-      await api.patch(`/procurement/suggestions/${s.id}/outcome`, { outcome_type: 'acted_on', outcome_note: '' });
-      toast.success('Marked as acted on');
-      await loadSuggestions();
-    } catch { toast.error('Could not update outcome'); }
-  };
+  const refreshAll = () => { loadMarket(); loadRecs(); loadSavedCount(); };
 
-  const handleIgnoreSubmit = async (note) => {
-    setSubmittingIgnore(true);
-    try {
-      await api.patch(`/procurement/suggestions/${ignoreFor.id}/outcome`, {
-        outcome_type: 'not_pursued', outcome_note: note || '',
-      });
-      toast.success('Marked as not pursued');
-      setIgnoreFor(null);
-      await loadSuggestions();
-    } catch { toast.error('Could not update outcome'); }
-    finally { setSubmittingIgnore(false); }
-  };
-
-  const refreshAll = () => { loadMarket(); loadRecs(); loadSuggestions(); };
+  // ─ Panel focus from URL ?panel=market|decisions|suggestions ────
+  const [searchParams] = useSearchParams();
+  const panelParam = searchParams.get('panel');
+  const focus = ['market', 'decisions', 'suggestions'].includes(panelParam) ? panelParam : null;
+  const marketRef = useRef(null);
+  const decisionsRef = useRef(null);
+  const suggestionsRef = useRef(null);
+  useEffect(() => {
+    if (!focus) return;
+    const el = { market: marketRef, decisions: decisionsRef, suggestions: suggestionsRef }[focus]?.current;
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [focus]);
+  const focusRing = (key) => focus === key
+    ? 'ring-2 ring-teal-400/70 ring-offset-2 ring-offset-slate-50 rounded-xl transition-shadow'
+    : '';
 
   return (
     <div className="space-y-4" data-testid="procurement-command-center">
@@ -639,20 +587,35 @@ export default function ProcurementCommandCenterPage() {
             Procurement
           </h1>
           <p className="text-sm text-slate-500 mt-1 max-w-2xl">
-            Market signals, high-confidence decisions, and saved suggestions — all in one view.
+            Market signals, high-confidence insights, and live triage — what needs action right now.
             Advisory only: no purchases are executed from this page.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={refreshAll} className="gap-1.5" data-testid="cc-refresh-btn">
-          <RefreshCw className={`w-3.5 h-3.5 ${(loadingMarket || loadingRecs || loadingSuggestions) ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link
+            to="/procurement/history"
+            className="text-[11px] font-semibold text-teal-700 hover:text-teal-800 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-teal-200 hover:bg-teal-50 transition-colors"
+            data-testid="cc-history-link"
+          >
+            Saved history
+            {suggestions.length > 0 && (
+              <span className="ml-1 bg-teal-600 text-white text-[9px] font-bold px-1.5 py-[1px] rounded-full">{suggestions.length}</span>
+            )}
+            <ChevronRight className="w-3 h-3" />
+          </Link>
+          <Button variant="outline" size="sm" onClick={refreshAll} className="gap-1.5" data-testid="cc-refresh-btn">
+            <RefreshCw className={`w-3.5 h-3.5 ${(loadingMarket || loadingRecs || loadingSuggestions) ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* 3-panel grid. Mobile: stacked. Desktop: 3 columns. */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[calc(100vh-210px)] min-h-[520px]">
-        <div className="lg:col-span-3"><MarketPanel products={products} loading={loadingMarket} /></div>
-        <div className="lg:col-span-6">
+        <div ref={marketRef} className={`lg:col-span-3 ${focusRing('market')}`} data-testid="panel-market-wrap" data-panel-focus={focus === 'market' ? 'true' : 'false'}>
+          <MarketPanel products={products} loading={loadingMarket} />
+        </div>
+        <div ref={decisionsRef} className={`lg:col-span-6 ${focusRing('decisions')}`} data-testid="panel-decisions-wrap" data-panel-focus={focus === 'decisions' ? 'true' : 'false'}>
           <DecisionEnginePanel
             decisions={centerDecisions}
             loading={loadingRecs}
@@ -662,15 +625,12 @@ export default function ProcurementCommandCenterPage() {
             onRefresh={loadRecs}
           />
         </div>
-        <div className="lg:col-span-3">
+        <div ref={suggestionsRef} className={`lg:col-span-3 ${focusRing('suggestions')}`} data-testid="panel-suggestions-wrap" data-panel-focus={focus === 'suggestions' ? 'true' : 'false'}>
           <SuggestionsPanel
-            savedSuggestions={suggestions}
             reviewDecisions={reviewDecisions}
-            loading={loadingSuggestions || loadingRecs}
-            onAcceptOutcome={handleAcceptOutcome}
-            onIgnore={setIgnoreFor}
+            loading={loadingRecs}
             onPromote={handlePromote}
-            onRefresh={() => { loadRecs(); loadSuggestions(); }}
+            onRefresh={loadRecs}
           />
         </div>
       </div>
@@ -681,14 +641,8 @@ export default function ProcurementCommandCenterPage() {
       </div>
 
       {/* Modals (reused from existing components) */}
-      <PurchaseSuggestionModal api={api} decision={preparing} onClose={() => { setPreparing(null); loadSuggestions(); }} />
+      <PurchaseSuggestionModal api={api} decision={preparing} onClose={() => { setPreparing(null); loadSavedCount(); }} />
       <DecisionDetailsModal decision={detailsFor} onClose={() => setDetailsFor(null)} />
-      <NotPursuedModal
-        suggestion={ignoreFor}
-        onClose={() => setIgnoreFor(null)}
-        onSubmit={handleIgnoreSubmit}
-        submitting={submittingIgnore}
-      />
     </div>
   );
 }

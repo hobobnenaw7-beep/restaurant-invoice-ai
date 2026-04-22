@@ -158,6 +158,7 @@ function App() {
           <Route path="/procurement/decisions" element={<Navigate to="/procurement?panel=decisions" replace />} />
           <Route path="/procurement/inbox" element={<Navigate to="/procurement?panel=suggestions" replace />} />
           <Route path="/procurement/suggestions" element={<Navigate to="/procurement?panel=suggestions" replace />} />
+          <Route path="/procurement/history" element={<PermRoute perm="view_reports"><ProcurementInboxPage /></PermRoute>} />
           <Route path="/procurement" element={<PermRoute perm="view_reports"><ProcurementCommandCenterPage /></PermRoute>} />
           {/* Deep-link escape hatches for old bookmarks to the individual pages (still work, not linked from nav) */}
           <Route path="/procurement/legacy/decisions" element={<PermRoute perm="view_reports"><ProcurementDecisionsPage /></PermRoute>} />

@@ -8,7 +8,61 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { toast } from 'sonner';
 import {
   ShoppingCart, Plus, Trash2, Search, Package, Info, X, AlertCircle, Sparkles,
+  Store, Lightbulb, ArrowRight,
 } from 'lucide-react';
+
+// ─── Smart Hints helpers (pure functions — zero new backend) ─────
+function computeSmartHints(records) {
+  // records: list of { unit_price, quantity, vendor, unit, ... } sorted ascending by date
+  if (!records || records.length === 0) return {};
+  const latest = records[records.length - 1];
+  const latestVendor = (latest.vendor || '').trim();
+  const latestPrice  = Number(latest.unit_price || 0);
+
+  // Suggested quantity: median of recent (last 5) quantities, else mean.
+  const recentQtys = records.slice(-5).map(r => Number(r.quantity || 0)).filter(q => q > 0);
+  let suggestedQty = null;
+  if (recentQtys.length > 0) {
+    const sorted = [...recentQtys].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    suggestedQty = sorted.length % 2 === 0
+      ? (sorted[mid - 1] + sorted[mid]) / 2
+      : sorted[mid];
+    // Round to 2 decimals
+    suggestedQty = Math.round(suggestedQty * 100) / 100;
+  }
+
+  // Better price: avg price per vendor over last 10 records; flag if cheaper than latest.
+  const byVendor = {};
+  records.slice(-10).forEach(r => {
+    const v = (r.vendor || '').trim();
+    const p = Number(r.unit_price || 0);
+    if (!v || !p) return;
+    byVendor[v] = byVendor[v] || { sum: 0, n: 0 };
+    byVendor[v].sum += p;
+    byVendor[v].n += 1;
+  });
+  const avgs = Object.entries(byVendor)
+    .map(([v, s]) => ({ vendor: v, avg: s.sum / s.n, n: s.n }))
+    .filter(v => v.n >= 2);
+  let betterPrice = null;
+  if (avgs.length > 1 && latestPrice > 0) {
+    const cheapest = avgs.slice().sort((a, b) => a.avg - b.avg)[0];
+    if (cheapest && cheapest.vendor !== latestVendor && cheapest.avg < latestPrice * 0.98) {
+      betterPrice = {
+        vendor: cheapest.vendor,
+        avg: Math.round(cheapest.avg * 100) / 100,
+        savingsPct: Math.round(((latestPrice - cheapest.avg) / latestPrice) * 1000) / 10,
+      };
+    }
+  }
+
+  return {
+    preferredVendor: latestVendor || '',
+    suggestedQty,
+    betterPrice,
+  };
+}
 
 // ─── ItemPicker (modal-embedded) ─────────────────────────────────────
 function ItemPicker({ items, onPick, excludeIds }) {
@@ -101,12 +155,15 @@ function CreateOrderModal({ open, onClose, onCreated, api, preseedItemIds }) {
         await Promise.all(initialLines.map(async (l) => {
           try {
             const hr = await api.get(`/items/${l.item_id}/price-history`);
-            const rec = (hr.data?.records || []).slice(-1)[0];
+            const records = hr.data?.records || [];
+            const rec = records.slice(-1)[0];
+            const hints = computeSmartHints(records);
             setLines((prev) => prev.map((x) => x.item_id === l.item_id ? {
               ...x,
               unit: rec?.unit || '',
               last_known_price: rec?.unit_price ?? null,
               last_known_vendor: rec?.vendor || '',
+              hints,
             } : x));
           } catch { /* ignore */ }
           finally { setLoadingHistory((lhp) => ({ ...lhp, [l.item_id]: false })); }
@@ -136,12 +193,15 @@ function CreateOrderModal({ open, onClose, onCreated, api, preseedItemIds }) {
     setLoadingHistory(lh => ({ ...lh, [it.id]: true }));
     try {
       const r = await api.get(`/items/${it.id}/price-history`);
-      const rec = (r.data?.records || []).slice(-1)[0];  // latest
+      const records = r.data?.records || [];
+      const rec = records.slice(-1)[0];  // latest
+      const hints = computeSmartHints(records);
       setLines(prev => prev.map(l => l.item_id === it.id ? {
         ...l,
         unit: rec?.unit || '',
         last_known_price: rec?.unit_price ?? null,
         last_known_vendor: rec?.vendor || '',
+        hints,
       } : l));
     } catch { /* non-fatal — spec says "if available" */ }
     finally { setLoadingHistory(lh => ({ ...lh, [it.id]: false })); }
@@ -231,37 +291,71 @@ function CreateOrderModal({ open, onClose, onCreated, api, preseedItemIds }) {
                 No items yet — pick from the catalog above.
               </div>
             ) : (
-              <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <div className="border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
                 {lines.map(l => (
-                  <div key={l.item_id} className="flex items-center gap-3 px-3 py-2 border-b border-slate-100 last:border-0" data-testid={`line-${l.item_id}`}>
-                    <Package className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[13px] font-medium text-navy-900 truncate">{l.item_name}</div>
-                      <div className="text-[10px] text-slate-500 truncate">
-                        {l.category || 'Uncategorized'}
-                        {loadingHistory[l.item_id] && <> · loading last price…</>}
-                        {!loadingHistory[l.item_id] && l.last_known_price != null && (
-                          <> · last ${Number(l.last_known_price).toFixed(2)}{l.unit ? `/${l.unit}` : ''}{l.last_known_vendor && <> · {l.last_known_vendor}</>}</>
+                  <div key={l.item_id} className="px-3 py-2" data-testid={`line-${l.item_id}`}>
+                    <div className="flex items-center gap-3">
+                      <Package className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-medium text-navy-900 truncate">{l.item_name}</div>
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {l.category || 'Uncategorized'}
+                          {loadingHistory[l.item_id] && <> · loading last price…</>}
+                          {!loadingHistory[l.item_id] && l.last_known_price != null && (
+                            <> · last ${Number(l.last_known_price).toFixed(2)}{l.unit ? `/${l.unit}` : ''}{l.last_known_vendor && <> · {l.last_known_vendor}</>}</>
+                          )}
+                        </div>
+                      </div>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={l.quantity}
+                        onChange={e => handleQty(l.item_id, e.target.value)}
+                        className="w-20 h-8 text-xs"
+                        data-testid={`line-qty-${l.item_id}`}
+                      />
+                      <span className="text-[11px] text-slate-500 w-10">{l.unit || ''}</span>
+                      <button
+                        onClick={() => handleRemove(l.item_id)}
+                        className="text-slate-400 hover:text-red-500 transition-colors"
+                        data-testid={`line-remove-${l.item_id}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Smart hints strip — advisory only, never auto-applied */}
+                    {!loadingHistory[l.item_id] && l.hints && (l.hints.preferredVendor || l.hints.suggestedQty != null || l.hints.betterPrice) && (
+                      <div className="mt-1.5 ml-6 flex flex-wrap items-center gap-2 text-[10px]" data-testid={`line-hints-${l.item_id}`}>
+                        {l.hints.preferredVendor && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600" data-testid={`hint-preferred-${l.item_id}`}>
+                            <Store className="w-3 h-3" /> preferred · <span className="font-semibold">{l.hints.preferredVendor}</span>
+                          </span>
+                        )}
+                        {l.hints.suggestedQty != null && l.hints.suggestedQty > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleQty(l.item_id, l.hints.suggestedQty)}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200 transition-colors"
+                            data-testid={`hint-suggested-qty-${l.item_id}`}
+                          >
+                            <Lightbulb className="w-3 h-3" /> suggested qty · <span className="font-semibold">{l.hints.suggestedQty}</span>{l.unit ? ` ${l.unit}` : ''}
+                          </button>
+                        )}
+                        {l.hints.betterPrice && (
+                          <a
+                            href="/procurement?panel=decisions"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 transition-colors"
+                            data-testid={`hint-better-price-${l.item_id}`}
+                          >
+                            <Sparkles className="w-3 h-3" /> better price · <span className="font-semibold">{l.hints.betterPrice.vendor}</span> avg ${l.hints.betterPrice.avg.toFixed(2)} (−{l.hints.betterPrice.savingsPct}%) <ArrowRight className="w-3 h-3" />
+                          </a>
                         )}
                       </div>
-                    </div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={l.quantity}
-                      onChange={e => handleQty(l.item_id, e.target.value)}
-                      className="w-20 h-8 text-xs"
-                      data-testid={`line-qty-${l.item_id}`}
-                    />
-                    <span className="text-[11px] text-slate-500 w-10">{l.unit || ''}</span>
-                    <button
-                      onClick={() => handleRemove(l.item_id)}
-                      className="text-slate-400 hover:text-red-500 transition-colors"
-                      data-testid={`line-remove-${l.item_id}`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    )}
                   </div>
                 ))}
               </div>

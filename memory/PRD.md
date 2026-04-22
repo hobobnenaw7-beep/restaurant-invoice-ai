@@ -47,6 +47,80 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 13: Decision Flow Alignment (Insight → Order) — COMPLETE (2026-02-13)
+
+### Goal
+Turn the daily flow into: **invoice → insight → decision → suggestion → order**
+with the user always in control. No automation introduced.
+
+### 1) Updated Procurement Command Center
+- **Center panel action label**: `Save Suggestion` → **"Save Insight"** (non-executional,
+  advisory); "Review Later" unchanged. data-testids updated:
+  `decision-save-insight-{cpid}` / `decision-review-later-{cpid}`.
+- **Right panel → Triage**: replaces Saved + To Review tabs with 3 mutually
+  exclusive triage categories:
+  * **Needs Review** (medium-confidence recs not eligible for center)
+  * **Low Confidence** (`confidence_level === 'low'`)
+  * **Missing Data** (`monitor_only` OR `obs < 3` OR `!confidence_level`)
+  data-testids: `right-tab-needs-review`, `right-tab-low-confidence`, `right-tab-missing-data`.
+  Panel title renamed to **"Triage"**.
+- **Saved / Acted On moved out** of Command Center into `/procurement/history`
+  (ProcurementInboxPage). Header link `cc-history-link` exposes a live saved-count badge.
+
+### 2) Updated wording
+Center panel buttons: **Save Insight** · **Review Later** (no Accept/Approve/Execute).
+Info bar: "Save Insight opens the acknowledgment modal. Review Later is session-only —
+advisory only, no purchase is executed."
+
+### 3) Orders smart hints (item-line, advisory-only)
+Each order line now shows up to 3 inline hint pills computed from the
+`/items/{id}/price-history` records (no new backend call):
+- **preferred vendor** — slate pill · Store icon — last-known vendor (`hint-preferred-{id}`)
+- **suggested qty** — teal pill · Lightbulb icon — median of last 5 recorded quantities;
+  clicking the pill fills the quantity input (user-triggered, never auto) (`hint-suggested-qty-{id}`)
+- **better price** — amber pill · Sparkles icon — appears only when another vendor
+  in history has an avg price >2% cheaper than the latest vendor. Opens
+  `/procurement?panel=decisions` in a new tab. (`hint-better-price-{id}`)
+
+### 4) Smart Influence Rule (enforced)
+- Hints are **displays + one-click fills**; never auto-apply.
+- NO auto-select vendor · NO auto-fill final qty · NO auto-generate PO.
+- All writes still go through the user pressing Save Draft / Submit.
+
+### Orders page flow (proposed)
+```
+Open Orders → (optional) "Re-order last week (Smart)" preloads item rows
+           → user picks/adds items from Item Catalog
+           → each line displays: preferred vendor · suggested qty · better-price hint
+           → user types/accepts quantities, optional vendor
+           → "Save as Draft" OR "Mark as Submitted" (no external execution)
+```
+
+### How Procurement links into Orders (without automation)
+- **Pull-based**: the "better price" hint shows only if historical data supports
+  it; it carries a link to `/procurement?panel=decisions` so the user can see
+  the full evidence, then manually choose what to do. Decision is never
+  written into the order.
+- **Orders banner** carries a persistent link back to Procurement
+  (`orders-procurement-link`).
+- **Procurement footer** carries a forward link to Orders (`cc-orders-link`).
+
+### Testing
+- Lint clean across all touched/new files.
+- Live Playwright verified: Save Insight buttons, Triage 3 tabs, no legacy
+  Saved/Acted-On controls on Command Center, forbidden-words scan clean,
+  `/procurement/history` breadcrumb + page renders, Orders line shows
+  `preferred` + `suggested qty` hints correctly. Backend `git status` clean
+  (only an untracked unrelated pytest log file). All 76/76 backend regression
+  tests from iter 94 still valid — no backend file modified.
+
+### Files
+- /app/frontend/src/pages/ProcurementCommandCenterPage.js (wording + Triage panel)
+- /app/frontend/src/pages/ProcurementInboxPage.js (new title + breadcrumb)
+- /app/frontend/src/pages/OrdersPage.js (smart-hints helper + inline UI)
+- /app/frontend/src/App.js (new `/procurement/history` route)
+
+
 ## Milestone 12: Command Center Advisory-Only Polish (2026-02-13)
 
 ### Refinements on top of Milestone 10
