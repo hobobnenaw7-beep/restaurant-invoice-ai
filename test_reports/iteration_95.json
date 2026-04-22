@@ -1,0 +1,63 @@
+{
+  "summary": "Full regression + workflow validation after Milestone 13 (Decision Flow Alignment). Backend: 76 passed + 1 pre-existing skip across 6 procurement/orders test files — ZERO regressions. Frontend: all 10 review items PASS with ONE minor cosmetic flag (word 'executed' appears in info bar copy 'no purchase is executed' inside panel-decisions; the forbidden-words check is intended for action verbs Accept/Approve/Execute on buttons/cards — the info bar explicitly uses 'executed' to inform users nothing is executed, which is the opposite of the forbidden semantic; reviewer discretion).",
+  "pass_fail_checklist": {
+    "1_command_center_loads": "PASS — procurement-command-center renders; panel-market/decisions/suggestions all present; cc-refresh-btn present; cc-history-link present with live count badge '22'.",
+    "2_panel_redirects": "PASS — all 8 legacy paths redirect to /procurement?panel=<expected>. data-panel-focus='true' on the expected panel-{name}-wrap and 'false' on the other two for every redirect.",
+    "3_high_confidence_only_rule": "PASS (with 1 cosmetic note) — exactly 2 decision cards (Chicken Breast + Heavy Cream) both meet the gate (confidence 0.98 >= 0.80, 8 and 4 obs >= 3, types switch_vendor + renegotiate), <=7 cap respected. Info bar correctly reads 'high-confidence items (score >= 0.80, >= 3 observations) — top 7'. All three action buttons present per card (decision-view-details-*, decision-review-later-*, decision-save-insight-*). Forbidden words Accept/Approve absent; 'Execute' substring matches ONLY the info bar phrase 'no purchase is executed' — semantic is correct, consider reviewer discretion.",
+    "4_triage_panel": "PASS — right-tab-needs-review, right-tab-low-confidence, right-tab-missing-data all present. Empty states right-empty-needs-review / right-empty-low-confidence / right-empty-missing-data all render (0/0/0 on demo data). Legacy right-tab-saved and right-tab-review COUNT=0 (removed as required). right-acted-btn-* COUNT=0 and right-ignore-btn-* COUNT=0 on /procurement (correctly moved to /procurement/history only). right-history-link present.",
+    "5_save_insight_flow": "PASS — Save Insight button opens PurchaseSuggestionModal (title 'Prepare Purchase Suggestion', ADVISORY ONLY badge). Modal contains a role=checkbox acknowledgment; confirm button ('Save Suggestion') is NOT disabled after check. Clicking fires POST /api/procurement/suggestions → status 200 and toast 'Suggestion saved for your review' appears. NO forbidden words (Accept/Approve/Execute) in modal inner text. Note: header Saved-history badge increments only AFTER modal is closed via Done — behavior matches spec.",
+    "6_history_page": "PASS — procurement-inbox-page loads at /procurement/history. history-breadcrumb reads 'Procurement / Saved History' with Procurement link href=/procurement. Title = 'Saved History' (no 'Inbox' suffix). Three tabs saved_for_review(22)/acted_on(16)/not_pursued(19) functional. 23 'Marked as Acted On' buttons rendered on saved rows; backend PATCH /procurement/suggestions/{id}/outcome confirmed working via 16 pre-existing acted_on rows + full backend test suite (test_procurement_inbox_outcome.py 9/9 passed).",
+    "7_orders_page": "PASS — orders-page loads; new-order-btn + orders-info-banner + orders-procurement-link (href=/procurement) all present. Banner contains 'Item-driven' and 'Better price available? View Procurement'. NO forbidden phrases ('auto-order', 'apply recommendation', 'Create PO') on the page.",
+    "8_smart_reorder_modal": "PASS — smart-reorder-btn visible (prior orders exist). Clicking opens create-order-modal preseeded from most recent order (1 line: Beef). First qty input = '0' (empty); Vendor input = '' (no auto-select). Submit is manual.",
+    "9_orders_hints": "PASS — after modal open, line shows hint-preferred-* pill ('preferred · Fresh Farms Produce') and hint-suggested-qty-* pill ('suggested qty · 23 lb'). Clicking the suggested-qty pill fills line-qty input from '0' → '23' (one-click fill). hint-better-price-* correctly ABSENT for this line because no cheaper alternate vendor exists (demo item has single vendor) — matches spec's conditional rule (≥2% cheaper required).",
+    "10_no_broken_routes_no_regressions": "PASS — 16/16 primary routes load with non-empty body: /dashboard, /orders, /expenses→/expenses/raw-materials (redirect), /expenses/raw-materials, /expenses/salaries, /expenses/other, /sales, /items, /correction-memory, /vendors, /vendor-comparison, /reports, /procurement, /procurement/history, /records, /settings. ZERO red console errors on /procurement, /procurement/history, /orders. Backend pytest: 76 passed, 1 skipped (pre-existing) across test_procurement_audit.py (11), test_procurement_audit_api.py (13), test_procurement_inbox_outcome.py (9), test_orders_api.py (12), test_procurement_api.py, test_procurement_decisions.py — no regressions."
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/procurement panel-decisions info bar", "issues": [
+        "Info bar copy contains the word 'executed' in the phrase 'no purchase is executed'. Semantically CORRECT (explicitly telling users nothing is executed) but the word technically matches the 'Execute' forbidden-word substring. Consider rewording to e.g. 'no purchase is placed' to satisfy a strict string scan. NON-BLOCKING cosmetic only."
+      ]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_procurement_audit.py",
+    "/app/backend/tests/test_procurement_audit_api.py",
+    "/app/backend/tests/test_procurement_inbox_outcome.py",
+    "/app/backend/tests/test_orders_api.py",
+    "/app/backend/tests/test_procurement_api.py",
+    "/app/backend/tests/test_procurement_decisions.py",
+    "/app/test_reports/pytest/pytest_iter95.xml"
+  ],
+  "screenshots": [
+    "/app/test_reports/iter95_procurement.png (3-panel Command Center)",
+    "/app/test_reports/iter95_history.png (Saved History with 3 tabs + breadcrumb)",
+    "/app/test_reports/iter95_orders.png (Orders list + Re-order last week Smart + New Order buttons + advisory banner)",
+    "/app/test_reports/iter95_smart_reorder.png (CreateOrderModal preseeded Beef line qty=0, vendor empty, preferred + suggested-qty hint pills)"
+  ],
+  "action_items": [
+    "OPTIONAL (cosmetic only): reword info bar under Decision Engine — replace 'no purchase is executed' with 'no purchase is placed' — so automated forbidden-word scans (Accept/Approve/Execute) don't produce a false-positive substring match on 'executed'. No functional impact."
+  ],
+  "critical_code_review_comments": [
+    "ProcurementCommandCenterPage.js — centerDecisions predicate chain (type in {switch_vendor, renegotiate} AND decision_confidence>=0.80 AND observation_count>=3, capped at 7) is correct. Verified live: 2 cards, both within gate.",
+    "ProcurementCommandCenterPage.js — Triage panel tabs correctly reduced from the legacy 4-tab (Saved/To review/Low Conf/Missing Data/Needs Review) to the 3-tab mutually-exclusive classification (missing_data > low_confidence > needs_review). Legacy testids right-tab-saved / right-tab-review confirmed absent. No right-acted-btn-* or right-ignore-btn-* on /procurement — correctly moved to /procurement/history only.",
+    "ProcurementCommandCenterPage.js — decision card buttons renamed to spec labels: 'Save Insight' + 'Review Later' (testids decision-save-insight-* + decision-review-later-*). No 'Accept' / 'Approve' text in card body.",
+    "PurchaseSuggestionModal.js — acknowledgment checkbox gating confirm button works correctly; confirm is disabled until checkbox is checked. POST /api/procurement/suggestions returns 200 with canonical_product_id + recommendation payload. Modal itself contains 'ADVISORY ONLY' badge and language 'does not place orders, submit anything to vendors, or send any communication' — good safety copy.",
+    "ProcurementInboxPage.js — Title correctly reads 'Saved History' (not 'Saved Suggestions Inbox'); history-breadcrumb is a proper Link back to /procurement. Three tabs saved_for_review / acted_on / not_pursued functional with correct counts (22/16/19 on demo tenant).",
+    "OrdersPage.js — preseedItemIds seeds lines with quantity_ordered: 0 and no vendor; hint pills load asynchronously; clicking hint-suggested-qty-* pill correctly fills the line-qty input (one-click, never auto-applied on render). hint-better-price-* correctly appears conditionally (only when ≥2% cheaper alternate vendor exists).",
+    "OrdersPage.js — 'Better price available? View Procurement →' banner link (orders-procurement-link → /procurement) is prominent. No forbidden phrases (auto-order / apply recommendation / Create PO) anywhere.",
+    "App.js — 8 legacy procurement routes all consolidated to <Navigate to='/procurement?panel=<name>' replace/> with intent-preserving query string. /expenses → /expenses/raw-materials redirect works.",
+    "Minor: Info bar copy in panel-decisions contains the word 'executed' (in the phrase 'no purchase is executed') which technically overlaps with the Accept/Approve/Execute forbidden-word family semantically used for call-to-action verbs. Non-blocking.",
+    "No backend file changes required this iteration — full regression test suite is green."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (76/76 procurement+orders run + 1 pre-existing skip)", "frontend": "100% (10/10 review items PASS; 1 cosmetic wording note)"},
+  "test_credentials": "demo@test.com / testpassword (login response key 'token')",
+  "seed_data_creation": "During UI smoke, the Save Insight flow fired 1 POST /api/procurement/suggestions (status 200) creating one new saved_for_review suggestion for Chicken Breast Tender Boneless Jumbo (Sysco→US Foods). Saved-history count will show 23 after next page load. Non-destructive.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "export REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) before pytest. The PurchaseSuggestionModal uses a shadcn Checkbox (role=checkbox on a <button>, NOT an <input type=checkbox>) — use [role=dialog] [role=checkbox] selector. Save Insight confirm button is labeled 'Save Suggestion' (not 'Save Insight') inside the modal — that is intentional (the card-level button says 'Save Insight' for user-facing action, modal button says 'Save Suggestion' for persistence action). Demo tenant counts (as of this iter end): ~23 saved_for_review, 16 acted_on, 19 not_pursued, 2 high-confidence decision cards. The word 'executed' in the panel-decisions info bar is the only forbidden-word substring match and is semantically intentional ('no purchase is executed') — consider as copy-edit, not defect.",
+  "rca of the issue": "N/A — no functional defects. One cosmetic copy note: the phrase 'no purchase is executed' in the Decision Engine info bar uses a form of 'execute' (forbidden verb family). Mitigation: change to 'no purchase is placed' in ProcurementCommandCenterPage.js info bar text. No code change required from this agent per scope rules."
+}
