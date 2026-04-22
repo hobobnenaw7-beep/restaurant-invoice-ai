@@ -47,6 +47,89 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 10: Procurement Command Center (3-Panel UI Consolidation) — COMPLETE (2026-02-13)
+
+### Goal
+Unify fragmented Procurement UI into ONE operational screen. STRICT UI-only
+consolidation — zero backend changes.
+
+### Navigation (final)
+- `Procurement` is now a **single sidebar link** (not a group) → `/procurement`
+- 8 legacy routes all `<Navigate to="/procurement" replace/>`:
+  `/purchase-decisions`, `/procurement/smart-purchases`,
+  `/price-intelligence`, `/procurement/price-insights`,
+  `/procurement-decisions`, `/procurement/decisions`,
+  `/procurement/inbox`, `/procurement/suggestions`
+- Deep-link escape hatches kept for old bookmarks:
+  `/procurement/legacy/decisions|inbox|price-intelligence|smart-purchases`
+  (NOT linked from nav; render the original full pages directly.)
+
+### Command Center Layout
+```
+┌──────────────┬─────────────────────────┬──────────────┐
+│ Market View  │   Decision Engine       │ Suggestions  │
+│ (~25%)       │   (~50%, critical)      │ (~25%)       │
+├──────────────┼─────────────────────────┼──────────────┤
+│ Anomalies /  │ High-confidence cards   │ Saved tab    │
+│ Alerts       │ ONLY:                   │  - Ignore    │
+│              │   • confidence ≥ 0.80   │  - Acted on  │
+│ Top Movers   │   • observations ≥ 3    │              │
+│ w/ mini SVG  │   • switch_vendor       │ To review    │
+│ sparklines   │     OR renegotiate      │  - low conf  │
+│              │   • MAX 7 cards         │  - monitor   │
+│              │                         │  - Promote   │
+│              │ Per card:               │    (opens    │
+│              │  • product + unit       │    ack modal)│
+│              │  • current → recommended│              │
+│              │  • Δ$ and Δ%           │              │
+│              │  • 1-line reason        │              │
+│              │  • action pill          │              │
+│              │  • risk + confidence    │              │
+│              │  • View details / Dismiss / Accept     │
+└──────────────┴─────────────────────────┴──────────────┘
+```
+
+### Reused APIs (zero new endpoints)
+- `GET  /api/price-intelligence/products`
+- `GET  /api/procurement/recommendations`
+- `GET  /api/procurement/suggestions?status=saved_for_review`
+- `PATCH /api/procurement/suggestions/{id}/outcome`  (acted_on / not_pursued)
+- `POST /api/procurement/events` · `POST /api/procurement/suggestions`
+  (via reused `PurchaseSuggestionModal`)
+
+### Button Semantics (strict)
+- **Accept** → opens existing `PurchaseSuggestionModal` (requires acknowledgment
+  checkbox). NO auto-execute.
+- **Dismiss** → session-local `Set` state. NO server mutation. Reload restores.
+- **View details** → modal with Current / Best-alt / 3-way deltas / Evidence /
+  Uncertainty / action pill + risk + confidence badges.
+- **Promote (right panel)** → same as Accept (opens acknowledgment modal).
+- **Ignore (right panel)** → PATCH `outcome_type=not_pursued` with optional note.
+- **Acted on (right panel)** → PATCH `outcome_type=acted_on`.
+
+### Smart Re-order on Orders page
+- `smart-reorder-btn` visible only when orders already exist.
+- Preseeds `CreateOrderModal` lines from most recent order's `item_ids`.
+- Quantities **start at 0** (user must fill). Vendor field stays empty.
+- `orders-procurement-link` in info banner: "Better price available? View Procurement →".
+- NO auto-application of Procurement recommendations. NO "apply/auto-order/Create PO" wording.
+
+### Testing — 100% PASS (iter 94)
+- Backend: 76 passed + 1 pre-existing skip. **`git diff /app/backend/` clean.**
+- Frontend: Playwright verified all 8 redirects, 3 panels visible, 2 cards
+  within cap + threshold gate, View details modal, session-only dismiss
+  (restored on reload), saved/review tabs, ignore flow with PATCH +
+  toast, smart-reorder qty=0 + no vendor, 4/4 legacy escape hatches render.
+
+### Files
+- /app/frontend/src/pages/ProcurementCommandCenterPage.js (new)
+- /app/frontend/src/App.js (routes: /procurement → CC; 8 legacy → Navigate)
+- /app/frontend/src/components/Layout.js (Procurement group → single link)
+- /app/frontend/src/pages/OrdersPage.js (smart-reorder-btn + preseedItemIds)
+- UNCHANGED reused: `components/procurement/ProcurementUI.js`,
+  `components/procurement/PurchaseSuggestionModal.js`.
+
+
 ## Milestone 9: Navigation Restructure + Orders Foundation — COMPLETE (2026-02-13)
 
 ### Goal
