@@ -258,7 +258,7 @@ function DecisionEnginePanel({ decisions, loading, onAccept, onDismiss, onViewDe
       </div>
       <div className="px-4 py-2 bg-teal-50/40 border-b border-teal-100 text-[10px] text-teal-800 flex items-start gap-1.5">
         <Info className="w-3 h-3 flex-shrink-0 mt-0.5" />
-        <span>Only high-confidence items (score ≥ 0.80, ≥ 3 observations) — top {DECISION_MAX_CARDS}. <strong>Save Insight</strong> opens the acknowledgment modal. <strong>Review Later</strong> is session-only — advisory only, no purchase is executed.</span>
+        <span>Only high-confidence items (score ≥ 0.80, ≥ 3 observations) — top {DECISION_MAX_CARDS}. <strong>Save Insight</strong> opens the acknowledgment modal. <strong>Review Later</strong> is session-only — advisory only, no purchase is placed.</span>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {loading ? (
@@ -588,7 +588,7 @@ export default function ProcurementCommandCenterPage() {
           </h1>
           <p className="text-sm text-slate-500 mt-1 max-w-2xl">
             Market signals, high-confidence insights, and live triage — what needs action right now.
-            Advisory only: no purchases are executed from this page.
+            Advisory only: no purchases are placed from this page.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
