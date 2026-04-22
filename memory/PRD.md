@@ -47,6 +47,87 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 9: Navigation Restructure + Orders Foundation — COMPLETE (2026-02-13)
+
+### Goal
+Staged refactor across 5 phases: cleaner grouped sidebar, safe redirects for legacy
+routes, UI consolidation under **Procurement**, and a minimal **Item-driven Orders**
+page with strict guardrails (NO free-text, NO auto-ordering from DSS).
+
+### Navigation Tree (final)
+```
+Dashboard
+Orders                          (NEW — lightweight)
+Expenses  ▾
+  Raw Materials        → /expenses?tab=raw_materials
+  Salaries             → /expenses?tab=salaries
+  Other Expenses       → /expenses?tab=other
+Sales
+Items  ▾
+  Item Catalog         → /items
+  Product Matching Rules → /correction-memory
+Vendors  ▾
+  Vendor Directory     → /vendors
+  Vendor Pricing ($/LB)→ /vendor-comparison
+Reports
+Procurement  ▾
+  Smart Purchases      → /procurement/smart-purchases
+  Price Intelligence   → /procurement/price-insights
+  Decisions            → /procurement/decisions
+  Suggestions Inbox    → /procurement/suggestions
+Records Library
+—— Management ——
+User Management · Approvals · Audit Log
+Settings (pinned)
+```
+
+### Legacy Route Redirects (all <Navigate replace/>)
+| Old | New |
+|---|---|
+| /purchase-decisions      | /procurement/smart-purchases |
+| /price-intelligence      | /procurement/price-insights |
+| /procurement-decisions   | /procurement/decisions |
+| /procurement/inbox       | /procurement/suggestions |
+
+Bookmarks keep working — no 404s, no blank screens. Verified live.
+
+### Orders (Phase 4 — lightweight, Item-driven)
+- Backend: `routes/orders.py` — `GET/POST/DELETE /api/orders`.
+  `_enrich_items()` resolves each `item_id` against `canonical_items` (tenant-scoped).
+  Unknown id → 400 `unknown_item_ids:[...]`. Status must be `draft|submitted`
+  (anything else → 400). Tenant isolation enforced. No _id leakage.
+- Frontend: `pages/OrdersPage.js` + `CreateOrderModal` with `ItemPicker` reading
+  `/api/items` and auto-enriching the last known price/vendor/unit from
+  `/api/items/{id}/price-history` (non-fatal — "if available").
+- Strict constraints enforced in UI and API:
+  * NO free-text product creation (only ItemPicker)
+  * NO duplicate product definitions (every line must reference canonical_items.id)
+  * NO auto-ordering from Procurement recommendations (zero references in code)
+
+### Regression Discipline
+- Phase 3 explicitly UI-only. **No changes** to price_intelligence /
+  procurement / procurement_suggestions / procurement_audit services.
+- 34/34 procurement regression tests remain green (inbox_outcome + audit_api +
+  audit unit).
+
+### Testing — 46/46 PASS (iter 93, 100%)
+- 12 new Orders API tests: auth, create/enrich/list/delete, bogus item_id → 400,
+  invalid status → 400, cross-tenant 404, no _id leakage.
+- 34 procurement regression tests green.
+- Frontend verified live: sidebar order exact, 4 groups expand/collapse with
+  correct children+hrefs, 4 legacy redirects, group-active-state on
+  /procurement/decisions, Orders page empty state + modal + item-pick + save-draft,
+  mobile sheet opens, 5 regression pages still render.
+
+### Files
+- /app/frontend/src/components/Layout.js (rewritten — navTree + NavGroup)
+- /app/frontend/src/App.js (new routes + <Navigate replace/>)
+- /app/frontend/src/pages/OrdersPage.js (new — 289 lines)
+- /app/backend/routes/orders.py (new — 135 lines)
+- /app/backend/server.py (registered orders_router)
+- /app/backend/tests/test_orders_api.py (new — 12 tests)
+
+
 ## Milestone 8: Decision Audit Log (Learning Foundation) — COMPLETE (2026-02-13)
 
 ### Goal
