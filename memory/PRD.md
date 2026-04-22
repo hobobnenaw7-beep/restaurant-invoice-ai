@@ -47,6 +47,87 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 8: Decision Audit Log (Learning Foundation) — COMPLETE (2026-02-13)
+
+### Goal
+Structured, queryable dataset linking **recommendation → user interaction →
+final outcome** — the data-collection layer for future decision-quality
+evaluation. Strict scope: NO ML, NO auto-tuning, NO threshold adjustment.
+
+### Data Model (one record per active recommendation)
+```
+procurement_decision_events
+  event_id, restaurant_id, user_id
+  canonical_product_id, canonical_name, canonical_unit
+  recommendation_type      (switch_vendor|renegotiate|no_action|monitor_only)
+  confidence_score, confidence_level, risk_level
+  generated_at, first_generated_at, generation_count
+  suggestion_id, suggestion_opened_at, draft_viewed_at, acknowledged_at
+  outcome_type (acted_on|not_pursued), outcome_at, outcome_note, outcome_by_user_id
+  status (open|interacted|finalized), updated_at
+```
+
+### Lifecycle Hooks (zero-regression, try/except wrapped)
+- `GET /procurement/recommendations` → `record_recommendation_generated()`
+  upserts ONE open record per `(tenant, cpid, rec_type)`; duplicate calls refresh
+  confidence/risk/generated_at and bump `generation_count` (NO new rows).
+- `POST /procurement/events` → `record_interaction()` stamps
+  `suggestion_opened_at | draft_viewed_at | acknowledged_at` on first occurrence
+  only (subsequent calls never overwrite).
+- `POST /procurement/suggestions` → `link_suggestion()` attaches `suggestion_id`.
+- `PATCH /procurement/suggestions/{id}/outcome` → `finalize_outcome()` flips
+  status to `finalized`, writes `outcome_type / outcome_at / outcome_note /
+  outcome_by_user_id`. Fallback: minimal finalized row created if audit record
+  missing so the dataset stays complete.
+
+### Read-Only API
+- `GET /api/procurement/audit/events` — filter by status / recommendation_type /
+  outcome_type / confidence_level; invalid values → 400.
+- `GET /api/procurement/audit/stats` — returns:
+  `{total, open, interacted, finalized,
+    by_recommendation_type.{switch_vendor|renegotiate|no_action|monitor_only}.
+        {generated, acted_on, not_pursued, acted_on_rate, not_pursued_rate},
+    high_confidence_not_pursued[],
+    sample_queries.{switch_vendor_acted_on_rate,
+                    high_confidence_not_pursued_count}}`
+
+### Sample Queries Supported
+1. "% of switch_vendor recommendations that were acted_on"
+   → `stats.sample_queries.switch_vendor_acted_on_rate`
+2. "high-confidence recommendations that were not_pursued"
+   → `stats.high_confidence_not_pursued[]` (full records with reason notes)
+
+### Example Record Lifecycle
+```
+t0  recommendations_for_restaurant() runs
+    → insert {status: open, confidence_score: 0.94, generation_count: 1, ...}
+t1  user opens modal → suggestion_opened event
+    → update {status: interacted, suggestion_opened_at: t1}
+t2  draft_viewed event  → draft_viewed_at = t2
+t3  acknowledgment_checked event → acknowledged_at = t3
+t4  POST /suggestions  → suggestion_id linked
+t5  PATCH /suggestions/{id}/outcome {acted_on}
+    → status: finalized, outcome_type: acted_on, outcome_at: t5
+```
+
+### Testing — 24/24 PASS (iter 92 = 100%)
+- 11 unit (fake-collection: upsert, idempotency, interaction first-stamp,
+  link, finalize, missing-record fallback, stats shape + rates, tenant isolation)
+- 13 live integration (auth, filter validation, hooks, full e2e lifecycle,
+  idempotency, cross-tenant isolation, perf <1.5s on demo tenant)
+- 40/40 regression pass across inbox/api/decisions
+
+### Files
+- /app/backend/services/procurement_audit.py
+- /app/backend/routes/procurement_audit.py
+- /app/backend/server.py (router registration)
+- /app/backend/services/procurement_decisions.py (hook)
+- /app/backend/services/procurement_suggestions.py (hooks)
+- /app/backend/routes/procurement.py (user_id propagation)
+- /app/backend/tests/test_procurement_audit.py
+- /app/backend/tests/test_procurement_audit_api.py
+
+
 ## Milestone 6: Controlled Action Layer — COMPLETE (2026-04-22)
 
 ### Goal
@@ -364,17 +445,18 @@ alerts (type='price_intelligence'): persisted when threshold hit.
 All Milestone 1-3 deliverables complete. See CHANGELOG.md for details.
 
 ## Upcoming Tasks
-### P1 — deferred from M5
-- Decision Audit Log: every time a recommendation is generated or a user
-  accepts/dismisses one, persist to `procurement_decision_events` with
-  `{user_id, canonical_product_id, recommendation_type, generated_at,
-   accepted_by_user, outcome}` so the engine becomes a learning loop.
+### P1 — next candidates
 - Expand "Smart Market Insights" into 3-panel command center.
 - Integrate product identity into extraction pipeline (auto-resolve during upload).
 ### P2
 - AI Chat Assistant page polish, Trash/Restore UI, Salaries OCR upload.
 - Inline price-intelligence alert badge next to items in ExpensesPage rows.
 - Nightly digest emailer for top-3 actionable procurement decisions.
+- UI surface for audit stats (learning-loop dashboard — top "not_pursued" reasons,
+  acted-on rate by rec_type).
+- Paged aggregation for aggregate_audit_stats beyond 2000 rows per tenant.
+- Backfill: 4 pre-existing failures in test_procurement_suggestions.py
+  (missing canonical_name / current_vendor kwargs — unrelated to audit log).
 
 ## Test Credentials
 - Manager: demo@test.com / testpassword
