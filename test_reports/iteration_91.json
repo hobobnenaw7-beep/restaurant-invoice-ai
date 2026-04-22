@@ -1,0 +1,58 @@
+{
+  "summary": "Milestone 7 (Saved Suggestions Inbox + outcome PATCH feedback loop) end-to-end verified. Backend: 10/10 pytest pass (list+breakdown shape, status filter, breakdown stays total across filters, acted_on persists with ISO outcome_at + outcome_by_user_id, not_pursued with note + empty note, invalid outcome_type -> 400, unknown id -> 404, true cross-tenant 404, unauth 401). Frontend: /procurement/inbox loads, 3 tabs render with correct counts, rows have status badge / current->recommended / risk + confidence badges / 'saved Xm ago', acted-on + not-pursued buttons present ONLY on saved_for_review rows, Marked as Acted On fires PATCH+toast and row migrates to acted_on tab with 'resolved Xm ago by Demo User' metadata, NotPursuedModal opens, empty note submit succeeds, rejection note shown in quoted block, sidebar 'Suggestions Inbox' link present, NO forbidden words ('order','buy','submit','execute') on page.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_procurement_inbox_outcome.py",
+    "/app/test_reports/pytest/pytest_procurement_inbox_outcome.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/procurement_suggestions.py: PATCH endpoint cleanly maps service errors -> ValueError to 400, KeyError to 404. Good defense-in-depth.",
+    "services/procurement_suggestions.py:record_outcome scopes the update query by BOTH id AND restaurant_id, so cross-tenant attempts naturally return matched_count==0 -> 404 without leaking existence. Multi-tenant isolation verified in live test against a freshly-registered separate-restaurant user.",
+    "ALLOWED_OUTCOME_STATUSES is a hard set of {'acted_on','not_pursued'} — invalid values like 'order_placed', 'executed', 'purchased' rejected with 400 (verified). No silent acceptance of execution-style verbs.",
+    "GET /procurement/suggestions computes breakdown from the UNFILTERED list, so tab counts stay stable while items[] respects ?status= filter. Verified breakdown identical between unfiltered and ?status=acted_on calls.",
+    "list_suggestions and find_one calls all use {'_id': 0} projection — no Mongo ObjectId leakage in the API surface.",
+    "ProcurementInboxPage.js: SuggestionRow only renders Acted On / Not Pursued buttons when status === 'saved_for_review'. Verified resolved rows in acted_on tab show no action buttons.",
+    "ProcurementInboxPage.js: NotPursuedModal allows empty note submission (no required validation). Verified empty submit yields 200 and toast 'Marked as not pursued'.",
+    "Outcome event mirroring (action_confirmed / action_canceled) into procurement_suggestion_events does not crash and does not affect the response payload — confirmed via successive PATCH calls.",
+    "Spec word-blacklist clean: scanned page innerText with \\b regex for {order, buy, submit, execute} — zero matches. No advisory-only language drift on the inbox surface."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_procurement_inbox_outcome.py (new)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% on all M7 spec criteria"},
+  "test_credentials": "demo@test.com / testpassword (used). Also created tenant_iso_test@example.com / testpass123 in a separate restaurant for cross-tenant isolation test (kept for regression reuse).",
+  "seed_data_creation": "Several TEST_-prefixed advisory suggestions were created under the demo tenant during testing. Some moved to acted_on / not_pursued. Non-destructive — does not affect other flows. Counts at end: saved_for_review=4, acted_on=5, not_pursued=6 (subject to further runs).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "M7 inbox feedback loop is fully working. New regression file: /app/backend/tests/test_procurement_inbox_outcome.py. NOTE: accountant@test.com is in the SAME restaurant as demo@test.com — do NOT use it for cross-tenant tests. Use the helper _register_or_login() pattern to create a fresh-tenant user (already done for tenant_iso_test@example.com / testpass123, restaurant 'Iso Test Restaurant'). The inbox grows with each test run; not destructive.",
+  "verified_flows": {
+    "patch_acted_on_returns_updated_doc": true,
+    "patch_not_pursued_with_note": true,
+    "patch_not_pursued_empty_note_allowed": true,
+    "patch_invalid_outcome_type_400": "verified for order_placed, executed, purchased, ''",
+    "patch_unknown_id_404": true,
+    "patch_cross_tenant_404": true,
+    "get_breakdown_keys_present": true,
+    "get_breakdown_stays_total_across_filters": true,
+    "get_status_filter_only_returns_matching": true,
+    "frontend_inbox_page_loads": true,
+    "three_tabs_with_counts": "saved_for_review=6, acted_on=4->5, not_pursued=5->6",
+    "row_has_product_name_unit_badge_status_badge_arrow_action_pill_risk_confidence": true,
+    "saved_row_shows_acted_on_and_not_pursued_buttons": true,
+    "resolved_row_buttons_hidden": true,
+    "acted_on_click_fires_patch_toast_row_moves": "toast='Marked as acted on'",
+    "not_pursued_modal_opens_textarea_present": true,
+    "empty_note_submit_succeeds": "toast='Marked as not pursued'",
+    "resolved_meta_appears_on_row": "'resolved Xm ago by Demo User'",
+    "rejection_note_shown_in_quoted_block": true,
+    "sidebar_suggestions_inbox_link_visible": true,
+    "no_forbidden_words_on_page": "scanned with \\b regex for {order, buy, submit, execute} — zero matches"
+  },
+  "rca of the issue": "N/A — no defects found in M7."
+}

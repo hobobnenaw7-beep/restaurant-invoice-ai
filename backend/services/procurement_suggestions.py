@@ -70,6 +70,8 @@ async def save_suggestion(
     user: dict,
     canonical_product_id: str,
     canonical_unit: str,
+    canonical_name: str,
+    current_vendor: str,
     recommendation_type: str,
     recommended_vendor: str,
     reference_price_per_unit: Optional[float],
@@ -95,6 +97,8 @@ async def save_suggestion(
         "user_name": user.get("name", ""),
         "canonical_product_id": canonical_product_id,
         "canonical_unit": canonical_unit,
+        "canonical_name": canonical_name,
+        "current_vendor": current_vendor,
         "recommendation_type": recommendation_type,
         "recommended_vendor": recommended_vendor,
         "reference_price_per_unit": reference_price_per_unit,
@@ -124,11 +128,67 @@ async def save_suggestion(
     return {k: v for k, v in doc.items() if k != "_id"}
 
 
-async def list_suggestions(restaurant_id: str) -> list[dict]:
-    cursor = db.procurement_suggestions.find(
-        {"restaurant_id": restaurant_id}, {"_id": 0}
-    ).sort("created_at", -1)
+async def list_suggestions(restaurant_id: str, *, status: str = "") -> list[dict]:
+    query: dict[str, Any] = {"restaurant_id": restaurant_id}
+    if status:
+        query["status"] = status
+    cursor = db.procurement_suggestions.find(query, {"_id": 0}).sort("created_at", -1)
     return await cursor.to_list(500)
+
+
+# Outcome tracking (feedback loop)
+ALLOWED_OUTCOME_STATUSES = {"acted_on", "not_pursued"}
+
+
+async def record_outcome(
+    *,
+    user: dict,
+    suggestion_id: str,
+    outcome_type: str,
+    outcome_note: str = "",
+) -> dict:
+    """
+    Apply a terminal outcome to a saved suggestion:
+      acted_on    — user followed through on the recommendation
+      not_pursued — user chose not to act (optional note)
+    Idempotent: overwrites any prior outcome for the same suggestion.
+    NEVER triggers purchasing or vendor actions.
+    """
+    if outcome_type not in ALLOWED_OUTCOME_STATUSES:
+        raise ValueError(f"invalid_outcome_type: {outcome_type}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    query = {"id": suggestion_id, "restaurant_id": user["restaurant_id"]}
+    update = {
+        "$set": {
+            "status": outcome_type,
+            "outcome_type": outcome_type,
+            "outcome_note": (outcome_note or "").strip(),
+            "outcome_at": now,
+            "outcome_by_user_id": user.get("id"),
+            "outcome_by_user_name": user.get("name", ""),
+            "updated_at": now,
+        }
+    }
+    result = await db.procurement_suggestions.update_one(query, update)
+    if result.matched_count == 0:
+        raise KeyError("suggestion_not_found")
+
+    suggestion = await db.procurement_suggestions.find_one(query, {"_id": 0})
+
+    # Log a tracking event so the audit log captures the outcome too
+    await log_event(
+        user=user,
+        canonical_product_id=suggestion.get("canonical_product_id", ""),
+        recommendation_type=suggestion.get("recommendation_type", ""),
+        event_type="action_confirmed" if outcome_type == "acted_on" else "action_canceled",
+        metadata={
+            "suggestion_id": suggestion_id,
+            "outcome_type": outcome_type,
+            "outcome_note_present": bool(outcome_note),
+        },
+    )
+    return suggestion
 
 
 async def suggested_quantity_hint(

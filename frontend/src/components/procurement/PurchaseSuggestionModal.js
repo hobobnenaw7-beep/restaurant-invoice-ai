@@ -141,6 +141,8 @@ export function PurchaseSuggestionModal({ api, decision, onClose, onSaved }) {
       await api.post('/procurement/suggestions', {
         canonical_product_id: decision.canonical_product_id,
         canonical_unit: decision.canonical_unit,
+        canonical_name: decision.canonical_name || '',
+        current_vendor: decision.current_vendor || '',
         recommendation_type: decision.recommendation_type,
         recommended_vendor: decision.best_alternative_vendor || decision.current_vendor || '',
         reference_price_per_unit:
