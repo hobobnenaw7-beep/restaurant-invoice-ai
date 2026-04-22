@@ -25,6 +25,7 @@ import VendorComparisonPage from "@/pages/VendorComparisonPage";
 import PriceIntelligencePage from "@/pages/PriceIntelligencePage";
 import ProcurementDecisionsPage from "@/pages/ProcurementDecisionsPage";
 import ProcurementInboxPage from "@/pages/ProcurementInboxPage";
+import ProcurementCommandCenterPage from "@/pages/ProcurementCommandCenterPage";
 import OrdersPage from "@/pages/OrdersPage";
 import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
 import ResetPasswordPage from "@/pages/ResetPasswordPage";
@@ -141,16 +142,22 @@ function App() {
           <Route path="/approvals" element={<PermRoute perm="view_users"><ApprovalsPage /></PermRoute>} />
           <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
-          <Route path="/purchase-decisions" element={<Navigate to="/procurement/smart-purchases" replace />} />
-          <Route path="/procurement/smart-purchases" element={<PermRoute perm="view_reports"><PurchaseDecisionsPage /></PermRoute>} />
+          <Route path="/purchase-decisions" element={<Navigate to="/procurement" replace />} />
+          <Route path="/procurement/smart-purchases" element={<Navigate to="/procurement" replace />} />
           <Route path="/audit-log" element={<PermRoute perm="view_users"><AuditLogPage /></PermRoute>} />
           <Route path="/vendor-comparison" element={<PermRoute perm="view_vendors"><VendorComparisonPage /></PermRoute>} />
-          <Route path="/price-intelligence" element={<Navigate to="/procurement/price-insights" replace />} />
-          <Route path="/procurement/price-insights" element={<PermRoute perm="view_reports"><PriceIntelligencePage /></PermRoute>} />
-          <Route path="/procurement-decisions" element={<Navigate to="/procurement/decisions" replace />} />
-          <Route path="/procurement/decisions" element={<PermRoute perm="view_reports"><ProcurementDecisionsPage /></PermRoute>} />
-          <Route path="/procurement/inbox" element={<Navigate to="/procurement/suggestions" replace />} />
-          <Route path="/procurement/suggestions" element={<PermRoute perm="view_reports"><ProcurementInboxPage /></PermRoute>} />
+          <Route path="/price-intelligence" element={<Navigate to="/procurement" replace />} />
+          <Route path="/procurement/price-insights" element={<Navigate to="/procurement" replace />} />
+          <Route path="/procurement-decisions" element={<Navigate to="/procurement" replace />} />
+          <Route path="/procurement/decisions" element={<Navigate to="/procurement" replace />} />
+          <Route path="/procurement/inbox" element={<Navigate to="/procurement" replace />} />
+          <Route path="/procurement/suggestions" element={<Navigate to="/procurement" replace />} />
+          <Route path="/procurement" element={<PermRoute perm="view_reports"><ProcurementCommandCenterPage /></PermRoute>} />
+          {/* Deep-link escape hatches for old bookmarks to the individual pages (still work, not linked from nav) */}
+          <Route path="/procurement/legacy/decisions" element={<PermRoute perm="view_reports"><ProcurementDecisionsPage /></PermRoute>} />
+          <Route path="/procurement/legacy/inbox" element={<PermRoute perm="view_reports"><ProcurementInboxPage /></PermRoute>} />
+          <Route path="/procurement/legacy/price-intelligence" element={<PermRoute perm="view_reports"><PriceIntelligencePage /></PermRoute>} />
+          <Route path="/procurement/legacy/smart-purchases" element={<PermRoute perm="view_reports"><PurchaseDecisionsPage /></PermRoute>} />
           <Route path="/orders" element={<PermRoute perm="view_expenses"><OrdersPage /></PermRoute>} />
           <Route path="/correction-memory" element={<PermRoute perm="view_expenses"><CorrectionMemoryPage /></PermRoute>} />
           <Route path="*" element={<SmartLanding />} />

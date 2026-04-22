@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import {
-  ShoppingCart, Plus, Trash2, Search, Package, Info, X, AlertCircle,
+  ShoppingCart, Plus, Trash2, Search, Package, Info, X, AlertCircle, Sparkles,
 } from 'lucide-react';
 
 // ─── ItemPicker (modal-embedded) ─────────────────────────────────────
@@ -60,7 +60,7 @@ function ItemPicker({ items, onPick, excludeIds }) {
 }
 
 // ─── Create Order Modal ─────────────────────────────────────────────
-function CreateOrderModal({ open, onClose, onCreated, api }) {
+function CreateOrderModal({ open, onClose, onCreated, api, preseedItemIds }) {
   const [items, setItems] = useState([]);
   const [lines, setLines] = useState([]);
   const [vendor, setVendor] = useState('');
@@ -71,9 +71,53 @@ function CreateOrderModal({ open, onClose, onCreated, api }) {
 
   useEffect(() => {
     if (!open) return;
-    api.get('/items').then(r => setItems(r.data || [])).catch(() => setItems([]));
-    setLines([]); setVendor(''); setNote('');
-  }, [open, api]);
+    let cancelled = false;
+    api.get('/items').then(async (r) => {
+      const catalog = r.data || [];
+      if (cancelled) return;
+      setItems(catalog);
+
+      // Smart re-order preseed: for each preseedItemIds, add a line with
+      // enriched last-known price/vendor/unit. Quantities stay empty (spec).
+      if (preseedItemIds && preseedItemIds.length > 0) {
+        const byId = new Map(catalog.map((c) => [c.id, c]));
+        const initialLines = preseedItemIds
+          .map((id) => byId.get(id))
+          .filter(Boolean)
+          .map((it) => ({
+            item_id: it.id,
+            item_name: it.name,
+            category: it.category || '',
+            unit: '',
+            quantity: 0,            // blank on purpose
+            last_known_price: null,
+            last_known_vendor: '',
+          }));
+        setLines(initialLines);
+        // Enrich each in the background
+        const lh = {};
+        initialLines.forEach((l) => { lh[l.item_id] = true; });
+        setLoadingHistory(lh);
+        await Promise.all(initialLines.map(async (l) => {
+          try {
+            const hr = await api.get(`/items/${l.item_id}/price-history`);
+            const rec = (hr.data?.records || []).slice(-1)[0];
+            setLines((prev) => prev.map((x) => x.item_id === l.item_id ? {
+              ...x,
+              unit: rec?.unit || '',
+              last_known_price: rec?.unit_price ?? null,
+              last_known_vendor: rec?.vendor || '',
+            } : x));
+          } catch { /* ignore */ }
+          finally { setLoadingHistory((lhp) => ({ ...lhp, [l.item_id]: false })); }
+        }));
+      } else {
+        setLines([]);
+      }
+    }).catch(() => setItems([]));
+    setVendor(''); setNote('');
+    return () => { cancelled = true; };
+  }, [open, api, preseedItemIds]);
 
   const excludeIds = useMemo(() => new Set(lines.map(l => l.item_id)), [lines]);
 
@@ -256,6 +300,7 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [preseed, setPreseed] = useState(null); // array of item_ids
 
   const load = () => {
     setLoading(true);
@@ -272,6 +317,29 @@ export default function OrdersPage() {
     } catch { toast.error('Failed to delete order'); }
   };
 
+  const lastOrder = orders && orders.length > 0 ? orders[0] : null;
+  const hasLastOrder = !!(lastOrder && lastOrder.items && lastOrder.items.length > 0);
+
+  const handleSmartReorder = () => {
+    if (!hasLastOrder) {
+      toast.error('No previous order to re-order from');
+      return;
+    }
+    const ids = lastOrder.items.map((it) => it.item_id).filter(Boolean);
+    setPreseed(ids);
+    setModalOpen(true);
+    toast.info('Re-order preloaded — review quantities before saving', { duration: 4000 });
+  };
+
+  const handleNewOrder = () => {
+    setPreseed(null);
+    setModalOpen(true);
+  };
+  const handleCloseModal = () => {
+    setModalOpen(false);
+    setPreseed(null);
+  };
+
   return (
     <div className="space-y-6" data-testid="orders-page">
       <div className="flex items-start justify-between gap-4">
@@ -284,9 +352,21 @@ export default function OrdersPage() {
             execute external purchases.
           </p>
         </div>
-        <Button onClick={() => setModalOpen(true)} className="bg-teal-600 hover:bg-teal-700" data-testid="new-order-btn">
-          <Plus className="w-4 h-4 mr-1.5" /> New Order
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {hasLastOrder && (
+            <Button
+              onClick={handleSmartReorder}
+              variant="outline"
+              className="gap-1.5 border-teal-300 text-teal-700 hover:bg-teal-50"
+              data-testid="smart-reorder-btn"
+            >
+              <Sparkles className="w-4 h-4" /> Re-order last week (Smart)
+            </Button>
+          )}
+          <Button onClick={handleNewOrder} className="bg-teal-600 hover:bg-teal-700" data-testid="new-order-btn">
+            <Plus className="w-4 h-4 mr-1.5" /> New Order
+          </Button>
+        </div>
       </div>
 
       <div className="flex items-start gap-2 p-3 bg-slate-50 border border-slate-200 rounded-lg text-[12px] text-slate-600" data-testid="orders-info-banner">
@@ -295,6 +375,8 @@ export default function OrdersPage() {
           Orders are <strong>Item-driven</strong>. Every line must reference a product in your Item Catalog —
           free-text entries are disabled to prevent duplicate product definitions.
           Procurement recommendations are <strong>not</strong> auto-applied here.
+          Smart re-order preloads items from your most recent order — quantities stay blank so you can review.
+          <a href="/procurement" className="ml-1 font-semibold text-teal-700 hover:underline" data-testid="orders-procurement-link">Better price available? View Procurement →</a>
         </span>
       </div>
 
@@ -342,7 +424,7 @@ export default function OrdersPage() {
         </div>
       )}
 
-      <CreateOrderModal open={modalOpen} onClose={() => setModalOpen(false)} onCreated={() => load()} api={api} />
+      <CreateOrderModal open={modalOpen} onClose={handleCloseModal} onCreated={() => load()} api={api} preseedItemIds={preseed} />
     </div>
   );
 }

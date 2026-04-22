@@ -36,13 +36,7 @@ const navTree = [
       { path: '/vendor-comparison',  label: 'Vendor Pricing ($/LB)' },
     ]},
   { type: 'link', path: '/reports', label: 'Reports', icon: FileText, perm: 'view_reports' },
-  { type: 'group', key: 'procurement', label: 'Procurement', icon: Sparkles, perm: 'view_reports', matchPrefix: '/procurement',
-    children: [
-      { path: '/procurement/smart-purchases', label: 'Smart Purchases' },
-      { path: '/procurement/price-insights',  label: 'Price Intelligence' },
-      { path: '/procurement/decisions',       label: 'Decisions' },
-      { path: '/procurement/suggestions',     label: 'Suggestions Inbox' },
-    ]},
+  { type: 'link', path: '/procurement', label: 'Procurement', icon: Sparkles, perm: 'view_reports' },
   { type: 'link', path: '/records', label: 'Records Library', icon: FolderArchive, perm: 'view_records' },
 ];
 
