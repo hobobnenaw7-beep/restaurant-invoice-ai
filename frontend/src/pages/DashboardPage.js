@@ -930,11 +930,10 @@ export default function DashboardPage() {
   }, [filterYear, filterMonth]);
 
   const openDrillDown = useCallback((category) => {
-    // Spending categories → full-page navigate to Expenses with tab pre-selected
-    if (category === 'raw_materials' || category === 'salaries' || category === 'other') {
-      navigate('/expenses', { state: { tab: category } });
-      return;
-    }
+    // Spending categories → dedicated Expenses sub-page
+    if (category === 'raw_materials') { navigate('/expenses/raw-materials'); return; }
+    if (category === 'salaries')      { navigate('/expenses/salaries');      return; }
+    if (category === 'other')         { navigate('/expenses/other');         return; }
     // Sales → drill-down sheet
     setDrillDown(category);
   }, [navigate]);

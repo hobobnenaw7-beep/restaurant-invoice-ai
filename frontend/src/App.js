@@ -8,6 +8,9 @@ import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
 import ProfitDashboard from "@/pages/ProfitDashboard";
 import ExpensesPage from "@/pages/ExpensesPage";
+import RawMaterialsPage from "@/pages/expenses/RawMaterialsPage";
+import SalariesPage from "@/pages/expenses/SalariesPage";
+import OtherExpensesPage from "@/pages/expenses/OtherExpensesPage";
 import SalesPage from "@/pages/SalesPage";
 import VendorsPage from "@/pages/VendorsPage";
 import VendorDetailPage from "@/pages/VendorDetailPage";
@@ -132,6 +135,9 @@ function App() {
           <Route path="/dashboard" element={<PermRoute perm="view_dashboard"><DashboardPage /></PermRoute>} />
           <Route path="/profit-center" element={<PermRoute perm="view_dashboard"><ProfitDashboard /></PermRoute>} />
           <Route path="/expenses" element={<PermRoute perm="view_expenses"><ExpensesPage /></PermRoute>} />
+          <Route path="/expenses/raw-materials" element={<PermRoute perm="view_expenses"><RawMaterialsPage /></PermRoute>} />
+          <Route path="/expenses/salaries" element={<PermRoute perm="view_expenses"><SalariesPage /></PermRoute>} />
+          <Route path="/expenses/other" element={<PermRoute perm="view_expenses"><OtherExpensesPage /></PermRoute>} />
           <Route path="/sales" element={<PermRoute perm="view_sales"><SalesPage /></PermRoute>} />
           <Route path="/vendors" element={<PermRoute perm="view_vendors"><VendorsPage /></PermRoute>} />
           <Route path="/vendors/:id" element={<PermRoute perm="view_vendors"><VendorDetailPage /></PermRoute>} />

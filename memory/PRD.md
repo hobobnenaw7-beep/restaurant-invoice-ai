@@ -47,6 +47,63 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 11: Expenses — Dedicated Sub-Pages (2026-02-13)
+
+### Goal
+Make each expense type feel like its own workspace — separate route,
+themed header, category-specific CTA — not just a tab inside a shared screen.
+
+### Routes
+| URL | Page |
+|---|---|
+| `/expenses`                  | `<Navigate to="/expenses/raw-materials" replace/>` |
+| `/expenses/raw-materials`    | `RawMaterialsPage` (teal accent) |
+| `/expenses/salaries`         | `SalariesPage` (blue accent) |
+| `/expenses/other`            | `OtherExpensesPage` (amber accent) |
+
+### Visual Identity (subtle — NOT full-page theming)
+Applied only to: breadcrumb current segment · title · icon badge · accent
+strip · primary "+ Add" button.
+
+| Page | Theme | Icon | CTA label |
+|---|---|---|---|
+| Raw Materials  | teal  | Beef   | `+ Add Raw Material` |
+| Salaries       | blue  | Users2 | `+ Add Salary` |
+| Other Expenses | amber | Wrench | `+ Add Expense` |
+
+### Implementation
+- `pages/expenses/ExpenseHeader.js` — shared header strip (breadcrumb +
+  themed title + icon badge + accent bar).
+- `pages/expenses/{RawMaterials|Salaries|OtherExpenses}Page.js` — thin
+  wrappers that import the existing `{RawMaterials|Salaries|OtherExpenses}Tab`
+  exports from `pages/ExpensesPage.js`. Zero duplication of business logic.
+- `ExpensesPage.js` now just `<Navigate to="/expenses/raw-materials"/>` so any
+  stale import still works.
+- Shared table structure / search / date filters / status filter all
+  preserved inside the tab components (unchanged).
+- Cross-category tabs REMOVED from the inner view — each page is category-only.
+- Sidebar children updated to point at new canonical paths.
+- `DashboardPage` drill-down updated to navigate to the new dedicated routes
+  instead of `/expenses` with `state.tab`.
+
+### Testing
+- Lint clean across all 5 touched/new files.
+- Live Playwright verified: `/expenses` redirect, all 3 themed headers +
+  breadcrumbs, all 3 contextual Add button labels, absence of sibling-tab
+  row inside each page, sidebar children all resolve.
+- ZERO backend changes — no regression risk on any service.
+
+### Files
+- /app/frontend/src/pages/expenses/ExpenseHeader.js (new)
+- /app/frontend/src/pages/expenses/RawMaterialsPage.js (new)
+- /app/frontend/src/pages/expenses/SalariesPage.js (new)
+- /app/frontend/src/pages/expenses/OtherExpensesPage.js (new)
+- /app/frontend/src/pages/ExpensesPage.js (exports Tab components; default is Navigate)
+- /app/frontend/src/App.js (3 new routes + /expenses redirect)
+- /app/frontend/src/components/Layout.js (sidebar children point to new paths)
+- /app/frontend/src/pages/DashboardPage.js (drill-down → new routes)
+
+
 ## Milestone 10: Procurement Command Center (3-Panel UI Consolidation) — COMPLETE (2026-02-13)
 
 ### Goal

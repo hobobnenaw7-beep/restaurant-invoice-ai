@@ -20,9 +20,9 @@ const navTree = [
   { type: 'link', path: '/orders',    label: 'Orders',    icon: ShoppingCart,    perm: 'view_expenses' },
   { type: 'group', key: 'expenses', label: 'Expenses', icon: Receipt, perm: 'view_expenses', matchPrefix: '/expenses',
     children: [
-      { path: '/expenses?tab=raw_materials', label: 'Raw Materials',   matchQuery: { tab: 'raw_materials' } },
-      { path: '/expenses?tab=salaries',      label: 'Salaries',        matchQuery: { tab: 'salaries' } },
-      { path: '/expenses?tab=other',         label: 'Other Expenses',  matchQuery: { tab: 'other' } },
+      { path: '/expenses/raw-materials', label: 'Raw Materials' },
+      { path: '/expenses/salaries',      label: 'Salaries' },
+      { path: '/expenses/other',         label: 'Other Expenses' },
     ]},
   { type: 'link', path: '/sales', label: 'Sales', icon: DollarSign, perm: 'view_sales' },
   { type: 'group', key: 'items', label: 'Items', icon: Package, perm: 'view_items', matchPrefix: '/items',
