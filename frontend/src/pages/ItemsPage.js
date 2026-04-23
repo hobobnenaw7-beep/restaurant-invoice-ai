@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,13 +10,56 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus, Scale, Award, Snowflake, Sun, Thermometer, Sparkles, CheckCircle2, XCircle, GitMerge } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus, Scale, Award, Snowflake, Sun, Thermometer, Sparkles, CheckCircle2, XCircle, GitMerge, AlertTriangle } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { ConfirmDeleteDialog } from '@/components/ConfirmDeleteDialog';
 
 function fmt(n) { return n != null ? `$${Number(n).toFixed(2)}` : '$0.00'; }
+
+// ── Smart Duplicate Hint helpers ──
+// Token-based Jaccard similarity between two names, after light normalization.
+// Advisory only — never triggers server actions.
+function _tokens(s) {
+  if (!s) return [];
+  return String(s)
+    .toUpperCase()
+    .replace(/[^A-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length >= 2);
+}
+
+function _jaccard(a, b) {
+  const A = new Set(_tokens(a));
+  const B = new Set(_tokens(b));
+  if (A.size === 0 || B.size === 0) return 0;
+  let inter = 0;
+  for (const x of A) if (B.has(x)) inter++;
+  const union = A.size + B.size - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+const DUPLICATE_HINT_THRESHOLD = 0.70;
+
+// Returns {item, score} of the closest approved canonical item, or null.
+function findClosestApproved(suggestedName, approvedItems) {
+  if (!suggestedName) return null;
+  let best = null;
+  for (const it of approvedItems) {
+    if (!it || it.is_suggested || it.is_archived) continue;
+    const candidates = [it.name, ...((it.aliases || []).map(a => a.alias_name || a.alias))].filter(Boolean);
+    let localBest = 0;
+    for (const c of candidates) {
+      const s = _jaccard(suggestedName, c);
+      if (s > localBest) localBest = s;
+    }
+    if (localBest >= DUPLICATE_HINT_THRESHOLD && (!best || localBest > best.score)) {
+      best = { item: it, score: localBest };
+    }
+  }
+  return best;
+}
 
 function PriceHistoryDialog({ item, api, onClose }) {
   const [data, setData] = useState(null);
@@ -253,6 +297,7 @@ function VendorComparison({ api }) {
 
 export default function ItemsPage() {
   const { api } = useAuth();
+  const location = useLocation();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -274,6 +319,36 @@ export default function ItemsPage() {
   const [mergeTargetId, setMergeTargetId] = useState('');
   const [mergeConfirming, setMergeConfirming] = useState(false);
 
+  // Highlight support: when navigated to `/items?highlight=<id>`, scroll to
+  // the matching row and apply a brief ring so the user can find the
+  // canonical destination of a correction-memory link.
+  const [highlightId, setHighlightId] = useState(null);
+  const rowRefs = useRef({});
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const hid = params.get('highlight');
+    setHighlightId(hid || null);
+  }, [location.search]);
+
+  // When both the highlight id is known AND the matching row is rendered,
+  // scroll it into view. Clear the highlight after 3.5s so the ring fades.
+  useEffect(() => {
+    if (!highlightId || loading) return;
+    const target = items.find(it => it.id === highlightId);
+    if (!target) return;
+    // If item is currently hidden by a filter, relax it to "all".
+    if (target.is_suggested && statusFilter === 'approved') setStatusFilter('all');
+    if (!target.is_suggested && statusFilter === 'suggested') setStatusFilter('all');
+    const node = rowRefs.current[highlightId];
+    if (node && node.scrollIntoView) {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    const t = setTimeout(() => setHighlightId(null), 3500);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightId, items, loading]);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -287,7 +362,33 @@ export default function ItemsPage() {
     finally { setLoading(false); }
   };
 
+  // Separate pool of approved items used only for the advisory Smart
+  // Duplicate Hint on suggested rows. We keep it decoupled from the main
+  // list so that filter changes (e.g. "Suggested" tab) don't break the hint.
+  const [approvedItems, setApprovedItems] = useState([]);
+  const loadApprovedItems = async () => {
+    try {
+      const r = await api.get('/items?status=approved');
+      setApprovedItems(Array.isArray(r.data) ? r.data : []);
+    } catch {
+      setApprovedItems([]);
+    }
+  };
+
   useEffect(() => { load(); }, [search, storageFilter, statusFilter]); // eslint-disable-line
+  useEffect(() => { loadApprovedItems(); }, []); // eslint-disable-line
+
+  // Pre-compute duplicate hints for visible suggested items (advisory only).
+  const duplicateHints = useMemo(() => {
+    const out = {};
+    if (!approvedItems.length) return out;
+    for (const it of items) {
+      if (!it.is_suggested) continue;
+      const hit = findClosestApproved(it.name, approvedItems);
+      if (hit) out[it.id] = hit;  // { item, score }
+    }
+    return out;
+  }, [items, approvedItems]);
 
   const suggestedCount = items.filter(it => it.is_suggested).length;
 
@@ -297,6 +398,7 @@ export default function ItemsPage() {
       await api.post(`/items/${item.id}/promote`);
       toast.success(`Promoted "${item.name}" to your catalog`);
       load();
+      loadApprovedItems();
     } catch (err) {
       toast.error('Could not promote: ' + (err.response?.data?.detail || ''));
     } finally { setGoverning(null); }
@@ -309,6 +411,7 @@ export default function ItemsPage() {
       await api.post(`/items/${item.id}/dismiss`);
       toast.info(`Dismissed "${item.name}"`);
       load();
+      loadApprovedItems();
     } catch (err) {
       toast.error('Could not dismiss: ' + (err.response?.data?.detail || ''));
     } finally { setGoverning(null); }
@@ -343,6 +446,7 @@ export default function ItemsPage() {
       );
       setMergeDialog(null);
       load();
+      loadApprovedItems();
     } catch (err) {
       toast.error('Could not merge: ' + (err.response?.data?.detail || ''));
     } finally {
@@ -470,8 +574,18 @@ export default function ItemsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.map((item, i) => (
-                  <TableRow key={item.id} className={`transition-colors ${item.is_suggested ? 'bg-amber-50/60 hover:bg-amber-50/80' : (i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40')} hover:bg-teal-50/30`} data-testid={`item-row-${item.id}`} data-suggested={item.is_suggested ? 'true' : 'false'}>
+                {items.map((item, i) => {
+                  const hint = duplicateHints[item.id];
+                  const isHighlighted = highlightId && highlightId === item.id;
+                  return (
+                  <TableRow
+                    key={item.id}
+                    ref={el => { if (el) rowRefs.current[item.id] = el; }}
+                    className={`transition-all ${item.is_suggested ? 'bg-amber-50/60 hover:bg-amber-50/80' : (i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40')} hover:bg-teal-50/30 ${isHighlighted ? 'ring-2 ring-teal-500 ring-offset-1' : ''}`}
+                    data-testid={`item-row-${item.id}`}
+                    data-suggested={item.is_suggested ? 'true' : 'false'}
+                    data-highlighted={isHighlighted ? 'true' : 'false'}
+                  >
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className={`w-8 h-8 rounded-lg ${item.is_suggested ? 'bg-amber-500' : 'bg-navy-900'} text-white flex items-center justify-center text-[11px] font-bold flex-shrink-0`}>
@@ -490,6 +604,22 @@ export default function ItemsPage() {
                             <p className="text-[10px] text-amber-700 italic mt-0.5" data-testid={`origin-hint-${item.id}`}>
                               Suggested from {item.suggested_source === 'user_edit' ? 'a user edit' : item.suggested_source || 'user activity'}
                             </p>
+                          )}
+                          {item.is_suggested && hint && (
+                            <div
+                              className="flex items-center gap-1 mt-1 text-[10px] text-indigo-700"
+                              data-testid={`duplicate-hint-${item.id}`}
+                              data-hint-target-id={hint.item.id}
+                              data-hint-score={hint.score.toFixed(2)}
+                              title="Advisory only — review and decide if you want to Merge."
+                            >
+                              <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0" />
+                              <span className="font-medium">
+                                Possible duplicate of{' '}
+                                <span className="font-bold">"{hint.item.name}"</span>
+                              </span>
+                              <span className="text-slate-400 ml-0.5">({Math.round(hint.score * 100)}% match)</span>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -573,7 +703,8 @@ export default function ItemsPage() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
