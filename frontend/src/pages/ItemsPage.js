@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus, Scale, Award, Snowflake, Sun, Thermometer, Sparkles, CheckCircle2, XCircle } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus, Scale, Award, Snowflake, Sun, Thermometer, Sparkles, CheckCircle2, XCircle, GitMerge } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
@@ -267,7 +267,12 @@ export default function ItemsPage() {
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null });
   const [categoryUpdating, setCategoryUpdating] = useState(null);
-  const [governing, setGoverning] = useState(null);  // item_id being promoted/dismissed
+  const [governing, setGoverning] = useState(null);  // item_id being promoted/dismissed/merged
+  const [mergeDialog, setMergeDialog] = useState(null);   // suggested item being merged
+  const [mergeTargets, setMergeTargets] = useState([]);
+  const [mergeQuery, setMergeQuery] = useState('');
+  const [mergeTargetId, setMergeTargetId] = useState('');
+  const [mergeConfirming, setMergeConfirming] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -308,6 +313,49 @@ export default function ItemsPage() {
       toast.error('Could not dismiss: ' + (err.response?.data?.detail || ''));
     } finally { setGoverning(null); }
   };
+
+  const openMergeDialog = async (item) => {
+    setMergeDialog(item);
+    setMergeQuery('');
+    setMergeTargetId('');
+    setMergeConfirming(false);
+    try {
+      const r = await api.get('/items?status=approved');
+      // Exclude the suggested item itself just in case
+      setMergeTargets((r.data || []).filter(x => x.id !== item.id));
+    } catch {
+      setMergeTargets([]);
+      toast.error('Could not load target items');
+    }
+  };
+
+  const confirmMerge = async () => {
+    if (!mergeDialog || !mergeTargetId) return;
+    setGoverning(mergeDialog.id);
+    try {
+      const r = await api.post(`/items/${mergeDialog.id}/merge`, { target_item_id: mergeTargetId });
+      const target = r.data?.target;
+      const xfer = r.data?.aliases_transferred ?? 0;
+      const dedup = r.data?.aliases_deduped ?? 0;
+      toast.success(
+        `Merged "${mergeDialog.name}" into "${target?.name || 'target'}" · ` +
+        `${xfer} alias${xfer !== 1 ? 'es' : ''} transferred${dedup ? `, ${dedup} deduped` : ''}`
+      );
+      setMergeDialog(null);
+      load();
+    } catch (err) {
+      toast.error('Could not merge: ' + (err.response?.data?.detail || ''));
+    } finally {
+      setGoverning(null);
+    }
+  };
+
+  const filteredMergeTargets = useMemo(() => {
+    const q = (mergeQuery || '').trim().toLowerCase();
+    return (mergeTargets || [])
+      .filter(it => !q || (it.name || '').toLowerCase().includes(q) || (it.aliases || []).some(a => (a.alias || '').toLowerCase().includes(q)))
+      .slice(0, 60);
+  }, [mergeTargets, mergeQuery]);
 
   const openNew = () => { setEditing(null); setForm({ name: '', category: '', storage_category: '', category_source: 'auto' }); setDialogOpen(true); };
   const openEdit = (item) => { setEditing(item); setForm({ name: item.name, category: item.category || '', storage_category: item.storage_category || '', category_source: item.category_source || 'auto' }); setDialogOpen(true); };
@@ -496,6 +544,15 @@ export default function ItemsPage() {
                             </Button>
                             <Button
                               size="sm" variant="outline"
+                              className="h-7 px-2 text-[10px] border-indigo-300 text-indigo-700 hover:bg-indigo-50 gap-1"
+                              onClick={() => openMergeDialog(item)}
+                              disabled={governing === item.id}
+                              data-testid={`merge-item-${item.id}`}
+                            >
+                              <GitMerge className="w-3 h-3" /> Merge
+                            </Button>
+                            <Button
+                              size="sm" variant="outline"
                               className="h-7 px-2 text-[10px] border-slate-300 text-slate-600 gap-1"
                               onClick={() => dismissSuggested(item)}
                               disabled={governing === item.id}
@@ -583,6 +640,111 @@ export default function ItemsPage() {
       {/* Price History Dialog */}
       <PriceHistoryDialog item={priceItem} api={api} onClose={() => setPriceItem(null)} />
       <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message="Are you sure you want to delete this item and all its aliases?" />
+
+      {/* Merge Suggested → Existing Item Dialog */}
+      <Dialog open={!!mergeDialog} onOpenChange={(o) => !o && setMergeDialog(null)}>
+        <DialogContent className="max-w-lg" data-testid="merge-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-lg flex items-center gap-2">
+              <GitMerge className="w-4 h-4 text-indigo-600" />
+              Merge into existing item
+            </DialogTitle>
+          </DialogHeader>
+          {!mergeConfirming ? (
+            <>
+              <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-[11px] text-amber-800" data-testid="merge-context">
+                <Sparkles className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <span>
+                  Suggested: <span className="font-semibold">{mergeDialog?.name}</span>.
+                  Pick an existing approved item — we will add this suggestion as an alias and
+                  keep your correction history intact. No duplicate catalog entry will be created.
+                </span>
+              </div>
+              <div className="relative mt-2">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  className="pl-9 h-9 text-sm"
+                  placeholder="Search approved items..."
+                  value={mergeQuery}
+                  onChange={(e) => setMergeQuery(e.target.value)}
+                  data-testid="merge-search"
+                  autoFocus
+                />
+              </div>
+              <div className="border border-slate-200 rounded-lg max-h-64 overflow-y-auto mt-2" data-testid="merge-target-list">
+                {filteredMergeTargets.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-slate-400" data-testid="merge-target-empty">
+                    {mergeQuery ? 'No approved items match' : 'No approved items available as merge targets'}
+                  </div>
+                ) : filteredMergeTargets.map(it => (
+                  <button
+                    key={it.id}
+                    onClick={() => setMergeTargetId(it.id)}
+                    className={`w-full text-left px-3 py-2 border-b border-slate-100 last:border-0 transition-colors ${
+                      mergeTargetId === it.id ? 'bg-teal-50 border-l-2 border-l-teal-600' : 'hover:bg-slate-50'
+                    }`}
+                    data-testid={`merge-target-${it.id}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-6 h-6 rounded bg-navy-900 text-white flex items-center justify-center text-[10px] font-bold flex-shrink-0`}>
+                        {it.name?.charAt(0)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-semibold text-navy-900 truncate">{it.name}</p>
+                        <p className="text-[10px] text-slate-500 truncate">
+                          {(it.aliases || []).length} alias{(it.aliases || []).length !== 1 ? 'es' : ''}
+                          {it.category && <> · {it.category}</>}
+                        </p>
+                      </div>
+                      {mergeTargetId === it.id && <CheckCircle2 className="w-4 h-4 text-teal-600 flex-shrink-0" />}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setMergeDialog(null)} data-testid="merge-cancel">Cancel</Button>
+                <Button
+                  disabled={!mergeTargetId}
+                  onClick={() => setMergeConfirming(true)}
+                  className="bg-indigo-600 hover:bg-indigo-700 gap-1"
+                  data-testid="merge-next"
+                >
+                  Next <GitMerge className="w-3 h-3" />
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <div className="text-sm text-slate-700 space-y-3" data-testid="merge-confirm-step">
+                <p>
+                  You're about to merge
+                  <span className="font-semibold text-amber-700"> "{mergeDialog?.name}"</span>
+                  {' '}into
+                  <span className="font-semibold text-teal-700"> "{mergeTargets.find(t => t.id === mergeTargetId)?.name}"</span>.
+                </p>
+                <ul className="text-[12px] text-slate-600 list-disc pl-5 space-y-1">
+                  <li>The suggestion's name + aliases become aliases on the existing item</li>
+                  <li>Correction memory rows are preserved</li>
+                  <li>No duplicate canonical item will be created</li>
+                  <li>The suggestion is archived (non-destructive)</li>
+                </ul>
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setMergeConfirming(false)} data-testid="merge-confirm-back">Back</Button>
+                <Button
+                  onClick={confirmMerge}
+                  disabled={governing === mergeDialog?.id}
+                  className="bg-indigo-600 hover:bg-indigo-700 gap-1"
+                  data-testid="merge-confirm"
+                >
+                  {governing === mergeDialog?.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitMerge className="w-3 h-3" />}
+                  Confirm merge
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

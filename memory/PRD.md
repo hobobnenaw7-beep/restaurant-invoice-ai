@@ -47,6 +47,72 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 16: Suggested Item Merge (Deduplication) — COMPLETE (2026-02-13)
+
+### Backend — 1 new endpoint
+- `POST /api/items/{iid}/merge` with body `{target_item_id}`:
+  * 404 if suggested or target missing; 400 if source not suggested,
+    target not approved / archived, or self-merge.
+  * **Transfers aliases** from suggested → target (update_many on
+    `canonical_item_id`). If a (target, alias) duplicate exists, increments
+    existing alias's `usage_count` and drops the duplicate alias row.
+  * **Adds the suggestion's own `name`** as an alias on the target
+    (source="merge", usage_count=1) — unless already present.
+  * **Marks suggestion** `is_merged=True`, `is_archived=True`,
+    `merged_into_item_id`, `merged_at`, `merged_by_user_id/name`.
+  * `correction_memory` is **NEVER touched** — rows remain readable.
+  * Response: `{status, suggested_id, target (with refreshed aliases),
+    aliases_transferred, aliases_deduped}`.
+  * Audit log: `MERGE` event with transfer/dedup counts.
+
+### Frontend — Items page
+- New **Merge** button (indigo, `GitMerge` icon) on every suggested row,
+  between Promote and Dismiss. testid `merge-item-{id}`.
+- Two-step `MergeDialog` (testid `merge-dialog`):
+  1. **Target picker**: amber context banner (`merge-context`), search input
+     (`merge-search`), scrollable list of approved items
+     (`merge-target-{id}`), empty state (`merge-target-empty`). **Next**
+     button disabled until a target is chosen.
+  2. **Confirmation**: plain-English summary with 4 guarantees:
+     "suggestion's name + aliases become aliases on existing item",
+     "correction memory rows are preserved",
+     "no duplicate canonical item will be created",
+     "suggestion is archived (non-destructive)". **Back** and **Confirm merge**.
+- Success toast reports aliases transferred / deduped.
+
+### Guardrails honored (all verified live)
+- **No auto-merge** — user must pick target + confirm
+- **No OCR / parsing changes**
+- **No procurement logic changes**
+- **No destructive deletes** — aliases transferred (never dropped unless
+  they already existed on target, in which case usage_count merges)
+- **Tenant-scoped** throughout
+- `correction_memory` snapshot count unchanged after merge
+
+### End-to-End Verified (live curl + Playwright)
+```
+Suggested: "Shrimp IQF 16/20 Merge-1776922647"
+→ POST /items/{sid}/merge  body: {target_item_id: <Shrimp 16-20 Count IQF id>}
+✓ status: "merged"
+✓ target.aliases: ["SHRIMP 16-20 IQF", "Shrimp IQF 16/20 Merge-1776922647"]
+✓ approved count BEFORE/AFTER: 125/125 — NO duplicate canonical created
+✓ suggestion marked is_merged=true, is_archived=true,
+  merged_into_item_id=<target>, merged_by_name="Demo User"
+✓ correction_memory count unchanged (4 → 4)
+```
+
+### Screenshots captured (5)
+- `merge_before.png` — suggested row with Promote / Merge / Dismiss buttons
+- `merge_picker.png` — searchable target list ("SHRIMP 16-20 IQF" selected)
+- `merge_confirm.png` — confirmation step with 4 guarantees
+- `merge_after.png` — Approved tab, 3 canonical Shrimp items (duplicate gone)
+- `merge_aliases.png` — Alias dialog on target post-merge
+
+### Files
+- `/app/backend/routes/items.py` — `MergeSuggestedBody` model + `/merge` endpoint + Pydantic import
+- `/app/frontend/src/pages/ItemsPage.js` — Merge button, MergeDialog (target picker + confirm step), `openMergeDialog` / `confirmMerge` handlers
+
+
 ## Milestone 15: Suggested Catalog Governance — COMPLETE (2026-02-13)
 
 ### Goal
