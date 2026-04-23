@@ -38,7 +38,7 @@ function fmtFullMoney(n) {
 /* ────────────────────── DonutBreakdown (shared) ────────────────────── */
 // Donut on the left with TOTAL in the centre + categorical breakdown on
 // the right. Same structure for Sales and Spending.
-function DonutBreakdown({ title, titleIcon: TitleIcon, segments, total, testId, emptyLabel }) {
+function DonutBreakdown({ title, titleIcon: TitleIcon, segments, total, testId, emptyLabel, onSegmentClick }) {
   const size = 160;
   const stroke = 12;
   const radius = (size - stroke) / 2;
@@ -83,17 +83,27 @@ function DonutBreakdown({ title, titleIcon: TitleIcon, segments, total, testId, 
         </div>
 
         {/* Breakdown list */}
-        <div className="flex-1 min-w-0 space-y-2" data-testid={`${testId}-breakdown`}>
+        <div className="flex-1 min-w-0 space-y-1" data-testid={`${testId}-breakdown`}>
           {active.length === 0 ? (
             <p className="text-xs text-slate-400">{emptyLabel || 'No data available.'}</p>
           ) : segments.map((s, i) => {
             const pct = total > 0 ? (s.value / total) * 100 : 0;
+            const clickable = !!onSegmentClick && !!s.to;
+            const RowTag = clickable ? 'button' : 'div';
+            const rowProps = clickable
+              ? {
+                  type: 'button',
+                  onClick: () => onSegmentClick(s),
+                  className: 'w-full flex items-center justify-between gap-2 text-xs px-1.5 py-1 rounded-md hover:bg-slate-50 transition-colors text-left',
+                  'data-testid': `${testId}-seg-${i}`,
+                  'data-nav-to': s.to,
+                }
+              : {
+                  className: 'flex items-center justify-between gap-2 text-xs px-1.5 py-1',
+                  'data-testid': `${testId}-seg-${i}`,
+                };
             return (
-              <div
-                key={s.label + i}
-                className="flex items-center justify-between gap-2 text-xs"
-                data-testid={`${testId}-seg-${i}`}
-              >
+              <RowTag key={s.label + i} {...rowProps}>
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: s.color }} aria-hidden="true" />
                   <span className="text-slate-700 truncate">{s.label}</span>
@@ -101,8 +111,9 @@ function DonutBreakdown({ title, titleIcon: TitleIcon, segments, total, testId, 
                 <div className="flex items-center gap-3 flex-shrink-0 tabular-nums">
                   <span className="text-slate-900 font-medium">{fmtFullMoney(s.value)}</span>
                   <span className="text-slate-400 w-10 text-right">{pct.toFixed(1)}%</span>
+                  {clickable && <ChevronRight className="w-3 h-3 text-slate-300" aria-hidden="true" />}
                 </div>
-              </div>
+              </RowTag>
             );
           })}
         </div>
@@ -145,8 +156,8 @@ const RING_TINT = {
 /* SubtleDonut — SVG progress ring. pct is the change vs previous period;
    we plot |pct| capped at 100% as an arc. Uses the card's own pastel
    palette so no new colors enter the design. */
-function SubtleDonut({ pct, tint, Icon, size = 80, testId }) {
-  const stroke = 5;
+function SubtleDonut({ pct, tint, Icon, size = 52, testId }) {
+  const stroke = 3;
   const radius = (size - stroke) / 2;
   const circ = 2 * Math.PI * radius;
   const magnitude = Math.min(100, Math.abs(pct ?? 0));
@@ -169,8 +180,8 @@ function SubtleDonut({ pct, tint, Icon, size = 80, testId }) {
         )}
       </svg>
       <div className="absolute inset-0 flex items-center justify-center">
-        <div className={`w-14 h-14 rounded-full ${tint.inner} flex items-center justify-center`}>
-          <Icon className={`w-6 h-6 ${tint.icon}`} strokeWidth={2.2} />
+        <div className={`w-8 h-8 rounded-full ${tint.inner} flex items-center justify-center`}>
+          <Icon className={`w-4 h-4 ${tint.icon}`} strokeWidth={2.2} />
         </div>
       </div>
     </div>
@@ -186,19 +197,19 @@ function CircleNavCard({ tintKey, label, linkLabel, Icon, to, testId, navigate, 
     <button
       type="button"
       onClick={() => navigate(to)}
-      className="group w-full bg-white border border-slate-200 rounded-2xl px-6 py-8 flex flex-col items-center gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300 active:translate-y-0"
+      className="group w-full bg-white border border-slate-200 rounded-2xl px-6 py-6 flex flex-col items-center gap-2 transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300 active:translate-y-0"
       data-testid={testId}
       data-tint={tintKey}
     >
       {hasDonut ? (
         <div className="transition-transform duration-200 group-hover:scale-105">
-          <SubtleDonut pct={pct} tint={t} Icon={Icon} size={84} testId={`${testId}-donut`} />
+          <SubtleDonut pct={pct} tint={t} Icon={Icon} size={52} testId={`${testId}-donut`} />
         </div>
       ) : (
         /* Annular ring: outer pastel band + lighter inner disc + strong icon */
-        <div className={`relative w-20 h-20 rounded-full ${t.outer} flex items-center justify-center transition-transform duration-200 group-hover:scale-105`} aria-hidden="true">
-          <div className={`w-14 h-14 rounded-full ${t.inner} flex items-center justify-center`}>
-            <Icon className={`w-6 h-6 ${t.icon}`} strokeWidth={2.2} />
+        <div className={`relative w-12 h-12 rounded-full ${t.outer} flex items-center justify-center transition-transform duration-200 group-hover:scale-105`} aria-hidden="true">
+          <div className={`w-8 h-8 rounded-full ${t.inner} flex items-center justify-center`}>
+            <Icon className={`w-4 h-4 ${t.icon}`} strokeWidth={2.2} />
           </div>
         </div>
       )}
@@ -511,9 +522,9 @@ export default function DashboardPage() {
     const sal = data?.month_salaries || 0;
     const oth = data?.month_other_expenses || 0;
     return [
-      { label: 'Raw Materials', value: raw, color: '#10b981' }, // soft emerald
-      { label: 'Salaries',      value: sal, color: '#6366f1' }, // soft indigo
-      { label: 'Other',         value: oth, color: '#94a3b8' }, // soft slate
+      { label: 'Raw Materials', value: raw, color: '#10b981', to: '/expenses/raw-materials' }, // soft emerald
+      { label: 'Salaries',      value: sal, color: '#6366f1', to: '/expenses/salaries' },      // soft indigo
+      { label: 'Other',         value: oth, color: '#94a3b8', to: '/expenses/other' },         // soft slate
     ];
   }, [data]);
   const spendingTotal = spendingSegments.reduce((a, s) => a + s.value, 0);
@@ -657,6 +668,7 @@ export default function DashboardPage() {
           total={spendingTotal}
           testId="spending-breakdown-card"
           emptyLabel="No spending recorded in this period."
+          onSegmentClick={(seg) => seg.to && navigate(seg.to)}
         />
       </div>
 
