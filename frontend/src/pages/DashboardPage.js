@@ -45,15 +45,53 @@ function DeltaPill({ pct, positiveIsGood = true, testId }) {
 // Ring tokens tuned to match the reference: thick pastel outer band,
 // lighter inner fill, strong-color icon in the middle.
 const RING_TINT = {
-  sales:       { outer: 'bg-emerald-100', inner: 'bg-emerald-50/70', icon: 'text-emerald-600', link: 'text-emerald-600 hover:text-emerald-700' },
-  expenses:    { outer: 'bg-rose-100',    inner: 'bg-rose-50/70',    icon: 'text-rose-600',    link: 'text-rose-600 hover:text-rose-700' },
+  sales:       { outer: 'bg-emerald-100', inner: 'bg-emerald-50/70', icon: 'text-emerald-600', link: 'text-emerald-600 hover:text-emerald-700', track: '#d1fae5', arc: '#10b981' },
+  expenses:    { outer: 'bg-rose-100',    inner: 'bg-rose-50/70',    icon: 'text-rose-600',    link: 'text-rose-600 hover:text-rose-700',       track: '#ffe4e6', arc: '#f43f5e' },
   orders:      { outer: 'bg-sky-100',     inner: 'bg-sky-50/70',     icon: 'text-sky-600',     link: 'text-sky-600 hover:text-sky-700' },
   procurement: { outer: 'bg-orange-100',  inner: 'bg-orange-50/70',  icon: 'text-orange-600',  link: 'text-orange-600 hover:text-orange-700' },
   items:       { outer: 'bg-purple-100',  inner: 'bg-purple-50/70',  icon: 'text-purple-600',  link: 'text-purple-600 hover:text-purple-700' },
 };
 
-function CircleNavCard({ tintKey, label, linkLabel, Icon, to, testId, navigate }) {
+/* SubtleDonut — SVG progress ring. pct is the change vs previous period;
+   we plot |pct| capped at 100% as an arc. Uses the card's own pastel
+   palette so no new colors enter the design. */
+function SubtleDonut({ pct, tint, Icon, size = 80, testId }) {
+  const stroke = 5;
+  const radius = (size - stroke) / 2;
+  const circ = 2 * Math.PI * radius;
+  const magnitude = Math.min(100, Math.abs(pct ?? 0));
+  const dash = (magnitude / 100) * circ;
+  return (
+    <div className="relative" style={{ width: size, height: size }} data-testid={testId}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2} cy={size / 2} r={radius}
+          stroke={tint.track} strokeWidth={stroke} fill="none"
+        />
+        {pct !== null && pct !== undefined && (
+          <circle
+            cx={size / 2} cy={size / 2} r={radius}
+            stroke={tint.arc} strokeWidth={stroke} fill="none"
+            strokeDasharray={`${dash} ${circ}`}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dasharray 0.6s ease-out' }}
+          />
+        )}
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className={`w-14 h-14 rounded-full ${tint.inner} flex items-center justify-center`}>
+          <Icon className={`w-6 h-6 ${tint.icon}`} strokeWidth={2.2} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CircleNavCard({ tintKey, label, linkLabel, Icon, to, testId, navigate, pct }) {
   const t = RING_TINT[tintKey];
+  const hasDonut = pct !== undefined;
+  const direction = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+
   return (
     <button
       type="button"
@@ -62,13 +100,32 @@ function CircleNavCard({ tintKey, label, linkLabel, Icon, to, testId, navigate }
       data-testid={testId}
       data-tint={tintKey}
     >
-      {/* Annular ring: outer pastel band + lighter inner disc + strong icon */}
-      <div className={`relative w-20 h-20 rounded-full ${t.outer} flex items-center justify-center transition-transform duration-200 group-hover:scale-105`} aria-hidden="true">
-        <div className={`w-14 h-14 rounded-full ${t.inner} flex items-center justify-center`}>
-          <Icon className={`w-6 h-6 ${t.icon}`} strokeWidth={2.2} />
+      {hasDonut ? (
+        <div className="transition-transform duration-200 group-hover:scale-105">
+          <SubtleDonut pct={pct} tint={t} Icon={Icon} size={84} testId={`${testId}-donut`} />
         </div>
-      </div>
+      ) : (
+        /* Annular ring: outer pastel band + lighter inner disc + strong icon */
+        <div className={`relative w-20 h-20 rounded-full ${t.outer} flex items-center justify-center transition-transform duration-200 group-hover:scale-105`} aria-hidden="true">
+          <div className={`w-14 h-14 rounded-full ${t.inner} flex items-center justify-center`}>
+            <Icon className={`w-6 h-6 ${t.icon}`} strokeWidth={2.2} />
+          </div>
+        </div>
+      )}
+
       <span className="text-base font-semibold text-slate-900 mt-1">{label}</span>
+
+      {hasDonut && pct !== null && (
+        <span
+          className={`inline-flex items-center gap-1 text-[11px] font-semibold tabular-nums ${t.icon}`}
+          data-testid={`${testId}-pct`}
+          data-direction={direction}
+        >
+          {pct > 0 ? <TrendingUp className="w-3 h-3" /> : pct < 0 ? <TrendingDown className="w-3 h-3" /> : null}
+          {pct > 0 ? '+' : ''}{Number(pct).toFixed(1)}%
+        </span>
+      )}
+
       <span className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${t.link} transition-colors`}>
         {linkLabel}
         <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
@@ -307,6 +364,17 @@ export default function DashboardPage() {
     return `${filterYear - 1}`;
   }, [filterYear, filterMonth]);
 
+  // % change values for the Sales + Expenses donuts.
+  const salesPct = useMemo(() => pctChange(
+    data?.month_sales || 0,
+    data?.prev_month_sales || 0,
+  ), [data]);
+  const expensesPct = useMemo(() => {
+    const now = (data?.month_raw_materials || 0) + (data?.month_salaries || 0) + (data?.month_other_expenses || 0);
+    const prev = (data?.prev_month_raw_materials || 0) + (data?.prev_month_salaries || 0) + (data?.prev_month_other_expenses || 0);
+    return pctChange(now, prev);
+  }, [data]);
+
   if (loading) {
     return (
       <div className="space-y-5 max-w-[1100px]" data-testid="dashboard-loading">
@@ -339,6 +407,7 @@ export default function DashboardPage() {
           to="/sales"
           testId="stat-sales"
           navigate={navigate}
+          pct={salesPct}
         />
         <CircleNavCard
           tintKey="expenses"
@@ -348,6 +417,7 @@ export default function DashboardPage() {
           to="/expenses"
           testId="stat-expenses"
           navigate={navigate}
+          pct={expensesPct}
         />
       </div>
 
