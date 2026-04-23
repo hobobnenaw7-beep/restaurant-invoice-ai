@@ -3,6 +3,101 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 20: Analytics Migration to Canonical-ID Joins — COMPLETE (2026-02-14)
+
+### Goal
+Migrate core analytics reads away from fragile raw-name grouping toward
+canonical-identity grouping, so aliases / spacing / OCR noise roll up
+into a single timeline whenever canonical linkage exists.
+
+### Services / endpoints migrated
+- `GET /api/prices/vendor-comparison`  (`VendorComparisonService`)
+- `GET /api/prices/intelligence`       (price trends + alerts)
+- `GET /api/items/{id}/price-history`  (`PriceHistoryService`)
+
+`ProcurementDecisionEngine` already grouped by `canonical_product_id`
+at ingest time — no migration needed; smoke-verified no regression.
+
+### Identity Key Rule (enforced everywhere)
+```
+identity_group_key =
+    "canon::<canonical_item_id>[::<variant_key>]"   if canonical linkage exists
+                                                    (after one merge hop)
+    otherwise
+    "norm::<normalize_name(raw_name)>"              — never raw item_name
+```
+
+### Implementation
+- **New: `services/identity_resolver.py`** — `CanonicalIndex` dataclass
+  + `build_canonical_index(rid)` + `idx.resolve(item)` returning
+  `(group_key, canonical_name, variant_key)`. Pure + tenant-scoped.
+- **`routes/prices.py`** — both endpoints now call
+  `build_canonical_index()` once per request, then iterate purchases
+  bucketing by `idx.resolve()`. New `group_key` field exposed on
+  vendor-comparison rows for transparent traceability.
+- **`routes/items.py`** — `item_price_history` now matches on
+  `group_key == "canon::<item_id>"` (prefix tolerates variant suffix)
+  with name/alias fallback for legacy rows missing `canonical_item_id`.
+- **`routes/purchases.py`** — fixed a pre-existing `KeyError` on alias
+  docs that use the `alias` field (post-M19) instead of `alias_name`.
+
+### Before / After (Vendor Comparison)
+**Before** (raw-name keyed):
+```python
+alias_to_canonical[raw.lower()] = canonical_name
+group = alias_to_canonical.get(raw.lower(), raw)  # ← falls back to RAW
+item_vendor_prices[group][vendor].append(...)
+```
+Problem: "Shrimp 16-20 IQF", "shrimp 16-20 iqf", "SHRIMP16/20IQF" all
+produced three separate rows because raw text leaked through the
+fallback.
+
+**After** (canonical-id keyed):
+```python
+idx = await build_canonical_index(rid)           # O(n) once
+for p in purchases:
+    for it in p["items"]:
+        gkey, canon_name, _ = idx.resolve(it)     # O(1) per line
+        item_vendor_prices[gkey][vendor].append(...)
+```
+All three raw variants collapse into `canon::<id>`, a single row with
+the canonical display name.
+
+### Validation delivered
+1. **Before/after query logic** — shown above, plus `group_key`
+   exposed on vendor-comparison response for user-visible proof.
+2. **Historical trends aggregated at canonical level** — confirmed by
+   the consolidation integration test (`test_analytics_consolidation_iter98.py`).
+3. **Before/after consolidation example** — 3 OCR-noisy raw_names
+   (`"Widget -xxx"`, `"W1dg3t-xxx"`, `"widget   xxx"`) linked to one
+   canonical now yield exactly ONE vendor-comparison row and ≥3
+   price-history records.
+4. **Endpoints migrated**: vendor-comparison, price-intelligence,
+   item-price-history.
+
+### Guardrails honored (verified)
+- **Identity confidence not weakened** — matcher thresholds from M19
+  unchanged; analytics only READ the existing `canonical_item_id`.
+- **Variants stay separate** — `variant_key` suffixed into group_key.
+- **Tenant isolated** — `build_canonical_index(rid)` scopes every
+  collection load by `restaurant_id`.
+- **Backwards compat preserved** — historical rows without
+  `canonical_item_id` still appear, grouped by normalized raw_name
+  (not raw), plus the legacy name/alias fallback in
+  `item_price_history`.
+- **No procurement regression** — pytests + endpoint probe green.
+
+### Tests — iteration_98.json (18/18 PASS + 26/26 M19 regression)
+- `tests/test_identity_resolver.py` — 10 unit tests
+- `tests/test_analytics_consolidation_iter98.py` — 1 end-to-end consolidation proof
+- 8 additional live-HTTP verifications authored by testing agent
+
+### Files
+- Backend: `services/identity_resolver.py` (new),
+  `routes/prices.py`, `routes/items.py`, `routes/purchases.py`.
+- Tests: `tests/test_identity_resolver.py`, `tests/test_analytics_consolidation_iter98.py`.
+
+
 ## Milestone 19: Robust Identity, Canonical Linking & Smart Input — COMPLETE (2026-02-14)
 
 ### Goal
