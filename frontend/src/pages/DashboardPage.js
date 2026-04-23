@@ -8,7 +8,7 @@ import { dataEvents } from '@/lib/dataEvents';
 import {
   TrendingUp, TrendingDown, Calendar, DollarSign, Receipt,
   ShoppingCart, ClipboardList, Boxes, ChevronRight, Award,
-  AlertTriangle, Activity, Clock,
+  AlertTriangle, Activity, Clock, ArrowRight,
 } from 'lucide-react';
 
 /* ─────────────────────── helpers ─────────────────────── */
@@ -42,12 +42,14 @@ function DeltaPill({ pct, positiveIsGood = true, testId }) {
 }
 
 /* ────────────────────── Circular Nav Card ────────────────────── */
+// Ring tokens tuned to match the reference: thick pastel outer band,
+// lighter inner fill, strong-color icon in the middle.
 const RING_TINT = {
-  sales:       { ring: 'ring-emerald-200/80', bg: 'bg-emerald-50',  icon: 'text-emerald-500',  link: 'text-emerald-600' },
-  expenses:    { ring: 'ring-rose-200/80',    bg: 'bg-rose-50',     icon: 'text-rose-500',     link: 'text-rose-600' },
-  orders:     { ring: 'ring-sky-200/80',     bg: 'bg-sky-50',      icon: 'text-sky-500',      link: 'text-sky-600' },
-  procurement: { ring: 'ring-orange-200/80',  bg: 'bg-orange-50',   icon: 'text-orange-500',   link: 'text-orange-600' },
-  items:       { ring: 'ring-purple-200/80',  bg: 'bg-purple-50',   icon: 'text-purple-500',   link: 'text-purple-600' },
+  sales:       { outer: 'bg-emerald-100', inner: 'bg-emerald-50/70', icon: 'text-emerald-600', link: 'text-emerald-600 hover:text-emerald-700' },
+  expenses:    { outer: 'bg-rose-100',    inner: 'bg-rose-50/70',    icon: 'text-rose-600',    link: 'text-rose-600 hover:text-rose-700' },
+  orders:      { outer: 'bg-sky-100',     inner: 'bg-sky-50/70',     icon: 'text-sky-600',     link: 'text-sky-600 hover:text-sky-700' },
+  procurement: { outer: 'bg-orange-100',  inner: 'bg-orange-50/70',  icon: 'text-orange-600',  link: 'text-orange-600 hover:text-orange-700' },
+  items:       { outer: 'bg-purple-100',  inner: 'bg-purple-50/70',  icon: 'text-purple-600',  link: 'text-purple-600 hover:text-purple-700' },
 };
 
 function CircleNavCard({ tintKey, label, linkLabel, Icon, to, testId, navigate }) {
@@ -56,20 +58,20 @@ function CircleNavCard({ tintKey, label, linkLabel, Icon, to, testId, navigate }
     <button
       type="button"
       onClick={() => navigate(to)}
-      className="group w-full bg-white border border-slate-200 rounded-2xl px-6 py-7 flex flex-col items-center gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300 active:translate-y-0"
+      className="group w-full bg-white border border-slate-200 rounded-2xl px-6 py-8 flex flex-col items-center gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300 active:translate-y-0"
       data-testid={testId}
       data-tint={tintKey}
     >
-      <div
-        className={`w-16 h-16 rounded-full ${t.bg} ring-[3px] ${t.ring} flex items-center justify-center transition-transform duration-200 group-hover:scale-105`}
-        aria-hidden="true"
-      >
-        <Icon className={`w-6 h-6 ${t.icon}`} />
+      {/* Annular ring: outer pastel band + lighter inner disc + strong icon */}
+      <div className={`relative w-20 h-20 rounded-full ${t.outer} flex items-center justify-center transition-transform duration-200 group-hover:scale-105`} aria-hidden="true">
+        <div className={`w-14 h-14 rounded-full ${t.inner} flex items-center justify-center`}>
+          <Icon className={`w-6 h-6 ${t.icon}`} strokeWidth={2.2} />
+        </div>
       </div>
-      <span className="text-sm font-semibold text-slate-800">{label}</span>
-      <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${t.link} opacity-90 group-hover:opacity-100`}>
+      <span className="text-base font-semibold text-slate-900 mt-1">{label}</span>
+      <span className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${t.link} transition-colors`}>
         {linkLabel}
-        <ChevronRight className="w-3 h-3 transition-transform group-hover:translate-x-0.5" />
+        <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
       </span>
     </button>
   );
