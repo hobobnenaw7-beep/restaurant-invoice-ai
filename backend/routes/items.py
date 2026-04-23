@@ -353,32 +353,63 @@ async def delete_alias(aid: str, user=Depends(get_user)):
 
 @router.get("/items/{item_id}/price-history")
 async def item_price_history(item_id: str, user=Depends(get_user)):
-    """Get price history for a canonical item by scanning all purchases matching its name + aliases."""
+    """Price history for a canonical item.
+
+    Milestone 20 — identity-based join: any purchase-line whose
+    `canonical_item_id` points at this item (directly or via one merge
+    hop) contributes. Falls back to name + alias matching for legacy
+    rows that have not yet been linked.
+    """
+    from services.identity_resolver import build_canonical_index, GROUP_PREFIX_CANON
     rid = user["restaurant_id"]
     item = await db.canonical_items.find_one({"id": item_id, "restaurant_id": rid}, {"_id": 0})
     if not item:
         raise HTTPException(404, "Item not found")
 
-    names = {item["name"].lower()}
-    aliases = await db.item_aliases.find({"canonical_item_id": item_id, "restaurant_id": rid}, {"_id": 0}).to_list(200)
-    for a in aliases:
-        names.add(a["alias_name"].lower())
+    idx = await build_canonical_index(rid)
+    # Target group_key(s) for this canonical (variant lines roll up by
+    # prefix match on `canon::<id>`).
+    target_prefix = f"{GROUP_PREFIX_CANON}{item_id}"
 
-    purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0, "supplier_name": 1, "invoice_date": 1, "items": 1}).to_list(10000)
+    # Back-compat name/alias fallback set — covers legacy rows without
+    # canonical_item_id that resolve via the canonical index anyway.
+    names_fallback = {item["name"].lower()}
+    aliases = await db.item_aliases.find(
+        {"canonical_item_id": item_id, "restaurant_id": rid, "is_archived": {"$ne": True}},
+        {"_id": 0},
+    ).to_list(200)
+    for a in aliases:
+        nm = a.get("alias_name") or a.get("alias") or ""
+        if nm:
+            names_fallback.add(nm.lower())
+
+    purchases = await db.purchases.find(
+        {"restaurant_id": rid},
+        {"_id": 0, "supplier_name": 1, "invoice_date": 1, "items": 1},
+    ).to_list(10000)
 
     records = []
     for p in purchases:
         vendor = p.get("supplier_name", "Unknown")
         date = p.get("invoice_date", "")
         for it in p.get("items", []):
-            raw = it.get("raw_name", "").lower()
-            if raw in names:
-                records.append({
-                    "vendor": vendor, "date": date,
-                    "unit_price": round(float(it.get("unit_price", 0)), 2),
-                    "quantity": float(it.get("quantity", 0)),
-                    "unit": it.get("unit", ""), "raw_name": it.get("raw_name", ""),
-                })
+            gkey, _, _ = idx.resolve(it)
+            matched = False
+            if gkey == target_prefix or gkey.startswith(target_prefix + "::"):
+                matched = True
+            else:
+                # Last-chance backwards compat for rows not covered by idx
+                raw = (it.get("raw_name") or "").lower()
+                if raw and raw in names_fallback:
+                    matched = True
+            if not matched:
+                continue
+            records.append({
+                "vendor": vendor, "date": date,
+                "unit_price": round(float(it.get("unit_price", 0) or 0), 2),
+                "quantity": float(it.get("quantity", 0) or 0),
+                "unit": it.get("unit", ""), "raw_name": it.get("raw_name", ""),
+            })
 
     records.sort(key=lambda x: x["date"])
 

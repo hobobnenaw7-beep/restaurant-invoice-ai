@@ -195,9 +195,12 @@ async def create_purchase(data: PurchaseCreate, user=Depends(get_user)):
         group_key = c["name"].lower()
         name_to_group[group_key] = group_key
     for a in alias_list:
+        alias_text = a.get("alias_name") or a.get("alias") or ""
+        if not alias_text:
+            continue
         for c in canon_items:
-            if c["id"] == a["canonical_item_id"]:
-                name_to_group[a["alias_name"].lower()] = c["name"].lower()
+            if c["id"] == a.get("canonical_item_id"):
+                name_to_group[alias_text.lower()] = c["name"].lower()
                 break
 
     for item in doc.get("items", []):
