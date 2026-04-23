@@ -3,6 +3,41 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 18: Dashboard Minimalization — COMPLETE (2026-02-14)
+
+### Goal
+Turn the dashboard into a quick control center — no heavy data sections,
+just primary actions + navigation + headline charts.
+
+### Kept
+- Top actions: **Add Expense**, **Sales**
+- New secondary nav (nav-only, no preview): **Items**, **Orders**, **Procurement**
+- Period filter (Year / Month) + Data Freshness indicator
+- **Spending** donut chart (with category drill-through)
+- **Sales** donut chart (with drill-down sheet)
+- Drill-down Sheet (raw materials / salaries / other / sales)
+- Empty-state banner with Seed Demo Data button
+
+### Removed (clutter)
+- "Compare Vendors" quick action
+- "View Reports" quick action
+- `ItemSearch` card ("Where Should I Buy?")
+- `MarketInsights` card
+- `BestOpportunityCard`
+- `SmartMarketInsights` section
+
+### Files
+- `/app/frontend/src/pages/DashboardPage.js` — trimmed from 1043 → 624 lines.
+  New `TopActions` (2 CTAs) and `SecondaryNav` (3 outline nav buttons)
+  components with `data-testid` coverage (`quick-action-{i}`,
+  `secondary-nav-{i}`, `data-nav-label`).
+
+### Verified
+- Smoke test: top_action_count=2, secondary_nav_count=3 (Items/Orders/Procurement),
+  Spending + Sales cards render, removed sections confirmed absent.
+- ESLint clean.
+
+
 ## Milestone 17: Traceability Loop Closure (Correction → Canonical) — COMPLETE (2026-02-14)
 
 ### Goal

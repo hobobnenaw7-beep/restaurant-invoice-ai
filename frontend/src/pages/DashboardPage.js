@@ -11,14 +11,14 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { dataEvents } from '@/lib/dataEvents';
 import {
-  TrendingUp, TrendingDown, ArrowRightLeft,
-  Loader2, BarChart3, Search, Package, Store, Tag,
-  PieChart as PieChartIcon, Lightbulb, X,
+  TrendingUp, TrendingDown,
+  Loader2, BarChart3, Package, Store, Tag,
+  PieChart as PieChartIcon,
   ChevronRight, Users, Receipt, ExternalLink,
-  Plus, DollarSign, GitCompare, FileBarChart, Clock, Zap, ArrowRight, ShieldAlert, Calendar
+  Plus, DollarSign, Clock, Calendar,
+  ShoppingCart, ClipboardList, Boxes,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
-import SmartMarketInsights from '@/components/profit/SmartMarketInsights';
 
 /* ─── helpers ─── */
 function fmt(n) {
@@ -37,8 +37,6 @@ function pctChange(curr, prev) {
 
 const DONUT_COLORS = ['#0d9488', '#6366f1', '#64748b'];
 const DONUT_BG = ['bg-teal-500', 'bg-indigo-500', 'bg-slate-500'];
-const CAT_KEYS = ['raw_materials', 'salaries', 'other'];
-const CAT_LABELS = ['Raw Materials', 'Salaries', 'Other'];
 
 /* ═══════════════════ DONUT CHART ═══════════════════ */
 const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, prevSalaries, prevOther, onCategoryClick, periodLabel, prevLabel }) {
@@ -328,7 +326,6 @@ function DrillDownSheet({ open, onClose, category, api }) {
         </SheetHeader>
 
         <div className="px-6 py-5">
-          {/* Date Filters */}
           <div className="flex items-center gap-2 mb-4 pb-4 border-b border-slate-100" data-testid="drill-down-dates">
             <Calendar className="w-4 h-4 text-slate-400 flex-shrink-0" />
             <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 text-xs flex-1" data-testid="drill-down-date-from" />
@@ -556,210 +553,62 @@ function SalesDrillDown({ records, total }) {
   );
 }
 
-/* ═══════════════════ MARKET INSIGHTS ═══════════════════ */
-const MarketInsights = memo(function MarketInsights({ alerts }) {
-  if (!alerts.length) return (
-    <Card className="border border-slate-100 shadow-sm" data-testid="market-insights-card">
-      <CardContent className="py-10 text-center">
-        <Lightbulb className="w-8 h-8 text-slate-300 mx-auto mb-3" />
-        <p className="text-sm text-slate-400">No market insights yet. Add more purchase data to see recommendations.</p>
-      </CardContent>
-    </Card>
-  );
-
-  return (
-    <Card className="border border-slate-100 shadow-sm" data-testid="market-insights-card">
-      <CardHeader className="pb-2 pt-5 px-6">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center">
-            <Lightbulb className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <CardTitle className="font-heading text-sm font-bold text-navy-900">Market Insights</CardTitle>
-            <p className="text-[10px] text-slate-400">Actionable tips from your purchase data</p>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="px-6 pb-5">
-        <div className="space-y-2" data-testid="insights-list">
-          {alerts.map((a, i) => <InsightRow key={i} alert={a} index={i} />)}
-        </div>
-      </CardContent>
-    </Card>
-  );
-});
-
-function InsightRow({ alert, index }) {
-  const isPrice = alert.type === 'price_increase';
-  const isCheaper = alert.type === 'cheaper_vendor';
-
-  if (isPrice) {
-    return (
-      <div className="flex items-start gap-3 p-3 rounded-lg border border-red-100 bg-red-50/40" data-testid={`insight-${index}`}>
-        <TrendingUp className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
-        <div className="min-w-0">
-          <p className="text-xs text-slate-700"><span className="font-bold text-navy-900">{alert.item_name}</span> price up <span className="font-bold text-red-600">+{alert.change_pct}%</span></p>
-          <p className="text-[11px] text-slate-400 mt-0.5">{fmtPrice(alert.old_price)} &rarr; {fmtPrice(alert.new_price)} at {alert.vendor}</p>
-        </div>
-      </div>
-    );
-  }
-  if (isCheaper) {
-    return (
-      <div className="flex items-start gap-3 p-3 rounded-lg border border-teal-100 bg-teal-50/40" data-testid={`insight-${index}`}>
-        <ArrowRightLeft className="w-4 h-4 text-teal-600 mt-0.5 flex-shrink-0" />
-        <div className="min-w-0">
-          <p className="text-xs text-slate-700">Save <span className="font-bold text-teal-600">{alert.savings_pct}%</span> on <span className="font-bold text-navy-900">{alert.item_name}</span></p>
-          <p className="text-[11px] text-slate-400 mt-0.5">Switch from {alert.vendor} ({fmtPrice(alert.current_price)}) to <span className="font-semibold text-teal-700">{alert.cheaper_vendor}</span> ({fmtPrice(alert.cheaper_price)})</p>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-100 bg-amber-50/40" data-testid={`insight-${index}`}>
-      <Package className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-      <div className="min-w-0">
-        <p className="text-xs text-slate-700"><span className="font-bold text-navy-900">{alert.item_name}</span> not ordered in <span className="font-bold text-amber-700">{alert.days_since} days</span></p>
-        {alert.vendor && <p className="text-[11px] text-slate-400 mt-0.5">Last from {alert.vendor}{alert.last_price > 0 ? ` at ${fmtPrice(alert.last_price)}` : ''}</p>}
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════ ITEM SEARCH ═══════════════════ */
-function ItemSearch({ api }) {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState(null);
-  const [searching, setSearching] = useState(false);
-  const debounceRef = useRef(null);
-
-  const search = useCallback(async (q) => {
-    if (!q || q.trim().length < 2) { setResults(null); return; }
-    setSearching(true);
-    try {
-      const res = await api.get('/dashboard/item-search', { params: { q: q.trim() } });
-      setResults(res.data.results);
-    } catch { toast.error('Search failed'); }
-    finally { setSearching(false); }
-  }, [api]);
-
-  const handleChange = useCallback((e) => {
-    const val = e.target.value;
-    setQuery(val);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => search(val), 350);
-  }, [search]);
-
-  const clear = useCallback(() => {
-    setQuery(''); setResults(null);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-  }, []);
-
-  return (
-    <Card className="border border-slate-100 shadow-sm" data-testid="item-search-card">
-      <CardHeader className="pb-2 pt-5 px-6">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center">
-            <Search className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <CardTitle className="font-heading text-sm font-bold text-navy-900">Where Should I Buy?</CardTitle>
-            <p className="text-[10px] text-slate-400">Search any item to compare vendors and prices</p>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="px-6 pb-5">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <Input value={query} onChange={handleChange} placeholder="Search item... e.g. Salmon, Olive Oil" className="pl-9 pr-9 h-10 text-sm border-slate-200 focus:border-teal-500 focus:ring-teal-500/20" data-testid="item-search-input" />
-          {query && <button onClick={clear} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" data-testid="item-search-clear"><X className="w-4 h-4" /></button>}
-        </div>
-        {searching && <div className="flex items-center justify-center py-8" data-testid="item-search-loading"><Loader2 className="w-5 h-5 animate-spin text-teal-600" /></div>}
-        {!searching && results !== null && results.length === 0 && query.length >= 2 && (
-          <div className="text-center py-8" data-testid="item-search-empty"><Package className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-400">No items found for "{query}"</p></div>
-        )}
-        {!searching && results && results.length > 0 && (
-          <div className="mt-4 space-y-4" data-testid="item-search-results">
-            {results.map((item, idx) => (
-              <div key={idx} className="border border-slate-100 rounded-lg overflow-hidden" data-testid={`search-result-${idx}`}>
-                <div className="flex items-center justify-between px-4 py-3 bg-slate-50/60">
-                  <div className="flex items-center gap-2"><Tag className="w-3.5 h-3.5 text-teal-600" /><span className="text-sm font-bold text-navy-900">{item.item_name}</span></div>
-                  <span className="text-[10px] text-slate-400 font-semibold">{item.vendor_count} vendor{item.vendor_count !== 1 ? 's' : ''}</span>
-                </div>
-                <div className="divide-y divide-slate-100">
-                  {item.vendors.map((v, vi) => {
-                    const isCheapest = v.vendor === item.cheapest_vendor;
-                    return (
-                      <div key={vi} className={`flex items-center justify-between px-4 py-2.5 ${isCheapest ? 'bg-teal-50/40' : ''}`} data-testid={`vendor-row-${idx}-${vi}`}>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Store className={`w-3.5 h-3.5 flex-shrink-0 ${isCheapest ? 'text-teal-600' : 'text-slate-400'}`} />
-                          <span className={`text-xs truncate ${isCheapest ? 'font-bold text-teal-700' : 'text-slate-600'}`}>{v.vendor}</span>
-                          {isCheapest && <Badge className="bg-teal-600 text-white text-[8px] h-4 px-1.5 font-bold">BEST</Badge>}
-                        </div>
-                        <div className="flex items-center gap-3 flex-shrink-0">
-                          <div className="text-right">
-                            <span className={`text-xs font-bold tabular-nums ${isCheapest ? 'text-teal-700' : 'text-navy-900'}`}>{fmtPrice(v.latest_price)}</span>
-                            {v.unit && <span className="text-[10px] text-slate-400">/{v.unit}</span>}
-                          </div>
-                          <span className="text-[10px] text-slate-400 tabular-nums w-8 text-right">{v.purchase_count}x</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 /* ─── Loading / Empty ─── */
 function LoadingSkeleton() {
   return (
     <div className="space-y-6" data-testid="dashboard-loading">
       <div><Skeleton className="h-8 w-48 mb-2" /><Skeleton className="h-4 w-72" /></div>
-      <Skeleton className="h-64 rounded-xl" />
+      <Skeleton className="h-10 w-64 rounded-xl" />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6"><Skeleton className="h-48 rounded-xl" /><Skeleton className="h-48 rounded-xl" /></div>
     </div>
   );
 }
 
-function EmptyDashboard({ onSeed, seeding }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-24 text-center" data-testid="empty-dashboard">
-      <div className="w-20 h-20 rounded-2xl bg-slate-100 flex items-center justify-center mb-6"><BarChart3 className="w-10 h-10 text-slate-300" /></div>
-      <h2 className="font-heading text-xl font-bold text-navy-900 mb-2">No financial data yet</h2>
-      <p className="text-sm text-slate-500 max-w-sm mb-8">Upload your first invoice or load demo data to see your dashboard come to life.</p>
-      <Button onClick={onSeed} disabled={seeding} className="bg-teal-600 hover:bg-teal-700 text-white h-11 px-6 text-sm font-semibold" data-testid="seed-data-btn">
-        {seeding ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null} Load Demo Data
-      </Button>
-    </div>
-  );
-}
-
-/* ═══════════════════ QUICK ACTIONS ═══════════════════ */
-const QUICK_ACTIONS = [
+/* ═══════════════════ TOP ACTIONS (Add Expense, Sales) ═══════════════════ */
+const TOP_ACTIONS = [
   { label: 'Add Expense', icon: Plus, path: '/expenses', color: 'bg-teal-600', hoverColor: 'hover:bg-teal-700' },
   { label: 'Sales', icon: DollarSign, path: '/sales', color: 'bg-indigo-600', hoverColor: 'hover:bg-indigo-700' },
-  { label: 'Compare Vendors', icon: GitCompare, path: '/purchase-decisions', color: 'bg-amber-600', hoverColor: 'hover:bg-amber-700' },
-  { label: 'View Reports', icon: FileBarChart, path: '/reports', color: 'bg-slate-700', hoverColor: 'hover:bg-slate-800' },
 ];
 
-function QuickActions({ navigate }) {
+function TopActions({ navigate }) {
   return (
-    <div className="flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide" data-testid="quick-actions">
-      {QUICK_ACTIONS.map((action, i) => (
+    <div className="flex gap-2.5 flex-wrap" data-testid="quick-actions">
+      {TOP_ACTIONS.map((action, i) => (
         <button
           key={i}
-          onClick={() => navigate(action.path, action.state ? { state: action.state } : undefined)}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl ${action.color} ${action.hoverColor} text-white text-xs font-semibold whitespace-nowrap transition-all hover:shadow-md active:scale-[0.97] flex-shrink-0`}
+          onClick={() => navigate(action.path)}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl ${action.color} ${action.hoverColor} text-white text-xs font-semibold whitespace-nowrap transition-all hover:shadow-md active:scale-[0.97]`}
           data-testid={`quick-action-${i}`}
         >
           <action.icon className="w-3.5 h-3.5" />
           {action.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ═══════════════════ SECONDARY NAV (Items, Orders, Procurement) ═══════════════════ */
+const SECONDARY_NAV = [
+  { label: 'Items', icon: Boxes, path: '/items' },
+  { label: 'Orders', icon: ShoppingCart, path: '/orders' },
+  { label: 'Procurement', icon: ClipboardList, path: '/procurement' },
+];
+
+function SecondaryNav({ navigate }) {
+  return (
+    <div className="flex gap-2 flex-wrap" data-testid="secondary-nav">
+      {SECONDARY_NAV.map((item, i) => (
+        <button
+          key={item.path}
+          onClick={() => navigate(item.path)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold whitespace-nowrap transition-all hover:border-teal-400 hover:text-teal-700 hover:shadow-sm active:scale-[0.97]"
+          data-testid={`secondary-nav-${i}`}
+          data-nav-label={item.label.toLowerCase()}
+        >
+          <item.icon className="w-3.5 h-3.5" />
+          {item.label}
+          <ChevronRight className="w-3 h-3 text-slate-300" />
         </button>
       ))}
     </div>
@@ -798,80 +647,7 @@ function DataFreshness({ lastUpdate, purchaseCount }) {
   );
 }
 
-/* ═══════════════════ BEST OPPORTUNITY ═══════════════════ */
-function BestOpportunityCard({ opportunities, navigate }) {
-  if (!opportunities || !opportunities.length) return null;
-
-  return (
-    <Card className="border-2 border-dashed border-teal-200 bg-gradient-to-r from-teal-50/40 to-white shadow-sm" data-testid="best-opportunity-card">
-      <CardContent className="py-4 px-5">
-        <div className="flex items-center gap-2 mb-3">
-          <Zap className="w-4 h-4 text-amber-500" />
-          <span className="text-xs font-bold text-navy-900 uppercase tracking-wide">Today's Best Opportunities</span>
-        </div>
-        <div className="space-y-2.5">
-          {opportunities.map((opp, i) => (
-            <OpportunityRow key={i} opp={opp} index={i} navigate={navigate} />
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function OpportunityRow({ opp, index, navigate }) {
-  if (opp.type === 'saving') {
-    return (
-      <button
-        onClick={() => navigate('/purchase-decisions')}
-        className="w-full flex items-center justify-between p-3 rounded-xl bg-teal-50 border border-teal-100 hover:border-teal-300 hover:shadow-sm transition-all group text-left"
-        data-testid={`opportunity-${index}`}
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center flex-shrink-0">
-            <ArrowRightLeft className="w-4 h-4 text-white" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm text-slate-700">
-              Buy <span className="font-bold text-navy-900">{opp.item_name}</span> from <span className="font-bold text-teal-700">{opp.vendor}</span>
-            </p>
-            <p className="text-xs text-teal-600 font-semibold mt-0.5">
-              Save {opp.savings_pct}% · {fmtPrice(opp.cheaper_price)} vs {fmtPrice(opp.current_price)}
-            </p>
-          </div>
-        </div>
-        <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-teal-600 transition-colors flex-shrink-0" />
-      </button>
-    );
-  }
-
-  // risk / price_increase
-  return (
-    <button
-      onClick={() => navigate('/expenses')}
-      className="w-full flex items-center justify-between p-3 rounded-xl bg-red-50 border border-red-100 hover:border-red-300 hover:shadow-sm transition-all group text-left"
-      data-testid={`opportunity-${index}`}
-    >
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="w-8 h-8 rounded-lg bg-red-500 flex items-center justify-center flex-shrink-0">
-          <ShieldAlert className="w-4 h-4 text-white" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-sm text-slate-700">
-            <span className="font-bold text-navy-900">{opp.item_name}</span> price increased at <span className="font-bold text-red-600">{opp.vendor}</span>
-          </p>
-          <p className="text-xs text-red-600 font-semibold mt-0.5">
-            +{opp.change_pct}% · {fmtPrice(opp.old_price)} → {fmtPrice(opp.new_price)}
-          </p>
-        </div>
-      </div>
-      <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-red-500 transition-colors flex-shrink-0" />
-    </button>
-  );
-}
-
 /* ═══════════════════ MAIN PAGE ═══════════════════ */
-const EMPTY_ALERTS = [];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const YEAR_OPTIONS = (() => { const cur = new Date().getFullYear(); const years = []; for (let y = 2020; y <= cur + 1; y++) years.push(y); return years; })();
 
@@ -908,12 +684,9 @@ export default function DashboardPage() {
 
   useEffect(() => { load(filterYear, filterMonth); }, [load, filterYear, filterMonth]);
 
-  // Re-fetch dashboard when any page mutates data (create/update/delete)
   useEffect(() => {
     return dataEvents.subscribe(() => load(filterYear, filterMonth));
   }, [load, filterYear, filterMonth]);
-  const smartAlerts = useMemo(() => data?.smart_alerts || EMPTY_ALERTS, [data]);
-  const bestOpps = useMemo(() => data?.best_opportunities || EMPTY_ALERTS, [data]);
 
   const periodLabel = useMemo(() => {
     if (filterMonth > 0) return `${MONTH_NAMES[filterMonth - 1]} ${filterYear}`;
@@ -952,30 +725,16 @@ export default function DashboardPage() {
     <div className="space-y-5 max-w-[1100px]" data-testid="dashboard-page">
       <div>
         <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-navy-900 tracking-tight">Dashboard</h1>
-        <p className="text-sm text-slate-400 mt-1">Where am I spending? Where should I buy?</p>
+        <p className="text-sm text-slate-400 mt-1">Quick actions and high-level insights.</p>
       </div>
 
-      <ItemSearch api={api} />
+      {/* Top actions */}
+      <TopActions navigate={navigate} />
 
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <QuickActions navigate={navigate} />
-        {hasData && <DataFreshness lastUpdate={data.last_data_update} purchaseCount={data.purchase_count} />}
-      </div>
+      {/* Secondary nav — navigation only, no data preview */}
+      <SecondaryNav navigate={navigate} />
 
-      {!hasData && (
-        <Card className="border-2 border-dashed border-slate-200 shadow-sm" data-testid="empty-data-banner">
-          <CardContent className="py-8 text-center">
-            <BarChart3 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <h2 className="font-heading text-base font-bold text-navy-900 mb-1">No financial data yet</h2>
-            <p className="text-xs text-slate-400 mb-4 max-w-sm mx-auto">Upload your first invoice or add an expense to see your charts come to life.</p>
-            <Button onClick={seedData} disabled={seeding} variant="outline" size="sm" className="text-xs" data-testid="seed-data-btn">
-              {seeding ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null} Load Demo Data
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Year / Month Filters */}
+      {/* Period filter + freshness */}
       <div className="flex items-center gap-3 flex-wrap" data-testid="dashboard-period-filters">
         <div className="flex items-center gap-1.5">
           <Calendar className="w-4 h-4 text-slate-400" />
@@ -1003,9 +762,24 @@ export default function DashboardPage() {
           </SelectContent>
         </Select>
         <span className="text-[11px] text-slate-400 hidden sm:inline">{periodLabel}</span>
+        {hasData && <DataFreshness lastUpdate={data.last_data_update} purchaseCount={data.purchase_count} />}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="dashboard-main-row">
+      {!hasData && (
+        <Card className="border-2 border-dashed border-slate-200 shadow-sm" data-testid="empty-data-banner">
+          <CardContent className="py-8 text-center">
+            <BarChart3 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <h2 className="font-heading text-base font-bold text-navy-900 mb-1">No financial data yet</h2>
+            <p className="text-xs text-slate-400 mb-4 max-w-sm mx-auto">Upload your first invoice or add an expense to see your charts come to life.</p>
+            <Button onClick={seedData} disabled={seeding} variant="outline" size="sm" className="text-xs" data-testid="seed-data-btn">
+              {seeding ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null} Load Demo Data
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Charts: Spending + Sales */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5" data-testid="dashboard-main-row">
         <DonutChart
           raw={data?.month_raw_materials || 0}
           salaries={data?.month_salaries || 0}
@@ -1024,12 +798,7 @@ export default function DashboardPage() {
           periodLabel={periodLabel}
           prevLabel={prevLabel}
         />
-        <MarketInsights alerts={smartAlerts} />
       </div>
-
-      <BestOpportunityCard opportunities={bestOpps} navigate={navigate} />
-
-      <SmartMarketInsights api={api} />
 
       <DrillDownSheet
         open={!!drillDown}
