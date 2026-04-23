@@ -3,6 +3,69 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 17: Traceability Loop Closure (Correction → Canonical) — COMPLETE (2026-02-14)
+
+### Goal
+Let users see exactly where each invoice-edit correction ended up in the
+item catalog today, and give a subtle advisory hint when a newly-suggested
+item is likely a duplicate of an existing approved one.
+
+### Backend — `correction_memory.py`
+- New helpers `_status_from_canonical()` and `_enrich_corrections_with_destination()`.
+- Every correction row now carries `canonical_destination`:
+  `{status, canonical_item_id, canonical_name, merged_from_name, merged_from_item_id}`.
+- Status is derived from the current `canonical_items` doc the alias points to:
+  - `approved` → live catalog entry
+  - `suggested` → pending review
+  - `merged` → sibling canonical with same `corrected_name` was merged into this id
+  - `dismissed` → suggested + archived
+  - `archived` → archived approved
+  - `unlinked` → no alias found for `original_raw_name`
+- Enrichment added to:
+  - `GET /api/correction-memory`
+  - `GET /api/corrections/by-vendor/{supplier_id}` (used by the UI)
+  - `PATCH /api/corrections/{id}` return value
+- Tenant-scoped throughout, `_id` excluded.
+
+### Frontend — `CorrectionMemoryPage.js`
+- New `DestinationCell` component (colored badge + clickable canonical link).
+- New `Destination` column in the corrections table.
+- Clicking a merged/approved/suggested destination navigates to
+  `/items?highlight=<canonical_item_id>`.
+
+### Frontend — `ItemsPage.js`
+- `?highlight=<id>` support: scroll row into view, apply `ring-2
+  ring-teal-500` ring, set `data-highlighted="true"`; ring fades after ~3.5s.
+- Smart Duplicate Hint (advisory only, threshold 0.70 token Jaccard):
+  - Runs on rendered `is_suggested` rows against a separately-fetched
+    pool of approved items (`approvedItems`).
+  - Renders `"Possible duplicate of "<Name>" (X% match)"` under the
+    row name with `data-testid="duplicate-hint-<item.id>"`.
+  - Click triggers **no** backend action — purely informational.
+
+### Guardrails honored (verified)
+- **Advisory only** — hint never calls /merge, /promote, or /dismiss
+- **Approved-only matching pool** (no suggested↔suggested suggestions)
+- **No OCR / procurement / correction-pipeline changes**
+- **Tenant-scoped** throughout, `_id` never leaked
+
+### Verified — iteration_96.json
+- 8/8 backend pytests PASS (`test_correction_destination_iter96.py`)
+- All 5 destination statuses observed against seeded data
+- Frontend Destination badges + merged link clickthrough to
+  `/items?highlight=<id>` renders the teal ring and scrolls into view
+- Duplicate hint `"Possible duplicate of "Beef" (100% match)"` verified
+  with zero side-effect API calls
+
+### Files touched
+- `/app/backend/routes/correction_memory.py` (enrichment helpers + route wiring)
+- `/app/frontend/src/pages/CorrectionMemoryPage.js` (Destination column,
+  DestinationCell, navigation)
+- `/app/frontend/src/pages/ItemsPage.js` (Jaccard helpers, approvedItems
+  state, duplicateHints memo, highlight effect, ring styling)
+- `/app/backend/tests/test_correction_destination_iter96.py` (new)
+
+
 ## Milestone 3: Universal Product Identity Layer — COMPLETE
 
 ### Three-Layer Architecture
