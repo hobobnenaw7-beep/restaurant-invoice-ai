@@ -12,6 +12,69 @@ from services.approval import compute_approval_status
 router = APIRouter()
 
 
+# ── Canonical-name enrichment (Milestone 19) ──────────────────────
+# Resolves `canonical_item_id` + `variant_key` on purchase items to
+# `display_name` / `canonical_name` / `variant_label` at READ time.
+# This gives us automatic Canonical→Invoice propagation: editing the
+# canonical item immediately changes how every linked invoice line
+# appears, without touching invoice rows.
+async def _enrich_purchases_with_canonical(rid: str, purchases: list) -> list:
+    if not purchases:
+        return purchases
+    cids: set[str] = set()
+    for p in purchases:
+        for it in (p.get("items") or []):
+            cid = it.get("canonical_item_id")
+            if cid:
+                cids.add(cid)
+    if not cids:
+        return purchases
+    canon_map: dict[str, dict] = {}
+    async for c in db.canonical_items.find(
+        {"id": {"$in": list(cids)}, "restaurant_id": rid},
+        {"_id": 0, "id": 1, "name": 1, "variants": 1, "is_archived": 1, "is_merged": 1,
+         "merged_into_item_id": 1},
+    ):
+        canon_map[c["id"]] = c
+    # Follow one merge hop so the display follows the catalog.
+    merge_targets: set[str] = set()
+    for c in canon_map.values():
+        if c.get("is_merged") and c.get("merged_into_item_id"):
+            merge_targets.add(c["merged_into_item_id"])
+    if merge_targets - set(canon_map):
+        async for c in db.canonical_items.find(
+            {"id": {"$in": list(merge_targets - set(canon_map))}, "restaurant_id": rid},
+            {"_id": 0, "id": 1, "name": 1, "variants": 1},
+        ):
+            canon_map[c["id"]] = c
+
+    for p in purchases:
+        for it in (p.get("items") or []):
+            cid = it.get("canonical_item_id")
+            if not cid:
+                continue
+            c = canon_map.get(cid)
+            if not c:
+                continue
+            # Follow merge → target.
+            if c.get("is_merged") and c.get("merged_into_item_id"):
+                tgt = canon_map.get(c["merged_into_item_id"])
+                if tgt:
+                    c = tgt
+            variant_label = None
+            vkey = it.get("variant_key")
+            if vkey:
+                for v in (c.get("variants") or []):
+                    if (v.get("key") or "").lower() == vkey.lower():
+                        variant_label = v.get("label") or vkey
+                        break
+            it["canonical_name"] = c.get("name")
+            it["variant_label"] = variant_label
+            base = c.get("name") or it.get("raw_name") or ""
+            it["display_name"] = f"{base} ({variant_label})" if variant_label else base
+    return purchases
+
+
 @router.get("/purchases")
 async def list_purchases(user=Depends(get_user), search: str = "", supplier: str = "", date_from: str = "", date_to: str = "", sort_by: str = "invoice_date", sort_order: str = "desc"):
     query = {"restaurant_id": user["restaurant_id"]}
@@ -32,8 +95,10 @@ async def list_purchases(user=Depends(get_user), search: str = "", supplier: str
             {"$sort": {"_sort_date": direction}},
             {"$project": {"_id": 0, "_sort_date": 0}},
         ]
-        return await db.purchases.aggregate(pipeline).to_list(1000)
-    return await db.purchases.find(query, {"_id": 0}).sort(sort_by, direction).to_list(1000)
+        rows = await db.purchases.aggregate(pipeline).to_list(1000)
+    else:
+        rows = await db.purchases.find(query, {"_id": 0}).sort(sort_by, direction).to_list(1000)
+    return await _enrich_purchases_with_canonical(user["restaurant_id"], rows)
 
 
 @router.get("/purchases/{pid}")
@@ -41,7 +106,8 @@ async def get_purchase(pid: str, user=Depends(get_user)):
     p = await db.purchases.find_one({"id": pid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
     if not p:
         raise HTTPException(404, "Not found")
-    return p
+    enriched = await _enrich_purchases_with_canonical(user["restaurant_id"], [p])
+    return enriched[0] if enriched else p
 
 
 @router.post("/purchases")

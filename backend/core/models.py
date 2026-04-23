@@ -60,11 +60,18 @@ class SupplierCreate(BaseModel):
     address: Optional[str] = ""
 
 
+class CanonicalItemVariant(BaseModel):
+    key: str
+    label: Optional[str] = ""
+
+
 class CanonicalItemCreate(BaseModel):
     name: str
     category: Optional[str] = ""
     storage_category: Optional[str] = ""  # dry, chilled, frozen
     category_source: Optional[str] = "auto"  # auto, manual
+    unit: Optional[str] = ""
+    variants: Optional[List[CanonicalItemVariant]] = None
 
 
 class ItemAliasCreate(BaseModel):

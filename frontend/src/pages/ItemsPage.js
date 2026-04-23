@@ -461,8 +461,8 @@ export default function ItemsPage() {
       .slice(0, 60);
   }, [mergeTargets, mergeQuery]);
 
-  const openNew = () => { setEditing(null); setForm({ name: '', category: '', storage_category: '', category_source: 'auto' }); setDialogOpen(true); };
-  const openEdit = (item) => { setEditing(item); setForm({ name: item.name, category: item.category || '', storage_category: item.storage_category || '', category_source: item.category_source || 'auto' }); setDialogOpen(true); };
+  const openNew = () => { setEditing(null); setForm({ name: '', category: '', storage_category: '', category_source: 'auto', variants: [] }); setDialogOpen(true); };
+  const openEdit = (item) => { setEditing(item); setForm({ name: item.name, category: item.category || '', storage_category: item.storage_category || '', category_source: item.category_source || 'auto', variants: Array.isArray(item.variants) ? item.variants.map(v => ({ key: v.key || '', label: v.label || '' })) : [] }); setDialogOpen(true); };
 
   const updateStorageCategory = async (itemId, newCat) => {
     setCategoryUpdating(itemId);
@@ -478,8 +478,13 @@ export default function ItemsPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      if (editing) await api.put(`/items/${editing.id}`, form);
-      else await api.post('/items', form);
+      // Clean up variants: drop empty rows, lowercase keys, default label→key.
+      const variants = (form.variants || [])
+        .map(v => ({ key: (v.key || '').trim().toLowerCase(), label: (v.label || '').trim() || (v.key || '').trim() }))
+        .filter(v => v.key);
+      const payload = { ...form, variants };
+      if (editing) await api.put(`/items/${editing.id}`, payload);
+      else await api.post('/items', payload);
       toast.success(editing ? 'Updated' : 'Created');
       setDialogOpen(false); load();
     } catch { toast.error('Save failed'); }
@@ -598,6 +603,19 @@ export default function ItemsPage() {
                               <Badge className="bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold uppercase h-4 px-1.5 gap-1" data-testid={`badge-suggested-${item.id}`}>
                                 <Sparkles className="w-2.5 h-2.5" /> Suggested
                               </Badge>
+                            )}
+                            {Array.isArray(item.variants) && item.variants.length > 0 && (
+                              <div className="flex flex-wrap gap-1" data-testid={`variants-chips-${item.id}`}>
+                                {item.variants.map(v => (
+                                  <Badge
+                                    key={v.key}
+                                    className="bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px] h-4 px-1.5 font-medium"
+                                    data-testid={`variant-chip-${item.id}-${v.key}`}
+                                  >
+                                    {v.label || v.key}
+                                  </Badge>
+                                ))}
+                              </div>
                             )}
                           </div>
                           {item.is_suggested && (
@@ -735,6 +753,53 @@ export default function ItemsPage() {
                   <SelectItem value="uncategorized"><span className="flex items-center gap-2"><Package className="w-3.5 h-3.5 text-slate-400" />Uncategorized</span></SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <Label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Variants <span className="text-slate-300 font-normal normal-case">(optional — e.g. male/female, small/large)</span></Label>
+              <div className="mt-1.5 space-y-2" data-testid="variants-editor">
+                {(form.variants || []).map((v, vi) => (
+                  <div key={vi} className="flex gap-2 items-center" data-testid={`variant-row-${vi}`}>
+                    <Input
+                      className="h-8 text-xs flex-1"
+                      placeholder="key (e.g. male)"
+                      value={v.key}
+                      onChange={(e) => {
+                        const next = [...(form.variants || [])];
+                        next[vi] = { ...next[vi], key: e.target.value.trim().toLowerCase() };
+                        setForm({ ...form, variants: next });
+                      }}
+                      data-testid={`variant-key-${vi}`}
+                    />
+                    <Input
+                      className="h-8 text-xs flex-1"
+                      placeholder="label (e.g. Male)"
+                      value={v.label}
+                      onChange={(e) => {
+                        const next = [...(form.variants || [])];
+                        next[vi] = { ...next[vi], label: e.target.value };
+                        setForm({ ...form, variants: next });
+                      }}
+                      data-testid={`variant-label-${vi}`}
+                    />
+                    <Button
+                      type="button" variant="ghost" size="sm"
+                      className="h-8 w-8 p-0 text-slate-400 hover:text-red-500"
+                      onClick={() => setForm({ ...form, variants: (form.variants || []).filter((_, i) => i !== vi) })}
+                      data-testid={`variant-remove-${vi}`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  type="button" variant="outline" size="sm"
+                  className="h-7 text-[11px] gap-1"
+                  onClick={() => setForm({ ...form, variants: [...(form.variants || []), { key: '', label: '' }] })}
+                  data-testid="variant-add"
+                >
+                  <Plus className="w-3 h-3" /> Add variant
+                </Button>
+              </div>
             </div>
           </div>
           <DialogFooter>
