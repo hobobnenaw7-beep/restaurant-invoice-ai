@@ -3,6 +3,86 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 19: Robust Identity, Canonical Linking & Smart Input — COMPLETE (2026-02-14)
+
+### Goal
+Unify item identity across the system: eliminate duplicates from OCR/spacing
+noise, enforce a single source of truth (approved canonical items),
+guide user input via system-approved suggestions, and prevent unsafe
+automation — all while keeping handwritten OCR variability tolerable.
+
+### Backend
+- **`services/item_identity.py`** (new): `normalize_name`, `tokenize`,
+  `jaccard`, `fuzzy_ratio`, `split_base_and_variant`. Pure functions.
+- **`services/item_matcher.py`** (new): 6-tier matcher
+  `exact → alias → normalized → token/fuzzy → memory`. Returns
+  `MatchResult{canonical_item_id, variant_key, confidence, tier,
+  token_score, fuzzy_score, candidates, needs_review, auto_linked}`.
+  Stricter thresholds: `TOKEN_AUTO=0.85`, `FUZZY_AUTO=0.90`,
+  `MARGIN=0.10`, `MEDIUM_FLOOR=0.70`. Suggested / archived canonicals
+  are NEVER candidates.
+- **`routes/item_autocomplete.py`** (new): `GET /api/items/autocomplete`
+  returns approved canonicals + declared variants + saved aliases only.
+- **`routes/invoice_items.py`** (new): explicit, user-controlled actions
+  per invoice line — `POST /link`, `POST /promote`, `POST /match`,
+  `GET /match-preview`. Auto-link only when matcher returns
+  `auto_linked=True`.
+- **`routes/purchases.py`**: new `_enrich_purchases_with_canonical`
+  resolves `canonical_item_id` + `variant_key` at READ time, surfacing
+  `canonical_name / variant_label / display_name`. Follows one merge
+  hop. This delivers **automatic Canonical→Invoice propagation** with
+  zero writes to purchase rows on canonical rename.
+- **`core/models.py`**: `CanonicalItemVariant` + `variants` list on
+  `CanonicalItemCreate`.
+
+### Frontend
+- **`components/SmartItemAutocomplete.js`** (new): reusable combobox.
+  Queries `/api/items/autocomplete` on debounced input; arrow keys +
+  enter + click. Source labelled (canonical / variant / alias).
+  Advisory only — picks only fill the input + memoize identity; nothing
+  mutates server-side until Save.
+- **`components/InvoiceReviewDialog.js`**: `raw_name` input replaced by
+  SmartItemAutocomplete. On save, PATCH first then — only if the user
+  picked a suggestion — POST `/link` with canonical_item_id + variant_key.
+  Row now shows `display_name` + `linked` + variant badges.
+- **`pages/ItemsPage.js`**: Add/Edit dialog gains a Variants editor
+  (`variants-editor`, `variant-add`, `variant-key-{i}`,
+  `variant-label-{i}`, `variant-remove-{i}`). Variant chips render on
+  item rows (`variants-chips-{id}`, `variant-chip-{id}-{key}`).
+
+### Tests (all PASS — iteration_97.json)
+- `tests/test_item_matcher.py` — 21 unit tests: normalization,
+  jaccard/fuzzy, variant extraction, 6-tier matcher, auto-link
+  guardrails (suggested/archived exclusion, variant-required-medium,
+  competing candidates, OCR noise).
+- `tests/test_identity_integration_iter97.py` — 5 live HTTP tests:
+  autocomplete scope, explicit link, Canonical→Invoice propagation,
+  match-preview non-mutating, variant-declared-without-raw-variant
+  guardrail.
+
+### Guardrails honored (verified end-to-end)
+- **No auto-merge**, **no auto-create**: autocomplete never writes.
+- **Invoice-text edits NEVER mutate canonical items** — PATCH item
+  only writes purchase doc; `/link` is explicit and user-invoked.
+- **Canonical edits DO propagate** automatically via read-time join
+  (raw_name preserved untouched).
+- **Stricter auto-link**: token≥0.85 AND fuzzy≥0.90 AND margin≥0.10 AND
+  variant consistency. OCR-noisy inputs (e.g. "liv blue carb") resolve
+  to MEDIUM (needs_review), not HIGH.
+- **Approved-only suggestions**: autocomplete excludes suggested /
+  archived / raw invoice text.
+
+### Files
+- Backend: `services/item_identity.py` (new), `services/item_matcher.py` (new),
+  `routes/item_autocomplete.py` (new), `routes/invoice_items.py` (new),
+  `routes/purchases.py` (enrich helper), `core/models.py` (variants),
+  `server.py` (registration).
+- Frontend: `components/SmartItemAutocomplete.js` (new),
+  `components/InvoiceReviewDialog.js` (autocomplete + identity save flow),
+  `pages/ItemsPage.js` (variants editor + chips).
+- Tests: `tests/test_item_matcher.py`, `tests/test_identity_integration_iter97.py`.
+
+
 ## Milestone 18: Dashboard Minimalization — COMPLETE (2026-02-14)
 
 ### Goal
