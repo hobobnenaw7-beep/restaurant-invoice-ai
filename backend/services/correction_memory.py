@@ -111,6 +111,11 @@ async def save_correction(
     # Legacy compat: accept supplier_id for backward compatibility
     supplier_id: str = "",
     normalized_key: str = "",
+    # Correction Pipeline v3 metadata (non-breaking additions)
+    source: str = "user_edit",
+    variant: str = "",
+    unit: str = "",
+    category: str = "",
 ):
     """
     Save a correction when user explicitly saves an item edit.
@@ -135,6 +140,12 @@ async def save_correction(
 
     now = datetime.now(timezone.utc).isoformat()
 
+    # Correction Pipeline v3 — canonicalize new metadata for storage
+    src = (source or "user_edit").strip() or "user_edit"
+    var = (variant or "").strip()
+    un  = (unit or "").strip()
+    cat = (category or "").strip()
+
     # Check for existing correction with same key
     existing = await db.correction_memory.find_one({
         "restaurant_id": restaurant_id,
@@ -151,6 +162,10 @@ async def save_correction(
             "canonical_vendor": _normalize_vendor(canonical_vendor),
             "product_code": _clean_product_code(product_code),
             "pack_size": pack_size.strip() if pack_size else "",
+            "source": src,
+            "variant": var,
+            "unit": un,
+            "category": cat,
             "updated_at": now,
         }
         # Preserve primary_key / secondary_key if they got stronger
@@ -185,6 +200,11 @@ async def save_correction(
             "original_raw_name": original_raw_name,
             "corrected_name": corrected_name,
             "corrected_specs": corrected_specs or {},
+            # Correction Pipeline v3 fields
+            "source": src,
+            "variant": var,
+            "unit": un,
+            "category": cat,
             "enabled": True,
             "times_matched": 0,
             "last_used_at": None,

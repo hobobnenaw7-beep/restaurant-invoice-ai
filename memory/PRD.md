@@ -47,6 +47,71 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 14: Correction Pipeline v3 (Edit → Memory → Catalog) — COMPLETE (2026-02-13)
+
+### Gap identified
+- Inline PATCH `/purchases/{pid}/items/{idx}` already called `save_correction`
+  on `raw_name` changes — so Correction Memory *was* being written, but:
+  1. **Records lacked structured metadata** (`source`, `variant`, `unit`, `category`).
+  2. **NO catalog linkage** — `canonical_items` / `item_aliases` were never touched
+     when a user corrected a name. The system did not learn into the Items/Materials
+     catalog.
+
+### What was implemented (non-destructive, lightweight)
+1. **Correction record enrichment** — `save_correction()` now stores first-class
+   `source` (default `"user_edit"`), `variant`, `unit`, `category` fields.
+2. **New `services/catalog_linkage.py`** — given a corrected_name:
+   * **exact case-insensitive** match on `canonical_items.name` → returns `"linked"`
+   * **contains-match** (when name ≥ 4 chars) → returns `"linked"`
+   * **no match** → creates a new `canonical_items` row with
+     `is_suggested: true` + `suggested_source: "user_edit"` → returns `"suggested"`.
+   * On both paths: upserts `item_aliases` row (alias → canonical_item_id),
+     incrementing `usage_count` on repeats (never duplicates).
+3. **Wired into both** `PATCH /purchases/{pid}/items/{idx}` and
+   `PUT /purchases/{pid}`. Wrapped in try/except so linkage failure never
+   breaks item save.
+4. **PATCH response** now includes `catalog_linkage: {action, canonical_item_id, canonical_name}`.
+5. **Frontend toast** in `InvoiceReviewDialog` surfaces the outcome:
+   * `linked` → `Linked to catalog: {name}` (success)
+   * `suggested` → `Added "{name}" as a suggested item — review in Items` (info)
+6. **Non-destructive**: we never overwrite existing canonical items. Suggested
+   entries carry `is_suggested: true` so UI can badge/filter if desired.
+
+### Rules honored
+- Correction Memory stores only user-driven edits (`source: "user_edit"`).
+- Not all item edits become corrections — only `raw_name` changes.
+  Price/qty inline edits do NOT create a correction row (unchanged).
+- Parsing layer (`normalize_item`, OCR extraction) is unchanged.
+
+### End-to-End Verified (live)
+1. PATCH item[0].raw_name = "E2E Regression Item ..." (novel) →
+   response `catalog_linkage: {action: "suggested", canonical_item_id: <new uuid>}`.
+   * `correction_memory` has a new row with `source="user_edit"`, `unit="LB"`,
+     `original_raw_name="CHKN BRST BNLS 6OZ"`, `corrected_name="E2E Regression Item ..."`.
+   * `canonical_items` has a new row with `is_suggested: true`,
+     `suggested_source: "user_edit"`, plus an `item_aliases` row mapping the
+     original raw_name to the new canonical id.
+2. PATCH item[1].raw_name = "Beef" (exists in catalog) →
+   response `catalog_linkage: {action: "linked", canonical_item_id: <existing>}`.
+   * No new canonical_item created; a single `item_aliases` row is added
+     linking the raw_name to the existing "Beef" canonical id.
+
+### Testing — all green
+- 6 new unit tests in `test_catalog_linkage.py` (exact-CI match, contains match,
+  suggested path creates new canonical, alias usage_count increments on repeat,
+  empty corrected_name skipped, tenant isolation).
+- Full regression: 53 passed, 1 skipped across `test_catalog_linkage`,
+  `test_correction_memory_v2`, `test_correction_memory_ui`,
+  `test_procurement_audit`, `test_procurement_inbox_outcome`, `test_orders_api`.
+
+### Files
+- /app/backend/services/catalog_linkage.py (new)
+- /app/backend/services/correction_memory.py (save_correction now accepts source/variant/unit/category)
+- /app/backend/routes/purchases.py (PATCH + PUT endpoints call catalog linkage; PATCH response carries catalog_linkage)
+- /app/frontend/src/components/InvoiceReviewDialog.js (toast surfaces linkage outcome)
+- /app/backend/tests/test_catalog_linkage.py (new — 6 tests)
+
+
 ## Milestone 13: Decision Flow Alignment (Insight → Order) — COMPLETE (2026-02-13)
 
 ### Goal

@@ -245,6 +245,9 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
                     item_code = (item.get("item_code") or old_item.get("item_code") or "").strip()
                     old_pack = (old_item.get("pack_size_raw") or old_item.get("pack_size") or "").strip()
                     new_pack = (item.get("pack_size_raw") or item.get("pack_size") or "").strip()
+                    unit_hint = (item.get("pack_unit") or item.get("unit") or "").strip()
+                    category_hint = (item.get("category") or "").strip()
+                    variant_hint = (item.get("variant") or "").strip()
 
                     await save_correction(
                         user_id=user["id"],
@@ -256,7 +259,25 @@ async def update_purchase(pid: str, data: PurchaseUpdate, user=Depends(get_user)
                         product_code=item_code,
                         pack_size=new_pack or old_pack,
                         supplier_id=supplier_id,
+                        source="user_edit",
+                        variant=variant_hint,
+                        unit=unit_hint,
+                        category=category_hint,
                     )
+
+                    # Catalog linkage (non-destructive)
+                    try:
+                        from services.catalog_linkage import link_correction_to_catalog
+                        await link_correction_to_catalog(
+                            restaurant_id=rid,
+                            user_id=user.get("id"),
+                            original_raw_name=old_raw,
+                            corrected_name=new_raw,
+                            unit=unit_hint,
+                            category=category_hint,
+                        )
+                    except Exception as e:   # pragma: no cover
+                        logger.warning(f"catalog linkage (PUT) failed: {e}")
         validate_purchase_items(update_data["items"])
         update_data["review_status"] = compute_review_status(update_data["items"])
     old_vals = {k: old.get(k) for k in update_data}
@@ -403,15 +424,21 @@ async def patch_purchase_item(pid: str, item_index: int, updates: dict, user=Dep
     # RULE: Only NAME corrections create correction_memory entries.
     # Price/quantity edits are stored as audit data only.
     # RULE: Unit corrections (price on needs_review items) save to unit_memory.
+    catalog_linkage = None
     if changes:
         name_changed = "raw_name" in changes
         if name_changed:
             from services.correction_memory import save_correction
+            from services.catalog_linkage import link_correction_to_catalog
             old_raw = old_item.get("raw_name", "").strip()
             new_raw = updated_item.get("raw_name", "").strip()
             vendor_name = purchase.get("supplier_name") or purchase.get("detected_vendor") or ""
             item_code = (updated_item.get("item_code") or old_item.get("item_code") or "").strip()
             pack = (updated_item.get("pack_size") or updated_item.get("pack_size_raw") or "").strip()
+            # Extract optional metadata already resolved by normalize_item()
+            unit_hint = (updated_item.get("pack_unit") or updated_item.get("unit") or "").strip()
+            category_hint = (updated_item.get("category") or "").strip()
+            variant_hint = (updated_item.get("variant") or "").strip()
 
             await save_correction(
                 user_id=user["id"],
@@ -422,7 +449,24 @@ async def patch_purchase_item(pid: str, item_index: int, updates: dict, user=Dep
                 corrected_name=new_raw,
                 product_code=item_code,
                 pack_size=pack,
+                source="user_edit",
+                variant=variant_hint,
+                unit=unit_hint,
+                category=category_hint,
             )
+
+            # Catalog linkage — lightweight, non-destructive.
+            try:
+                catalog_linkage = await link_correction_to_catalog(
+                    restaurant_id=user["restaurant_id"],
+                    user_id=user.get("id"),
+                    original_raw_name=old_raw,
+                    corrected_name=new_raw,
+                    unit=unit_hint,
+                    category=category_hint,
+                )
+            except Exception as e:   # pragma: no cover
+                logger.warning(f"catalog linkage failed: {e}")
 
         # Unit memory sync: when user fills in price/total on a review item,
         # AND the item has normalization data, save as user_corrected truth.
@@ -484,6 +528,7 @@ async def patch_purchase_item(pid: str, item_index: int, updates: dict, user=Dep
         "edit_entry": edit_entry,
         "purchase_totals": {"subtotal": subtotal, "tax": tax, "total": total},
         "review_status": review_status,
+        "catalog_linkage": catalog_linkage,
         "price_intelligence": await _reingest_price_intelligence(pid, user["restaurant_id"]),
     }
 

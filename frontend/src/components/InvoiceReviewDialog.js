@@ -169,6 +169,13 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, a
       const deltaMsg = data.validation_delta === 'improved' ? ' — validation improved!' :
                         data.validation_delta === 'degraded' ? ' — warning: validation degraded' : '';
       toast.success(`Item updated${deltaMsg}`);
+      // Correction Pipeline v3: surface catalog linkage outcome to the user
+      const link = data.catalog_linkage;
+      if (link && link.action === 'linked' && link.canonical_name) {
+        toast.success(`Linked to catalog: ${link.canonical_name}`, { duration: 3500 });
+      } else if (link && link.action === 'suggested' && link.canonical_name) {
+        toast.info(`Added "${link.canonical_name}" as a suggested item — review in Items`, { duration: 4500 });
+      }
     } catch (err) {
       toast.error('Failed to save: ' + (err.response?.data?.detail || ''));
     } finally {
