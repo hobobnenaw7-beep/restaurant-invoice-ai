@@ -8,7 +8,7 @@ import { dataEvents } from '@/lib/dataEvents';
 import {
   TrendingUp, TrendingDown, Calendar, DollarSign, Receipt,
   ShoppingCart, ClipboardList, Boxes, ChevronRight, Award,
-  AlertTriangle, Activity, Clock, ArrowRight,
+  AlertTriangle, Activity, Clock, ArrowRight, PieChart as PieIcon,
 } from 'lucide-react';
 
 /* ─────────────────────── helpers ─────────────────────── */
@@ -19,6 +19,96 @@ const YEAR_OPTIONS = (() => { const cur = new Date().getFullYear(); const y = []
 function pctChange(curr, prev) {
   if (!prev || prev === 0) return null;
   return ((curr - prev) / prev) * 100;
+}
+
+function fmtMoney(n) {
+  if (n == null) return '$0';
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `$${(n / 1_000).toFixed(1)}k`;
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+function fmtFullMoney(n) {
+  return n != null
+    ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '$0.00';
+}
+
+/* ────────────────────── DonutBreakdown (shared) ────────────────────── */
+// Donut on the left with TOTAL in the centre + categorical breakdown on
+// the right. Same structure for Sales and Spending.
+function DonutBreakdown({ title, titleIcon: TitleIcon, segments, total, testId, emptyLabel }) {
+  const size = 160;
+  const stroke = 12;
+  const radius = (size - stroke) / 2;
+  const circ = 2 * Math.PI * radius;
+  const active = segments.filter(s => (s.value || 0) > 0);
+  let rotation = 0;
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5" data-testid={testId}>
+      <div className="flex items-center gap-2 mb-4">
+        {TitleIcon && <TitleIcon className="w-4 h-4 text-slate-400" aria-hidden="true" />}
+        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+      </div>
+      <div className="flex items-center gap-6">
+        {/* Donut */}
+        <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
+          <svg width={size} height={size} className="-rotate-90">
+            <circle
+              cx={size / 2} cy={size / 2} r={radius}
+              stroke="#f1f5f9" strokeWidth={stroke} fill="none"
+            />
+            {total > 0 && active.map((s, i) => {
+              const pct = (s.value || 0) / total;
+              const arcLen = pct * circ;
+              const dash = `${arcLen} ${circ - arcLen}`;
+              const offset = -rotation;
+              rotation += arcLen;
+              return (
+                <circle
+                  key={i}
+                  cx={size / 2} cy={size / 2} r={radius}
+                  stroke={s.color} strokeWidth={stroke} fill="none"
+                  strokeDasharray={dash} strokeDashoffset={offset}
+                  style={{ transition: 'stroke-dasharray 0.6s ease-out' }}
+                />
+              );
+            })}
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Total</span>
+            <span className="text-lg font-bold text-slate-900 tabular-nums">{fmtMoney(total)}</span>
+          </div>
+        </div>
+
+        {/* Breakdown list */}
+        <div className="flex-1 min-w-0 space-y-2" data-testid={`${testId}-breakdown`}>
+          {active.length === 0 ? (
+            <p className="text-xs text-slate-400">{emptyLabel || 'No data available.'}</p>
+          ) : segments.map((s, i) => {
+            const pct = total > 0 ? (s.value / total) * 100 : 0;
+            return (
+              <div
+                key={s.label + i}
+                className="flex items-center justify-between gap-2 text-xs"
+                data-testid={`${testId}-seg-${i}`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: s.color }} aria-hidden="true" />
+                  <span className="text-slate-700 truncate">{s.label}</span>
+                </div>
+                <div className="flex items-center gap-3 flex-shrink-0 tabular-nums">
+                  <span className="text-slate-900 font-medium">{fmtFullMoney(s.value)}</span>
+                  <span className="text-slate-400 w-10 text-right">{pct.toFixed(1)}%</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ────────────────────── % delta pill (the ONLY colored piece) ────────────────────── */
@@ -309,6 +399,7 @@ export default function DashboardPage() {
 
   const [data, setData] = useState(null);
   const [intel, setIntel] = useState({ alerts: [], comparison: [] });
+  const [salesBreakdown, setSalesBreakdown] = useState({ total: 0, items: [] });
   const [loading, setLoading] = useState(true);
   const [intelLoading, setIntelLoading] = useState(true);
 
@@ -343,12 +434,51 @@ export default function DashboardPage() {
     } finally { setIntelLoading(false); }
   }, [api]);
 
+  const loadSalesBreakdown = useCallback(async (yr, mo) => {
+    try {
+      const res = await api.get('/sales');
+      const records = Array.isArray(res.data) ? res.data : [];
+      // Filter records to the selected period (same rules as dashboard summary).
+      const inPeriod = records.filter(r => {
+        const rd = (r.report_date || '').slice(0, 10);
+        if (!rd) return false;
+        const d = new Date(rd);
+        if (yr && d.getFullYear() !== yr) return false;
+        if (mo && mo > 0 && (d.getMonth() + 1) !== mo) return false;
+        return true;
+      });
+      // Aggregate revenue by menu_item across all line items.
+      const tally = {};
+      let total = 0;
+      for (const r of inPeriod) {
+        for (const it of (r.items || [])) {
+          const name = (it.menu_item || '').trim() || 'Unnamed';
+          const rev = Number(it.revenue || 0);
+          if (!rev || rev <= 0) continue;
+          tally[name] = (tally[name] || 0) + rev;
+          total += rev;
+        }
+        // Fallback: if no items had revenue but total_sales present, put it under "General"
+        if (!(r.items || []).some(i => Number(i.revenue || 0) > 0) && Number(r.total_sales || 0) > 0) {
+          tally['General Sales'] = (tally['General Sales'] || 0) + Number(r.total_sales);
+          total += Number(r.total_sales);
+        }
+      }
+      const sorted = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+      setSalesBreakdown({ total, items: sorted });
+    } catch {
+      setSalesBreakdown({ total: 0, items: [] });
+    }
+  }, [api]);
+
   useEffect(() => { load(filterYear, filterMonth); }, [load, filterYear, filterMonth]);
   useEffect(() => { loadIntel(); }, [loadIntel]);
+  useEffect(() => { loadSalesBreakdown(filterYear, filterMonth); }, [loadSalesBreakdown, filterYear, filterMonth]);
   useEffect(() => dataEvents.subscribe(() => {
     load(filterYear, filterMonth);
     loadIntel();
-  }), [load, loadIntel, filterYear, filterMonth]);
+    loadSalesBreakdown(filterYear, filterMonth);
+  }), [load, loadIntel, loadSalesBreakdown, filterYear, filterMonth]);
 
   const periodLabel = useMemo(() => {
     if (filterMonth > 0) return `${MONTH_NAMES[filterMonth - 1]} ${filterYear}`;
@@ -374,6 +504,34 @@ export default function DashboardPage() {
     const prev = (data?.prev_month_raw_materials || 0) + (data?.prev_month_salaries || 0) + (data?.prev_month_other_expenses || 0);
     return pctChange(now, prev);
   }, [data]);
+
+  // Spending breakdown (Raw Materials / Salaries / Other) — user's rule.
+  const spendingSegments = useMemo(() => {
+    const raw = data?.month_raw_materials || 0;
+    const sal = data?.month_salaries || 0;
+    const oth = data?.month_other_expenses || 0;
+    return [
+      { label: 'Raw Materials', value: raw, color: '#10b981' }, // soft emerald
+      { label: 'Salaries',      value: sal, color: '#6366f1' }, // soft indigo
+      { label: 'Other',         value: oth, color: '#94a3b8' }, // soft slate
+    ];
+  }, [data]);
+  const spendingTotal = spendingSegments.reduce((a, s) => a + s.value, 0);
+
+  // Sales breakdown — top 4 menu_items by revenue, rest rolled into "Other".
+  // Palette kept identical in tone to Spending's: soft emerald / indigo / teal / amber + slate-other.
+  const SALES_PALETTE = ['#10b981', '#6366f1', '#14b8a6', '#f59e0b'];
+  const salesSegments = useMemo(() => {
+    const items = salesBreakdown.items;
+    if (!items.length) return [];
+    const top = items.slice(0, 4).map(([label, value], i) => ({
+      label, value, color: SALES_PALETTE[i % SALES_PALETTE.length],
+    }));
+    const rest = items.slice(4).reduce((a, [, v]) => a + v, 0);
+    if (rest > 0) top.push({ label: 'Other', value: rest, color: '#94a3b8' });
+    return top;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salesBreakdown]);
 
   if (loading) {
     return (
@@ -480,6 +638,26 @@ export default function DashboardPage() {
         <span className="text-[11px] text-slate-400 hidden sm:inline">{periodLabel}</span>
         <div className="flex-1" />
         <DataFreshness lastUpdate={data?.last_data_update} purchaseCount={data?.purchase_count} />
+      </div>
+
+      {/* ── Breakdown panels: Sales + Spending (identical structure) ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="breakdown-row">
+        <DonutBreakdown
+          title="Sales"
+          titleIcon={PieIcon}
+          segments={salesSegments}
+          total={salesBreakdown.total}
+          testId="sales-breakdown-card"
+          emptyLabel="No sales recorded in this period."
+        />
+        <DonutBreakdown
+          title="Spending"
+          titleIcon={PieIcon}
+          segments={spendingSegments}
+          total={spendingTotal}
+          testId="spending-breakdown-card"
+          emptyLabel="No spending recorded in this period."
+        />
       </div>
 
       {/* ── Insights ── */}
