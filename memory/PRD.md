@@ -3,6 +3,35 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 22: Dashboard — Circular Navigation Cards — COMPLETE (2026-02-14)
+
+### Goal
+Restore the circular-ring nav look referenced in the design image while
+keeping the minimal-color philosophy from Milestone 21.
+
+### Changes
+- New `CircleNavCard` component replaces `StatCard` + old `NavCard`.
+- All 5 top cards (Sales, Expenses, Orders, Procurement, Items) are
+  now **navigation-only**: circular icon-in-ring + label + `View …` link.
+- No numbers or "vs last year" comparisons anywhere in the top section.
+- Per-tint ring colors (soft, subtle):
+    sales → emerald · expenses → rose · orders → sky ·
+    procurement → orange · items → purple
+- Hover lift: `hover:-translate-y-0.5 hover:shadow-md` + inner icon scales.
+- Period filter moved below the nav block, above Insights.
+- All metrics continue to live in the Insights section
+  (Price Movement · Best Vendor · Alerts).
+
+### Verified
+Smoke: all 5 cards render with correct `data-tint`, metric-value
+`data-testid`s absent (stat-sales-value / stat-expenses-value removed),
+period filter + insights intact. ESLint clean.
+
+### Files
+- `/app/frontend/src/pages/DashboardPage.js` — `CircleNavCard` and
+  restructured top rows.
+
+
 ## Milestone 21: Dashboard Visual Refinement (Minimal Color) — COMPLETE (2026-02-14)
 
 ### Goal

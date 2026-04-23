@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
@@ -16,14 +15,6 @@ import {
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 const YEAR_OPTIONS = (() => { const cur = new Date().getFullYear(); const y = []; for (let i = 2020; i <= cur + 1; i++) y.push(i); return y; })();
-
-function fmtCurrency(n) {
-  if (n == null) return '$0';
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `$${(n / 1_000).toFixed(1)}k`;
-  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
 
 function pctChange(curr, prev) {
   if (!prev || prev === 0) return null;
@@ -50,44 +41,36 @@ function DeltaPill({ pct, positiveIsGood = true, testId }) {
   );
 }
 
-/* ────────────────────── Stat card (neutral) ────────────────────── */
-function StatCard({ label, value, pct, positiveIsGood = true, Icon, iconTint = 'text-slate-400', onClick, testId, prevLabel }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group relative text-left bg-white border border-slate-200 rounded-xl px-5 py-4 hover:border-slate-300 transition-colors w-full"
-      data-testid={testId}
-    >
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">{label}</span>
-        {Icon && <Icon className={`w-4 h-4 ${iconTint}`} aria-hidden="true" />}
-      </div>
-      <div className="mt-2 flex items-baseline gap-3">
-        <span className="text-2xl font-bold text-slate-900 tabular-nums" data-testid={`${testId}-value`}>{value}</span>
-        <DeltaPill pct={pct} positiveIsGood={positiveIsGood} testId={`${testId}-delta`} />
-      </div>
-      {prevLabel && (
-        <p className="mt-0.5 text-[10px] text-slate-400">vs {prevLabel}</p>
-      )}
-    </button>
-  );
-}
+/* ────────────────────── Circular Nav Card ────────────────────── */
+const RING_TINT = {
+  sales:       { ring: 'ring-emerald-200/80', bg: 'bg-emerald-50',  icon: 'text-emerald-500',  link: 'text-emerald-600' },
+  expenses:    { ring: 'ring-rose-200/80',    bg: 'bg-rose-50',     icon: 'text-rose-500',     link: 'text-rose-600' },
+  orders:     { ring: 'ring-sky-200/80',     bg: 'bg-sky-50',      icon: 'text-sky-500',      link: 'text-sky-600' },
+  procurement: { ring: 'ring-orange-200/80',  bg: 'bg-orange-50',   icon: 'text-orange-500',   link: 'text-orange-600' },
+  items:       { ring: 'ring-purple-200/80',  bg: 'bg-purple-50',   icon: 'text-purple-500',   link: 'text-purple-600' },
+};
 
-/* ────────────────────── Nav card (neutral) ────────────────────── */
-function NavCard({ label, Icon, iconTint, to, testId, navigate }) {
+function CircleNavCard({ tintKey, label, linkLabel, Icon, to, testId, navigate }) {
+  const t = RING_TINT[tintKey];
   return (
     <button
       type="button"
       onClick={() => navigate(to)}
-      className="group flex items-center justify-between bg-white border border-slate-200 rounded-xl px-5 py-4 hover:border-slate-300 transition-colors w-full"
+      className="group w-full bg-white border border-slate-200 rounded-2xl px-6 py-7 flex flex-col items-center gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300 active:translate-y-0"
       data-testid={testId}
+      data-tint={tintKey}
     >
-      <div className="flex items-center gap-3">
-        {Icon && <Icon className={`w-4 h-4 ${iconTint}`} aria-hidden="true" />}
-        <span className="text-sm font-semibold text-slate-800">{label}</span>
+      <div
+        className={`w-16 h-16 rounded-full ${t.bg} ring-[3px] ${t.ring} flex items-center justify-center transition-transform duration-200 group-hover:scale-105`}
+        aria-hidden="true"
+      >
+        <Icon className={`w-6 h-6 ${t.icon}`} />
       </div>
-      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors" />
+      <span className="text-sm font-semibold text-slate-800">{label}</span>
+      <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${t.link} opacity-90 group-hover:opacity-100`}>
+        {linkLabel}
+        <ChevronRight className="w-3 h-3 transition-transform group-hover:translate-x-0.5" />
+      </span>
     </button>
   );
 }
@@ -313,7 +296,7 @@ export default function DashboardPage() {
     return `Full Year ${filterYear}`;
   }, [filterYear, filterMonth]);
 
-  const prevLabel = useMemo(() => {
+  const prevLabel = useMemo(() => {  // eslint-disable-line no-unused-vars
     if (filterMonth > 0) {
       const pm = filterMonth === 1 ? 12 : filterMonth - 1;
       const py = filterMonth === 1 ? filterYear - 1 : filterYear;
@@ -336,11 +319,6 @@ export default function DashboardPage() {
     );
   }
 
-  const salesNow = data?.month_sales || 0;
-  const salesPrev = data?.prev_month_sales || 0;
-  const expensesNow = (data?.month_raw_materials || 0) + (data?.month_salaries || 0) + (data?.month_other_expenses || 0);
-  const expensesPrev = (data?.prev_month_raw_materials || 0) + (data?.prev_month_salaries || 0) + (data?.prev_month_other_expenses || 0);
-
   return (
     <div className="space-y-6 max-w-[1100px]" data-testid="dashboard-page">
       {/* ── header ── */}
@@ -349,8 +327,61 @@ export default function DashboardPage() {
         <p className="text-sm text-slate-500 mt-1">A calm, focused view of the numbers that matter.</p>
       </div>
 
-      {/* ── Period filter ── */}
-      <div className="flex items-center gap-3 flex-wrap" data-testid="dashboard-period-filters">
+      {/* ── Row 1: Sales + Expenses circular navigation ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="stats-row-1">
+        <CircleNavCard
+          tintKey="sales"
+          label="Sales"
+          linkLabel="View sales dashboard"
+          Icon={DollarSign}
+          to="/sales"
+          testId="stat-sales"
+          navigate={navigate}
+        />
+        <CircleNavCard
+          tintKey="expenses"
+          label="Expenses"
+          linkLabel="View expenses dashboard"
+          Icon={Receipt}
+          to="/expenses"
+          testId="stat-expenses"
+          navigate={navigate}
+        />
+      </div>
+
+      {/* ── Row 2: Orders / Procurement / Items circular navigation ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="stats-row-2">
+        <CircleNavCard
+          tintKey="orders"
+          label="Orders"
+          linkLabel="View orders"
+          Icon={ShoppingCart}
+          to="/orders"
+          testId="nav-orders"
+          navigate={navigate}
+        />
+        <CircleNavCard
+          tintKey="procurement"
+          label="Procurement"
+          linkLabel="View procurement"
+          Icon={ClipboardList}
+          to="/procurement"
+          testId="nav-procurement"
+          navigate={navigate}
+        />
+        <CircleNavCard
+          tintKey="items"
+          label="Items"
+          linkLabel="View items"
+          Icon={Boxes}
+          to="/items"
+          testId="nav-items"
+          navigate={navigate}
+        />
+      </div>
+
+      {/* ── Period filter (now BELOW the nav, above insights) ── */}
+      <div className="flex items-center gap-3 flex-wrap pt-2" data-testid="dashboard-period-filters">
         <div className="flex items-center gap-1.5">
           <Calendar className="w-4 h-4 text-slate-400" aria-hidden="true" />
           <span className="text-xs font-semibold text-slate-500">Period</span>
@@ -377,50 +408,6 @@ export default function DashboardPage() {
         <span className="text-[11px] text-slate-400 hidden sm:inline">{periodLabel}</span>
         <div className="flex-1" />
         <DataFreshness lastUpdate={data?.last_data_update} purchaseCount={data?.purchase_count} />
-      </div>
-
-      {/* ── Row 1: Sales + Expenses ── */}
-      <Card className="border-0 shadow-none bg-transparent">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="stats-row-1">
-          <StatCard
-            label="Sales"
-            value={fmtCurrency(salesNow)}
-            pct={pctChange(salesNow, salesPrev)}
-            positiveIsGood
-            Icon={DollarSign}
-            iconTint="text-emerald-300"
-            onClick={() => navigate('/sales')}
-            testId="stat-sales"
-            prevLabel={prevLabel}
-          />
-          <StatCard
-            label="Expenses"
-            value={fmtCurrency(expensesNow)}
-            pct={pctChange(expensesNow, expensesPrev)}
-            positiveIsGood={false}
-            Icon={Receipt}
-            iconTint="text-rose-300"
-            onClick={() => navigate('/expenses')}
-            testId="stat-expenses"
-            prevLabel={prevLabel}
-          />
-        </div>
-      </Card>
-
-      {/* ── Row 2: Orders / Procurement / Items ── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="stats-row-2">
-        <NavCard
-          label="Orders" Icon={ShoppingCart} iconTint="text-sky-300"
-          to="/orders" testId="nav-orders" navigate={navigate}
-        />
-        <NavCard
-          label="Procurement" Icon={ClipboardList} iconTint="text-indigo-300"
-          to="/procurement" testId="nav-procurement" navigate={navigate}
-        />
-        <NavCard
-          label="Items" Icon={Boxes} iconTint="text-teal-300"
-          to="/items" testId="nav-items" navigate={navigate}
-        />
       </div>
 
       {/* ── Insights ── */}
