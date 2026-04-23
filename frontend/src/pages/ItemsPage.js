@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus, Scale, Award, Snowflake, Sun, Thermometer } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Loader2, Tag, X, Package, TrendingUp, ArrowUp, ArrowDown, Minus, Scale, Award, Snowflake, Sun, Thermometer, Sparkles, CheckCircle2, XCircle } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
@@ -257,6 +257,7 @@ export default function ItemsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [storageFilter, setStorageFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');   // all | suggested | approved
   const [dialogOpen, setDialogOpen] = useState(false);
   const [aliasDialog, setAliasDialog] = useState(null);
   const [priceItem, setPriceItem] = useState(null);
@@ -266,12 +267,14 @@ export default function ItemsPage() {
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null });
   const [categoryUpdating, setCategoryUpdating] = useState(null);
+  const [governing, setGoverning] = useState(null);  // item_id being promoted/dismissed
 
   const load = async () => {
     setLoading(true);
     try {
       const params = { search };
       if (storageFilter && storageFilter !== 'all') params.storage_category = storageFilter;
+      if (statusFilter && statusFilter !== 'all') params.status = statusFilter;
       const res = await api.get('/items', { params });
       setItems(res.data);
     }
@@ -279,7 +282,32 @@ export default function ItemsPage() {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, [search, storageFilter]); // eslint-disable-line
+  useEffect(() => { load(); }, [search, storageFilter, statusFilter]); // eslint-disable-line
+
+  const suggestedCount = items.filter(it => it.is_suggested).length;
+
+  const promoteSuggested = async (item) => {
+    setGoverning(item.id);
+    try {
+      await api.post(`/items/${item.id}/promote`);
+      toast.success(`Promoted "${item.name}" to your catalog`);
+      load();
+    } catch (err) {
+      toast.error('Could not promote: ' + (err.response?.data?.detail || ''));
+    } finally { setGoverning(null); }
+  };
+
+  const dismissSuggested = async (item) => {
+    if (!window.confirm(`Dismiss suggested item "${item.name}"? Aliases will be archived but your correction history stays intact.`)) return;
+    setGoverning(item.id);
+    try {
+      await api.post(`/items/${item.id}/dismiss`);
+      toast.info(`Dismissed "${item.name}"`);
+      load();
+    } catch (err) {
+      toast.error('Could not dismiss: ' + (err.response?.data?.detail || ''));
+    } finally { setGoverning(null); }
+  };
 
   const openNew = () => { setEditing(null); setForm({ name: '', category: '', storage_category: '', category_source: 'auto' }); setDialogOpen(true); };
   const openEdit = (item) => { setEditing(item); setForm({ name: item.name, category: item.category || '', storage_category: item.storage_category || '', category_source: item.category_source || 'auto' }); setDialogOpen(true); };
@@ -341,11 +369,26 @@ export default function ItemsPage() {
         </Button>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center flex-wrap">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <Input className="pl-9 h-10" placeholder="Search items..." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="search-items" />
         </div>
+        <Tabs value={statusFilter} onValueChange={setStatusFilter}>
+          <TabsList className="h-9" data-testid="status-filter-tabs">
+            <TabsTrigger value="all" className="text-xs px-3" data-testid="filter-status-all">All</TabsTrigger>
+            <TabsTrigger value="approved" className="text-xs px-3 gap-1" data-testid="filter-status-approved">
+              <CheckCircle2 className="w-3 h-3" /> Approved
+            </TabsTrigger>
+            <TabsTrigger value="suggested" className="text-xs px-3 gap-1" data-testid="filter-status-suggested">
+              <Sparkles className="w-3 h-3 text-amber-500" />
+              Suggested
+              {statusFilter !== 'suggested' && suggestedCount > 0 && (
+                <span className="ml-1 bg-amber-500 text-white text-[9px] font-bold px-1.5 py-[1px] rounded-full" data-testid="filter-status-suggested-count">{suggestedCount}</span>
+              )}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
         <Tabs value={storageFilter} onValueChange={setStorageFilter}>
           <TabsList className="h-9">
             <TabsTrigger value="all" className="text-xs px-3" data-testid="filter-all">All Items</TabsTrigger>
@@ -380,11 +423,27 @@ export default function ItemsPage() {
               </TableHeader>
               <TableBody>
                 {items.map((item, i) => (
-                  <TableRow key={item.id} className={`transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'} hover:bg-teal-50/30`} data-testid={`item-row-${item.id}`}>
+                  <TableRow key={item.id} className={`transition-colors ${item.is_suggested ? 'bg-amber-50/60 hover:bg-amber-50/80' : (i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40')} hover:bg-teal-50/30`} data-testid={`item-row-${item.id}`} data-suggested={item.is_suggested ? 'true' : 'false'}>
                     <TableCell>
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-navy-900 text-white flex items-center justify-center text-[11px] font-bold flex-shrink-0">{item.name?.charAt(0)}</div>
-                        <span className="text-sm font-semibold text-navy-900">{item.name}</span>
+                        <div className={`w-8 h-8 rounded-lg ${item.is_suggested ? 'bg-amber-500' : 'bg-navy-900'} text-white flex items-center justify-center text-[11px] font-bold flex-shrink-0`}>
+                          {item.is_suggested ? <Sparkles className="w-3.5 h-3.5" /> : item.name?.charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-sm font-semibold text-navy-900">{item.name}</span>
+                            {item.is_suggested && (
+                              <Badge className="bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold uppercase h-4 px-1.5 gap-1" data-testid={`badge-suggested-${item.id}`}>
+                                <Sparkles className="w-2.5 h-2.5" /> Suggested
+                              </Badge>
+                            )}
+                          </div>
+                          {item.is_suggested && (
+                            <p className="text-[10px] text-amber-700 italic mt-0.5" data-testid={`origin-hint-${item.id}`}>
+                              Suggested from {item.suggested_source === 'user_edit' ? 'a user edit' : item.suggested_source || 'user activity'}
+                            </p>
+                          )}
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -423,7 +482,29 @@ export default function ItemsPage() {
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
+                      <div className="flex justify-end gap-1 items-center flex-wrap">
+                        {item.is_suggested && (
+                          <>
+                            <Button
+                              size="sm"
+                              className="h-7 px-2 text-[10px] bg-teal-600 hover:bg-teal-700 text-white gap-1"
+                              onClick={() => promoteSuggested(item)}
+                              disabled={governing === item.id}
+                              data-testid={`promote-item-${item.id}`}
+                            >
+                              <CheckCircle2 className="w-3 h-3" /> Promote
+                            </Button>
+                            <Button
+                              size="sm" variant="outline"
+                              className="h-7 px-2 text-[10px] border-slate-300 text-slate-600 gap-1"
+                              onClick={() => dismissSuggested(item)}
+                              disabled={governing === item.id}
+                              data-testid={`dismiss-item-${item.id}`}
+                            >
+                              <XCircle className="w-3 h-3" /> Dismiss
+                            </Button>
+                          </>
+                        )}
                         <Button size="sm" variant="ghost" className="h-7 px-2 text-[10px] text-slate-500 hover:text-teal-700" onClick={() => setPriceItem(item)} data-testid={`price-history-${item.id}`}>
                           <TrendingUp className="w-3 h-3 mr-1" /> Prices
                         </Button>

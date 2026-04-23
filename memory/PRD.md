@@ -47,6 +47,62 @@ Container Foam, Chicken Gizzard, Chicken Wing, Ketchup Packet, Lemonade, Okra, e
 - /app/backend/services/product_identity.py — Core identity engine
 - /app/backend/routes/product_identity.py — API routes
 
+## Milestone 15: Suggested Catalog Governance — COMPLETE (2026-02-13)
+
+### Goal
+Add a safe review layer for suggested canonical items so user edits keep
+learning into the catalog without polluting it.
+
+### Backend — 2 new endpoints + extended filter
+- `POST /api/items/{iid}/promote` — sets `is_suggested: false`, stamps
+  `promoted_at`, `promoted_by_user_id`, `promoted_by_name`. Aliases untouched.
+  400 if item is not suggested, 404 if missing.
+- `POST /api/items/{iid}/dismiss` — soft-archive via `is_archived: true`
+  (+ aliases archived with same flag). 400 if not suggested.
+- `GET /api/items?status={suggested|approved|archived}` — filter by state.
+  Default listing now EXCLUDES archived items (keeps history intact but hides noise).
+- All tenant-scoped. All audit-logged (`PROMOTE` / `DISMISS` actions).
+
+### Frontend — Items page refinements
+- New **Status filter tab strip**: All · Approved · **Suggested** (with count pill
+  when not selected). data-testids: `filter-status-{all|approved|suggested}`,
+  `filter-status-suggested-count`.
+- Suggested rows visually distinct:
+  * amber row background tint (`bg-amber-50/60`)
+  * Sparkles icon badge (instead of letter initial)
+  * **SUGGESTED** uppercase pill badge (testid `badge-suggested-{id}`)
+  * Origin hint line: *"Suggested from a user edit"* (testid `origin-hint-{id}`)
+- Per-row actions on suggested items:
+  * **Promote** (teal, CheckCircle2) → testid `promote-item-{id}`
+  * **Dismiss** (outline, XCircle) → testid `dismiss-item-{id}`
+  * Dismiss asks for confirm (window.confirm mentions aliases archived / correction history intact).
+
+### Rules honored
+- **Promote preserves aliases** — verified live: after promoting
+  "Shrimp 16-20 Count IQF", the alias `SHRIMP 16-20 IQF` remained attached.
+- **Dismiss preserves correction_memory** — verified: after dismissing
+  "E2E Regression Item ...", the correction row still returns from
+  `/api/correction-memory`.
+- Aliases are **archived, not deleted**, on dismiss — past records stay readable.
+- Tenant-scoped throughout.
+- No OCR/parsing changes · No auto-merge · No auto-promotion · No procurement changes.
+
+### End-to-End Verified (live)
+```
+Initial: 3 suggested items in Suggested tab
+→ POST /items/{id}/promote  "Shrimp 16-20 Count IQF"   HTTP 200
+  → moves out of Suggested, visible in Approved, is_suggested:false,
+    aliases intact (SHRIMP 16-20 IQF preserved)
+→ POST /items/{id}/dismiss  "E2E Regression Item ..."  HTTP 200
+  → hidden from default /items, visible at /items?status=archived,
+    correction_memory row for same corrected_name STILL present
+```
+
+### Files
+- `/app/backend/routes/items.py` — added `/promote`, `/dismiss`, `status=` filter, archived exclusion
+- `/app/frontend/src/pages/ItemsPage.js` — status-filter tabs, Suggested badge + origin hint, Promote/Dismiss buttons
+
+
 ## Milestone 14: Correction Pipeline v3 (Edit → Memory → Catalog) — COMPLETE (2026-02-13)
 
 ### Gap identified

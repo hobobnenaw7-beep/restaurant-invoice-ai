@@ -11,15 +11,34 @@ router = APIRouter()
 
 
 @router.get("/items")
-async def list_items(user=Depends(get_user), search: str = "", storage_category: str = ""):
+async def list_items(
+    user=Depends(get_user),
+    search: str = "",
+    storage_category: str = "",
+    status: str = "",   # "" | "suggested" | "approved" | "archived"
+):
     query = {"restaurant_id": user["restaurant_id"]}
     if search:
         query["name"] = {"$regex": search, "$options": "i"}
     if storage_category and storage_category in ("dry", "chilled", "frozen", "uncategorized"):
         query["storage_category"] = storage_category
+    if status == "suggested":
+        query["is_suggested"] = True
+        query["is_archived"] = {"$ne": True}
+    elif status == "approved":
+        query["is_suggested"] = {"$ne": True}
+        query["is_archived"] = {"$ne": True}
+    elif status == "archived":
+        query["is_archived"] = True
+    else:
+        # default list: exclude archived items (keeps history intact but hides noise)
+        query["is_archived"] = {"$ne": True}
     items = await db.canonical_items.find(query, {"_id": 0}).to_list(1000)
     for item in items:
-        item["aliases"] = await db.item_aliases.find({"canonical_item_id": item["id"], "restaurant_id": user["restaurant_id"]}, {"_id": 0}).to_list(100)
+        item["aliases"] = await db.item_aliases.find(
+            {"canonical_item_id": item["id"], "restaurant_id": user["restaurant_id"], "is_archived": {"$ne": True}},
+            {"_id": 0},
+        ).to_list(100)
     return items
 
 
@@ -92,6 +111,81 @@ async def delete_item(iid: str, user=Depends(get_user)):
     await db.item_aliases.delete_many({"canonical_item_id": iid})
     await audit_log(user, "DELETE", "Item", iid, f'{user["name"]} deleted item {old.get("name", "") if old else ""}', old_value={"name": old.get("name")} if old else None)
     return {"status": "deleted"}
+
+
+# ─── Suggested catalog governance (review layer) ────────────────────
+@router.post("/items/{iid}/promote")
+async def promote_suggested_item(iid: str, user=Depends(get_user)):
+    """
+    Promote a suggested canonical item to an approved catalog entry.
+    Preserves aliases and correction_memory history — only clears the
+    suggestion markers so the item is treated as fully approved.
+    """
+    existing = await db.canonical_items.find_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(404, "item_not_found")
+    if not existing.get("is_suggested"):
+        raise HTTPException(400, "not_a_suggested_item")
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.canonical_items.update_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]},
+        {"$set": {
+            "is_suggested": False,
+            "promoted_at": now,
+            "promoted_by_user_id": user.get("id"),
+            "promoted_by_name": user.get("name", ""),
+        }},
+    )
+    await audit_log(
+        user, "PROMOTE", "Item", iid,
+        f'{user["name"]} promoted suggested item "{existing.get("name", "")}"',
+        new_value={"name": existing.get("name"), "is_suggested": False},
+    )
+    updated = await db.canonical_items.find_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
+    )
+    return {"status": "promoted", "item": updated}
+
+
+@router.post("/items/{iid}/dismiss")
+async def dismiss_suggested_item(iid: str, user=Depends(get_user)):
+    """
+    Dismiss a suggested item safely.
+    NON-DESTRUCTIVE: soft-archive via is_archived=true (hidden from default listing).
+    Aliases are also archived rather than deleted so past correction_memory records
+    stay readable and re-linkable.
+    """
+    existing = await db.canonical_items.find_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(404, "item_not_found")
+    if not existing.get("is_suggested"):
+        raise HTTPException(400, "not_a_suggested_item")
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.canonical_items.update_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]},
+        {"$set": {
+            "is_archived": True,
+            "archived_at": now,
+            "archived_by_user_id": user.get("id"),
+            "archived_by_name": user.get("name", ""),
+        }},
+    )
+    await db.item_aliases.update_many(
+        {"canonical_item_id": iid, "restaurant_id": user["restaurant_id"]},
+        {"$set": {"is_archived": True, "archived_at": now}},
+    )
+    await audit_log(
+        user, "DISMISS", "Item", iid,
+        f'{user["name"]} dismissed suggested item "{existing.get("name", "")}"',
+        old_value={"name": existing.get("name"), "is_suggested": True},
+    )
+    return {"status": "dismissed", "id": iid}
 
 
 @router.post("/aliases")
