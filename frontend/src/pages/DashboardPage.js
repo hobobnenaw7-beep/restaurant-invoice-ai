@@ -1,667 +1,278 @@
-import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { toast } from 'sonner';
 import { dataEvents } from '@/lib/dataEvents';
 import {
-  TrendingUp, TrendingDown,
-  Loader2, BarChart3, Package, Store, Tag,
-  PieChart as PieChartIcon,
-  ChevronRight, Users, Receipt, ExternalLink,
-  Plus, DollarSign, Clock, Calendar,
-  ShoppingCart, ClipboardList, Boxes,
+  TrendingUp, TrendingDown, Calendar, DollarSign, Receipt,
+  ShoppingCart, ClipboardList, Boxes, ChevronRight, Award,
+  AlertTriangle, Activity, Clock,
 } from 'lucide-react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
-/* ─── helpers ─── */
-function fmt(n) {
+/* ─────────────────────── helpers ─────────────────────── */
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+const YEAR_OPTIONS = (() => { const cur = new Date().getFullYear(); const y = []; for (let i = 2020; i <= cur + 1; i++) y.push(i); return y; })();
+
+function fmtCurrency(n) {
   if (n == null) return '$0';
-  if (Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(1)}k`;
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `$${(n / 1_000).toFixed(1)}k`;
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
-function fmtFull(n) {
-  return n != null ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00';
-}
-function fmtPrice(n) { return n != null ? `$${Number(n).toFixed(2)}` : '$0.00'; }
+
 function pctChange(curr, prev) {
   if (!prev || prev === 0) return null;
-  return ((curr - prev) / prev * 100).toFixed(1);
+  return ((curr - prev) / prev) * 100;
 }
 
-const DONUT_COLORS = ['#0d9488', '#6366f1', '#64748b'];
-const DONUT_BG = ['bg-teal-500', 'bg-indigo-500', 'bg-slate-500'];
-
-/* ═══════════════════ DONUT CHART ═══════════════════ */
-const DonutChart = memo(function DonutChart({ raw, salaries, other, prevRaw, prevSalaries, prevOther, onCategoryClick, periodLabel, prevLabel }) {
-  const total = raw + salaries + other;
-  const prevTotal = prevRaw + prevSalaries + prevOther;
-
-  const segments = useMemo(() => [
-    { name: 'Raw Materials', key: 'raw_materials', value: raw, color: DONUT_COLORS[0] },
-    { name: 'Salaries', key: 'salaries', value: salaries, color: DONUT_COLORS[1] },
-    { name: 'Other', key: 'other', value: other, color: DONUT_COLORS[2] },
-  ].filter(s => s.value > 0), [raw, salaries, other]);
-
-  const pctTotal = pctChange(total, prevTotal);
-  const noData = useMemo(() => [{ name: 'No data', value: 1 }], []);
-  const tooltipEl = useMemo(() => <DonutTooltip total={total} />, [total]);
-
-  const insights = useMemo(() => {
-    const result = [];
-    [{ name: 'Raw Materials', cur: raw, prev: prevRaw },
-     { name: 'Salaries', cur: salaries, prev: prevSalaries },
-     { name: 'Other', cur: other, prev: prevOther }]
-      .forEach(cat => {
-        const p = pctChange(cat.cur, cat.prev);
-        if (p !== null && Math.abs(p) > 3) {
-          result.push({ name: cat.name, pct: parseFloat(p), up: p > 0 });
-        }
-      });
-    return result;
-  }, [raw, salaries, other, prevRaw, prevSalaries, prevOther]);
-
-  const handlePieClick = useCallback((_, idx) => {
-    if (segments[idx]) onCategoryClick?.(segments[idx].key);
-  }, [segments, onCategoryClick]);
-
+/* ────────────────────── % delta pill (the ONLY colored piece) ────────────────────── */
+function DeltaPill({ pct, positiveIsGood = true, testId }) {
+  if (pct === null || pct === undefined) {
+    return <span className="text-[11px] text-slate-400 tabular-nums" data-testid={testId}>—</span>;
+  }
+  const isUp = pct > 0;
+  // For Expenses "positive change" (up) is BAD → red.  For Sales it's GOOD → green.
+  const good = positiveIsGood ? isUp : !isUp;
+  const color = Math.abs(pct) < 0.1
+    ? 'text-slate-400'
+    : good ? 'text-emerald-600' : 'text-rose-600';
+  const Icon = isUp ? TrendingUp : TrendingDown;
   return (
-    <Card className="border border-slate-100 shadow-sm" data-testid="donut-chart-card">
-      <CardHeader className="pb-2 pt-5 px-6">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-navy-900 flex items-center justify-center">
-            <PieChartIcon className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <CardTitle className="font-heading text-sm font-bold text-navy-900">Spending</CardTitle>
-            <p className="text-[10px] text-slate-400">{periodLabel || 'This month'} — click a category</p>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="px-6 pb-5">
-        <div className="flex flex-col sm:flex-row items-center gap-6">
-          <div className="relative w-44 h-44 flex-shrink-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={segments.length > 0 ? segments : noData}
-                  cx="50%" cy="50%"
-                  innerRadius={52} outerRadius={72}
-                  paddingAngle={segments.length > 1 ? 3 : 0}
-                  dataKey="value" stroke="none"
-                  onClick={handlePieClick}
-                  className="cursor-pointer"
-                >
-                  {segments.length > 0
-                    ? segments.map((s, i) => <Cell key={i} fill={s.color} className="cursor-pointer hover:opacity-80 transition-opacity" />)
-                    : <Cell fill="#e2e8f0" />}
-                </Pie>
-                <Tooltip content={tooltipEl} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total</span>
-              <span className="text-lg font-extrabold text-navy-900 tabular-nums">{fmt(total)}</span>
-              {pctTotal !== null && (
-                <span className={`text-[10px] font-semibold ${pctTotal > 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                  {pctTotal > 0 ? '+' : ''}{pctTotal}%
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex-1 space-y-3 w-full">
-            <div className="space-y-1">
-              {[
-                { label: 'Raw Materials', key: 'raw_materials', value: raw, bg: DONUT_BG[0], color: DONUT_COLORS[0] },
-                { label: 'Salaries', key: 'salaries', value: salaries, bg: DONUT_BG[1], color: DONUT_COLORS[1] },
-                { label: 'Other', key: 'other', value: other, bg: DONUT_BG[2], color: DONUT_COLORS[2] },
-              ].map(cat => {
-                const pctVal = total > 0 ? ((cat.value / total) * 100).toFixed(1) : 0;
-                return (
-                  <button
-                    key={cat.label}
-                    onClick={() => onCategoryClick?.(cat.key)}
-                    className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 transition-colors group"
-                    data-testid={`donut-legend-${cat.key}`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2.5 h-2.5 rounded-sm ${cat.bg}`} />
-                      <span className="text-xs text-slate-600 group-hover:text-navy-900 transition-colors">{cat.label}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-navy-900 tabular-nums">{fmtFull(cat.value)}</span>
-                      <Badge variant="secondary" className="text-[9px] h-4 px-1.5 tabular-nums">{pctVal}%</Badge>
-                      <ChevronRight className="w-3 h-3 text-slate-300 group-hover:text-teal-600 transition-colors" />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            {insights.length > 0 && (
-              <div className="border-t border-slate-100 pt-2.5 space-y-1" data-testid="category-insights">
-                {insights.map((ins, i) => (
-                  <div key={i} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs ${ins.up ? 'bg-red-50/70 text-red-700' : 'bg-emerald-50/70 text-emerald-700'}`} data-testid={`category-insight-${i}`}>
-                    {ins.up ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                    <span><span className="font-bold">{ins.name}</span> {ins.up ? 'increased' : 'decreased'} by <span className="font-bold">{Math.abs(ins.pct)}%</span>{prevLabel ? ` vs ${prevLabel}` : ''}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold tabular-nums ${color}`} data-testid={testId} data-delta-direction={isUp ? 'up' : 'down'}>
+      <Icon className="w-3 h-3" />
+      {isUp ? '+' : ''}{pct.toFixed(1)}%
+    </span>
   );
-});
+}
 
-function DonutTooltip({ active, payload, total }) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0];
-  const pct = total > 0 ? ((d.value / total) * 100).toFixed(1) : 0;
+/* ────────────────────── Stat card (neutral) ────────────────────── */
+function StatCard({ label, value, pct, positiveIsGood = true, Icon, iconTint = 'text-slate-400', onClick, testId, prevLabel }) {
   return (
-    <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 shadow-lg">
-      <p className="text-xs font-semibold" style={{ color: d.payload.color }}>{d.name}</p>
-      <p className="text-sm font-bold text-navy-900">{fmtFull(d.value)} ({pct}%)</p>
+    <button
+      type="button"
+      onClick={onClick}
+      className="group relative text-left bg-white border border-slate-200 rounded-xl px-5 py-4 hover:border-slate-300 transition-colors w-full"
+      data-testid={testId}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider">{label}</span>
+        {Icon && <Icon className={`w-4 h-4 ${iconTint}`} aria-hidden="true" />}
+      </div>
+      <div className="mt-2 flex items-baseline gap-3">
+        <span className="text-2xl font-bold text-slate-900 tabular-nums" data-testid={`${testId}-value`}>{value}</span>
+        <DeltaPill pct={pct} positiveIsGood={positiveIsGood} testId={`${testId}-delta`} />
+      </div>
+      {prevLabel && (
+        <p className="mt-0.5 text-[10px] text-slate-400">vs {prevLabel}</p>
+      )}
+    </button>
+  );
+}
+
+/* ────────────────────── Nav card (neutral) ────────────────────── */
+function NavCard({ label, Icon, iconTint, to, testId, navigate }) {
+  return (
+    <button
+      type="button"
+      onClick={() => navigate(to)}
+      className="group flex items-center justify-between bg-white border border-slate-200 rounded-xl px-5 py-4 hover:border-slate-300 transition-colors w-full"
+      data-testid={testId}
+    >
+      <div className="flex items-center gap-3">
+        {Icon && <Icon className={`w-4 h-4 ${iconTint}`} aria-hidden="true" />}
+        <span className="text-sm font-semibold text-slate-800">{label}</span>
+      </div>
+      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors" />
+    </button>
+  );
+}
+
+/* ────────────────────── Insights: Price Movement ────────────────────── */
+function PriceMovement({ alerts, loading, onItemClick }) {
+  // Use intelligence alerts (big recent vs older changes) as the price-movement source.
+  const rows = useMemo(() => {
+    return (alerts || [])
+      .map(a => ({
+        item: a.item,
+        pct: a.change_pct,
+        current: a.current_avg,
+        previous: a.previous_avg,
+      }))
+      .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+      .slice(0, 4);
+  }, [alerts]);
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5" data-testid="price-movement-card">
+      <div className="flex items-center gap-2 mb-3">
+        <Activity className="w-4 h-4 text-sky-400" aria-hidden="true" />
+        <h3 className="text-sm font-semibold text-slate-800">Price Movement</h3>
+      </div>
+      {loading ? (
+        <div className="space-y-2"><Skeleton className="h-8" /><Skeleton className="h-8" /><Skeleton className="h-8" /></div>
+      ) : rows.length === 0 ? (
+        <p className="text-xs text-slate-400" data-testid="price-movement-empty">No notable movement in this period.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {rows.map((r, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onItemClick?.(r.item)}
+              className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 transition-colors text-left"
+              data-testid={`price-movement-row-${i}`}
+            >
+              <span className="text-xs text-slate-700 truncate flex-1">{r.item}</span>
+              <span className="text-[11px] text-slate-500 tabular-nums flex-shrink-0">
+                ${r.previous.toFixed(2)} → ${r.current.toFixed(2)}
+              </span>
+              <DeltaPill pct={r.pct} positiveIsGood={false} testId={`price-movement-delta-${i}`} />
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-/* ═══════════════════ SALES DONUT ═══════════════════ */
-const SalesDonut = memo(function SalesDonut({ sales, prevSales, onCategoryClick, periodLabel, prevLabel }) {
-  const pctSales = pctChange(sales, prevSales);
-  const segments = useMemo(() => sales > 0 ? [{ name: 'Sales', value: sales, color: '#0d9488' }] : [], [sales]);
-  const noData = useMemo(() => [{ name: 'No data', value: 1 }], []);
-  const tooltipEl = useMemo(() => <DonutTooltip total={sales} />, [sales]);
+/* ────────────────────── Insights: Best Vendor ────────────────────── */
+function BestVendor({ comparison, loading, onItemClick }) {
+  const rows = useMemo(() => {
+    return (comparison || [])
+      .filter(c => c.best_vendor && c.vendor_count > 1 && c.savings_pct > 0)
+      .slice(0, 4);
+  }, [comparison]);
 
   return (
-    <Card className="border border-slate-100 shadow-sm" data-testid="sales-donut-card">
-      <CardHeader className="pb-2 pt-5 px-6">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center">
-            <DollarSign className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <CardTitle className="font-heading text-sm font-bold text-navy-900">Sales</CardTitle>
-            <p className="text-[10px] text-slate-400">{periodLabel || 'This month'} — click for details</p>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="px-6 pb-5">
-        <div className="flex items-center gap-6">
-          <div className="relative w-36 h-36 flex-shrink-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={segments.length > 0 ? segments : noData}
-                  cx="50%" cy="50%"
-                  innerRadius={44} outerRadius={60}
-                  dataKey="value" stroke="none"
-                  onClick={() => onCategoryClick?.('sales')}
-                  className="cursor-pointer"
-                >
-                  {segments.length > 0
-                    ? segments.map((s, i) => <Cell key={i} fill={s.color} className="cursor-pointer hover:opacity-80 transition-opacity" />)
-                    : <Cell fill="#e2e8f0" />}
-                </Pie>
-                <Tooltip content={tooltipEl} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Revenue</span>
-              <span className="text-base font-extrabold text-navy-900 tabular-nums">{fmt(sales)}</span>
-              {pctSales !== null && (
-                <span className={`text-[10px] font-semibold ${pctSales > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                  {pctSales > 0 ? '+' : ''}{pctSales}%
-                </span>
-              )}
-            </div>
-          </div>
-          <div className="flex-1 space-y-3">
+    <div className="bg-white border border-slate-200 rounded-xl p-5" data-testid="best-vendor-card">
+      <div className="flex items-center gap-2 mb-3">
+        <Award className="w-4 h-4 text-amber-400" aria-hidden="true" />
+        <h3 className="text-sm font-semibold text-slate-800">Best Vendor</h3>
+      </div>
+      {loading ? (
+        <div className="space-y-2"><Skeleton className="h-8" /><Skeleton className="h-8" /><Skeleton className="h-8" /></div>
+      ) : rows.length === 0 ? (
+        <p className="text-xs text-slate-400" data-testid="best-vendor-empty">Not enough data to compare vendors yet.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {rows.map((r, i) => (
             <button
-              onClick={() => onCategoryClick?.('sales')}
-              className="w-full flex items-center justify-between p-2.5 rounded-lg hover:bg-slate-50 transition-colors group"
-              data-testid="sales-donut-legend"
+              key={i}
+              type="button"
+              onClick={() => onItemClick?.(r.item)}
+              className="w-full flex items-center justify-between gap-3 px-2 py-1.5 rounded-md hover:bg-slate-50 transition-colors text-left"
+              data-testid={`best-vendor-row-${i}`}
             >
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-sm bg-teal-500" />
-                <span className="text-xs text-slate-600 group-hover:text-navy-900">Total Sales</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-slate-800 truncate">{r.item}</p>
+                <p className="text-[11px] text-slate-500 truncate">{r.best_vendor}</p>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-navy-900 tabular-nums">{fmtFull(sales)}</span>
-                <ChevronRight className="w-3 h-3 text-slate-300 group-hover:text-teal-600 transition-colors" />
+              <div className="text-right flex-shrink-0">
+                <p className="text-xs font-semibold text-slate-900 tabular-nums">${r.best_price?.toFixed(2)}</p>
+                <p className="text-[10px] text-slate-400">{r.vendor_count} vendors</p>
               </div>
             </button>
-            {pctSales !== null && (
-              <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs ${parseFloat(pctSales) > 0 ? 'bg-emerald-50/70 text-emerald-700' : 'bg-red-50/70 text-red-700'}`}>
-                {parseFloat(pctSales) > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                <span>Sales {parseFloat(pctSales) > 0 ? 'up' : 'down'} <span className="font-bold">{Math.abs(parseFloat(pctSales))}%</span>{prevLabel ? ` vs ${prevLabel}` : ''}</span>
-              </div>
-            )}
-          </div>
+          ))}
         </div>
-      </CardContent>
-    </Card>
-  );
-});
-
-/* ═══════════════════ DRILL-DOWN SHEET ═══════════════════ */
-function DrillDownSheet({ open, onClose, category, api }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
-  const catKey = useRef(null);
-
-  const now = new Date();
-  const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-  const todayStr = now.toISOString().slice(0, 10);
-
-  const [dateFrom, setDateFrom] = useState(monthStart);
-  const [dateTo, setDateTo] = useState(todayStr);
-
-  const fetchData = useCallback((cat, df, dt) => {
-    if (!cat) return;
-    setLoading(true);
-    setData(null);
-    const params = {};
-    if (df) params.date_from = df;
-    if (dt) params.date_to = dt;
-    api.get(`/dashboard/drill-down/${cat}`, { params })
-      .then(res => setData(res.data))
-      .catch(() => toast.error('Failed to load details'))
-      .finally(() => setLoading(false));
-  }, [api]);
-
-  useEffect(() => {
-    if (!open || !category) return;
-    if (catKey.current !== category) {
-      setDateFrom(monthStart);
-      setDateTo(todayStr);
-    }
-    catKey.current = category;
-    fetchData(category, catKey.current !== category ? monthStart : dateFrom, catKey.current !== category ? todayStr : dateTo);
-  }, [open, category]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const applyDateFilter = useCallback(() => {
-    fetchData(category, dateFrom, dateTo);
-  }, [fetchData, category, dateFrom, dateTo]);
-
-  const handleClose = useCallback((isOpen) => {
-    if (!isOpen) {
-      requestAnimationFrame(() => {
-        onClose();
-        catKey.current = null;
-        setData(null);
-      });
-    }
-  }, [onClose]);
-
-  const catLabel = category === 'raw_materials' ? 'Raw Materials' : category === 'salaries' ? 'Salaries' : category === 'sales' ? 'Sales' : 'Other Expenses';
-  const catColor = category === 'raw_materials' ? 'teal' : category === 'salaries' ? 'indigo' : category === 'sales' ? 'teal' : 'slate';
-  const CatIcon = category === 'raw_materials' ? Package : category === 'salaries' ? Users : category === 'sales' ? DollarSign : Receipt;
-
-  return (
-    <Sheet open={open} onOpenChange={handleClose}>
-      <SheetContent className="w-full sm:max-w-lg overflow-y-auto p-0" data-testid="drill-down-sheet">
-        <SheetHeader className={`sticky top-0 z-10 bg-${catColor}-50 border-b border-${catColor}-100 px-6 py-5`}>
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl bg-${catColor}-600 flex items-center justify-center`}>
-              <CatIcon className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <SheetTitle className="font-heading text-lg font-bold text-navy-900" data-testid="drill-down-title">{catLabel}</SheetTitle>
-              {!loading && data && (
-                <p className="text-sm font-semibold text-slate-500" data-testid="drill-down-total">
-                  Total: <span className={`text-${catColor}-700`}>{fmtFull(data.total)}</span>
-                </p>
-              )}
-            </div>
-          </div>
-        </SheetHeader>
-
-        <div className="px-6 py-5">
-          <div className="flex items-center gap-2 mb-4 pb-4 border-b border-slate-100" data-testid="drill-down-dates">
-            <Calendar className="w-4 h-4 text-slate-400 flex-shrink-0" />
-            <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 text-xs flex-1" data-testid="drill-down-date-from" />
-            <span className="text-xs text-slate-400">to</span>
-            <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-8 text-xs flex-1" data-testid="drill-down-date-to" />
-            <Button size="sm" onClick={applyDateFilter} className="h-8 px-3 text-xs bg-teal-600 hover:bg-teal-700 text-white" data-testid="drill-down-apply-dates">
-              Apply
-            </Button>
-          </div>
-
-          {loading && (
-            <div className="space-y-4" data-testid="drill-down-loading">
-              {[1,2,3].map(i => <Skeleton key={i} className="h-20 rounded-lg" />)}
-            </div>
-          )}
-
-          {!loading && data && category === 'raw_materials' && (
-            <RawMaterialsDrillDown items={data.items} navigate={navigate} />
-          )}
-          {!loading && data && category === 'salaries' && (
-            <SalariesDrillDown employees={data.employees} total={data.total} />
-          )}
-          {!loading && data && category === 'other' && (
-            <OtherDrillDown categories={data.categories} />
-          )}
-          {!loading && data && category === 'sales' && (
-            <SalesDrillDown records={data.records} total={data.total} />
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-/* ─── Raw Materials Drill-Down ─── */
-function RawMaterialsDrillDown({ items, navigate }) {
-  const [expanded, setExpanded] = useState(null);
-
-  if (!items.length) return (
-    <div className="text-center py-10">
-      <Package className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-      <p className="text-sm text-slate-400">No raw material purchases this month</p>
-    </div>
-  );
-
-  return (
-    <div className="space-y-2" data-testid="raw-materials-list">
-      <p className="text-xs text-slate-400 mb-3">{items.length} items purchased this month. Tap to compare vendors.</p>
-      {items.map((item, idx) => {
-        const isOpen = expanded === idx;
-        return (
-          <div key={idx} className="border border-slate-100 rounded-lg overflow-hidden" data-testid={`raw-item-${idx}`}>
-            <button
-              onClick={() => setExpanded(isOpen ? null : idx)}
-              className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50/60 transition-colors"
-              data-testid={`raw-item-toggle-${idx}`}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <Tag className="w-3.5 h-3.5 text-teal-600 flex-shrink-0" />
-                <span className="text-sm font-semibold text-navy-900 truncate">{item.item_name}</span>
-                <span className="text-[10px] text-slate-400 flex-shrink-0">{item.vendor_count} vendor{item.vendor_count !== 1 ? 's' : ''}</span>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <span className="text-sm font-bold text-navy-900 tabular-nums">{fmtFull(item.total_spent)}</span>
-                <ChevronRight className={`w-4 h-4 text-slate-300 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
-              </div>
-            </button>
-
-            {isOpen && (
-              <div className="border-t border-slate-100 bg-slate-50/30" data-testid={`raw-item-vendors-${idx}`}>
-                {item.vendors.map((v, vi) => {
-                  const isCheapest = v.vendor === item.cheapest_vendor;
-                  return (
-                    <div key={vi} className={`flex items-center justify-between px-4 py-2.5 border-b last:border-b-0 border-slate-100 ${isCheapest ? 'bg-teal-50/50' : ''}`} data-testid={`raw-vendor-${idx}-${vi}`}>
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Store className={`w-3.5 h-3.5 flex-shrink-0 ${isCheapest ? 'text-teal-600' : 'text-slate-400'}`} />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className={`text-xs truncate ${isCheapest ? 'font-bold text-teal-700' : 'text-slate-600'}`}>{v.vendor}</span>
-                            {isCheapest && <Badge className="bg-teal-600 text-white text-[8px] h-4 px-1.5 font-bold">CHEAPEST</Badge>}
-                          </div>
-                          <span className="text-[10px] text-slate-400">
-                            {v.purchase_count}x purchased · Last: {v.last_date}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3 flex-shrink-0">
-                        <div className="text-right">
-                          <div className={`text-xs font-bold tabular-nums ${isCheapest ? 'text-teal-700' : 'text-navy-900'}`}>
-                            {fmtPrice(v.latest_price)}{v.unit && <span className="text-[10px] text-slate-400 font-normal">/{v.unit}</span>}
-                          </div>
-                          {v.min_price !== v.max_price && (
-                            <div className="text-[10px] text-slate-400 tabular-nums">
-                              {fmtPrice(v.min_price)} – {fmtPrice(v.max_price)}
-                            </div>
-                          )}
-                        </div>
-                        {v.supplier_id && (
-                          <button
-                            onClick={() => navigate(`/vendors/${v.supplier_id}`)}
-                            className="p-1 rounded hover:bg-white transition-colors"
-                            title="View vendor details"
-                            data-testid={`goto-vendor-${idx}-${vi}`}
-                          >
-                            <ExternalLink className="w-3.5 h-3.5 text-slate-400 hover:text-teal-600" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })}
+      )}
     </div>
   );
 }
 
-/* ─── Salaries Drill-Down ─── */
-function SalariesDrillDown({ employees, total }) {
-  if (!employees.length) return (
-    <div className="text-center py-10">
-      <Users className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-      <p className="text-sm text-slate-400">No salary payments this month</p>
-    </div>
-  );
+/* ────────────────────── Insights: Alerts ────────────────────── */
+function AlertsCard({ alerts, loading, onItemClick }) {
+  const severe = useMemo(() => {
+    return (alerts || [])
+      .filter(a => a.severity === 'high' || Math.abs(a.change_pct) >= 10)
+      .sort((a, b) => Math.abs(b.change_pct) - Math.abs(a.change_pct))
+      .slice(0, 5);
+  }, [alerts]);
 
   return (
-    <div className="space-y-3" data-testid="salaries-list">
-      <p className="text-xs text-slate-400 mb-3">{employees.length} employee{employees.length !== 1 ? 's' : ''} paid this month</p>
-      {employees.map((emp, idx) => {
-        const share = total > 0 ? ((emp.amount / total) * 100).toFixed(0) : 0;
-        return (
-          <div key={idx} className="flex items-center gap-4 p-3 rounded-lg border border-slate-100 hover:border-indigo-100 transition-colors" data-testid={`salary-row-${idx}`}>
-            <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
-              <span className="text-sm font-bold text-indigo-600">{emp.name.charAt(0).toUpperCase()}</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-navy-900 truncate">{emp.name}</span>
-                <span className="text-sm font-bold text-navy-900 tabular-nums flex-shrink-0">{fmtFull(emp.amount)}</span>
-              </div>
-              <div className="flex items-center justify-between mt-1">
-                <span className="text-[11px] text-slate-400">{emp.position || 'Staff'}</span>
-                <span className="text-[10px] text-slate-400">{share}% of total</span>
-              </div>
-              <div className="mt-1.5 h-1 bg-slate-100 rounded-full overflow-hidden">
-                <div className="h-full bg-indigo-400 rounded-full transition-all duration-500" style={{ width: `${share}%` }} />
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ─── Other Expenses Drill-Down ─── */
-function OtherDrillDown({ categories }) {
-  if (!categories.length) return (
-    <div className="text-center py-10">
-      <Receipt className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-      <p className="text-sm text-slate-400">No other expenses this month</p>
-    </div>
-  );
-
-  return (
-    <div className="space-y-4" data-testid="other-expenses-list">
-      {categories.map((cat, ci) => (
-        <div key={ci} data-testid={`other-category-${ci}`}>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-navy-900 uppercase tracking-wide">{cat.category_name}</span>
-            <span className="text-xs font-bold text-slate-600 tabular-nums">{fmtFull(cat.total)}</span>
-          </div>
-          <div className="space-y-1.5">
-            {cat.items.map((item, ii) => (
-              <div key={ii} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 hover:border-slate-200 transition-colors" data-testid={`other-item-${ci}-${ii}`}>
-                <div className="min-w-0">
-                  <span className="text-sm font-medium text-navy-900 truncate block">{item.title}</span>
-                  <span className="text-[11px] text-slate-400">{item.expense_date}{item.vendor ? ` · ${item.vendor}` : ''}</span>
+    <div className="bg-white border border-slate-200 rounded-xl p-5" data-testid="alerts-card">
+      <div className="flex items-center gap-2 mb-3">
+        <AlertTriangle className="w-4 h-4 text-rose-400" aria-hidden="true" />
+        <h3 className="text-sm font-semibold text-slate-800">Alerts</h3>
+      </div>
+      {loading ? (
+        <div className="space-y-2"><Skeleton className="h-8" /><Skeleton className="h-8" /></div>
+      ) : severe.length === 0 ? (
+        <p className="text-xs text-slate-400" data-testid="alerts-empty">No active alerts. Everything looks calm.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {severe.map((a, i) => {
+            const high = a.severity === 'high' || Math.abs(a.change_pct) >= 20;
+            const cls = high
+              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              : 'bg-amber-50 border-amber-200 text-amber-800';
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => onItemClick?.(a.item)}
+                className={`w-full flex items-center justify-between gap-3 px-3 py-1.5 rounded-md border text-left transition-opacity hover:opacity-90 ${cls}`}
+                data-testid={`alert-row-${i}`}
+                data-severity={a.severity}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-current flex-shrink-0" aria-hidden="true" />
+                  <span className="text-xs font-medium truncate">{a.item}</span>
                 </div>
-                <span className="text-sm font-bold text-navy-900 tabular-nums flex-shrink-0 ml-3">{fmtFull(item.amount)}</span>
-              </div>
-            ))}
-          </div>
+                <span className="text-[11px] font-bold tabular-nums flex-shrink-0">
+                  {a.change_pct > 0 ? '+' : ''}{a.change_pct.toFixed(1)}%
+                </span>
+              </button>
+            );
+          })}
         </div>
-      ))}
+      )}
     </div>
   );
 }
 
-/* ─── Sales Drill-Down ─── */
-function SalesDrillDown({ records, total }) {
-  if (!records.length) return (
-    <div className="text-center py-10">
-      <DollarSign className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-      <p className="text-sm text-slate-400">No sales in this date range</p>
-    </div>
-  );
-
-  return (
-    <div className="space-y-2" data-testid="sales-drill-list">
-      <p className="text-xs text-slate-400 mb-3">{records.length} sale{records.length !== 1 ? 's' : ''} in this period — Total: <span className="font-bold text-teal-700">{fmtFull(total)}</span></p>
-      {records.map((rec, idx) => (
-        <div key={idx} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 hover:border-teal-100 transition-colors" data-testid={`sale-row-${idx}`}>
-          <div className="min-w-0">
-            <span className="text-sm font-semibold text-navy-900">{rec.report_date}</span>
-            {rec.source && <span className="text-[11px] text-slate-400 ml-2">{rec.source}</span>}
-            {rec.notes && <p className="text-[11px] text-slate-400 mt-0.5 truncate">{rec.notes}</p>}
-          </div>
-          <div className="text-right flex-shrink-0 ml-3">
-            <span className="text-sm font-bold text-teal-700 tabular-nums">{fmtFull(rec.total_sales)}</span>
-            {(rec.total_tax > 0 || rec.total_tips > 0) && (
-              <div className="text-[10px] text-slate-400 tabular-nums">
-                {rec.total_tax > 0 && <span>Tax: {fmtPrice(rec.total_tax)}</span>}
-                {rec.total_tips > 0 && <span className="ml-2">Tips: {fmtPrice(rec.total_tips)}</span>}
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* ─── Loading / Empty ─── */
-function LoadingSkeleton() {
-  return (
-    <div className="space-y-6" data-testid="dashboard-loading">
-      <div><Skeleton className="h-8 w-48 mb-2" /><Skeleton className="h-4 w-72" /></div>
-      <Skeleton className="h-10 w-64 rounded-xl" />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6"><Skeleton className="h-48 rounded-xl" /><Skeleton className="h-48 rounded-xl" /></div>
-    </div>
-  );
-}
-
-/* ═══════════════════ TOP ACTIONS (Add Expense, Sales) ═══════════════════ */
-const TOP_ACTIONS = [
-  { label: 'Add Expense', icon: Plus, path: '/expenses', color: 'bg-teal-600', hoverColor: 'hover:bg-teal-700' },
-  { label: 'Sales', icon: DollarSign, path: '/sales', color: 'bg-indigo-600', hoverColor: 'hover:bg-indigo-700' },
-];
-
-function TopActions({ navigate }) {
-  return (
-    <div className="flex gap-2.5 flex-wrap" data-testid="quick-actions">
-      {TOP_ACTIONS.map((action, i) => (
-        <button
-          key={i}
-          onClick={() => navigate(action.path)}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl ${action.color} ${action.hoverColor} text-white text-xs font-semibold whitespace-nowrap transition-all hover:shadow-md active:scale-[0.97]`}
-          data-testid={`quick-action-${i}`}
-        >
-          <action.icon className="w-3.5 h-3.5" />
-          {action.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/* ═══════════════════ SECONDARY NAV (Items, Orders, Procurement) ═══════════════════ */
-const SECONDARY_NAV = [
-  { label: 'Items', icon: Boxes, path: '/items' },
-  { label: 'Orders', icon: ShoppingCart, path: '/orders' },
-  { label: 'Procurement', icon: ClipboardList, path: '/procurement' },
-];
-
-function SecondaryNav({ navigate }) {
-  return (
-    <div className="flex gap-2 flex-wrap" data-testid="secondary-nav">
-      {SECONDARY_NAV.map((item, i) => (
-        <button
-          key={item.path}
-          onClick={() => navigate(item.path)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold whitespace-nowrap transition-all hover:border-teal-400 hover:text-teal-700 hover:shadow-sm active:scale-[0.97]"
-          data-testid={`secondary-nav-${i}`}
-          data-nav-label={item.label.toLowerCase()}
-        >
-          <item.icon className="w-3.5 h-3.5" />
-          {item.label}
-          <ChevronRight className="w-3 h-3 text-slate-300" />
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/* ═══════════════════ DATA FRESHNESS ═══════════════════ */
+/* ────────────────────── Data Freshness ────────────────────── */
 function DataFreshness({ lastUpdate, purchaseCount }) {
-  const label = useMemo(() => {
+  const ago = useMemo(() => {
     if (!lastUpdate) return null;
     try {
       const d = new Date(lastUpdate);
-      const now = new Date();
-      const diffMs = now - d;
-      const diffMin = Math.floor(diffMs / 60000);
+      const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
+      if (diffMin < 1) return 'just now';
+      if (diffMin < 60) return `${diffMin}m ago`;
       const diffHr = Math.floor(diffMin / 60);
-      const diffDay = Math.floor(diffHr / 24);
-      let ago;
-      if (diffMin < 1) ago = 'just now';
-      else if (diffMin < 60) ago = `${diffMin}m ago`;
-      else if (diffHr < 24) ago = `${diffHr}h ago`;
-      else ago = `${diffDay}d ago`;
-      return ago;
+      if (diffHr < 24) return `${diffHr}h ago`;
+      return `${Math.floor(diffHr / 24)}d ago`;
     } catch { return null; }
   }, [lastUpdate]);
-
-  if (!label) return null;
-
+  if (!ago) return null;
   return (
     <div className="flex items-center gap-1.5 text-[11px] text-slate-400" data-testid="data-freshness">
-      <Clock className="w-3 h-3" />
-      <span>Updated {label}</span>
+      <Clock className="w-3 h-3" aria-hidden="true" />
+      <span>Updated {ago}</span>
       <span className="text-slate-300">·</span>
       <span>Based on {purchaseCount || 0} purchase records</span>
     </div>
   );
 }
 
-/* ═══════════════════ MAIN PAGE ═══════════════════ */
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const YEAR_OPTIONS = (() => { const cur = new Date().getFullYear(); const years = []; for (let y = 2020; y <= cur + 1; y++) years.push(y); return years; })();
-
+/* ═══════════════════════ MAIN PAGE ═══════════════════════ */
 export default function DashboardPage() {
   const { api } = useAuth();
   const navigate = useNavigate();
+
   const [data, setData] = useState(null);
+  const [intel, setIntel] = useState({ alerts: [], comparison: [] });
   const [loading, setLoading] = useState(true);
-  const [seeding, setSeeding] = useState(false);
-  const [drillDown, setDrillDown] = useState(null);
+  const [intelLoading, setIntelLoading] = useState(true);
 
   const now = new Date();
   const [filterYear, setFilterYear] = useState(now.getFullYear());
-  const [filterMonth, setFilterMonth] = useState(0); // 0 = all months
+  const [filterMonth, setFilterMonth] = useState(0);
 
   const load = useCallback(async (yr, mo) => {
     try {
@@ -670,23 +281,32 @@ export default function DashboardPage() {
       if (mo !== undefined) params.month = mo;
       const res = await api.get('/dashboard/summary', { params });
       setData(res.data);
-    }
-    catch { toast.error('Failed to load dashboard'); }
+    } catch { toast.error('Failed to load dashboard'); }
     finally { setLoading(false); }
   }, [api]);
 
-  const seedData = useCallback(async () => {
-    setSeeding(true);
-    try { await api.post('/seed'); toast.success('Demo data loaded!'); await load(filterYear, filterMonth); }
-    catch { toast.error('Failed to seed data'); }
-    finally { setSeeding(false); }
-  }, [api, load, filterYear, filterMonth]);
+  const loadIntel = useCallback(async () => {
+    try {
+      const [intelRes, cmpRes] = await Promise.all([
+        api.get('/prices/intelligence'),
+        api.get('/prices/vendor-comparison'),
+      ]);
+      setIntel({
+        alerts: intelRes.data?.price_alerts || [],
+        comparison: cmpRes.data?.items || [],
+      });
+    } catch {
+      // Silent — insights are optional; the main stat cards still show.
+      setIntel({ alerts: [], comparison: [] });
+    } finally { setIntelLoading(false); }
+  }, [api]);
 
   useEffect(() => { load(filterYear, filterMonth); }, [load, filterYear, filterMonth]);
-
-  useEffect(() => {
-    return dataEvents.subscribe(() => load(filterYear, filterMonth));
-  }, [load, filterYear, filterMonth]);
+  useEffect(() => { loadIntel(); }, [loadIntel]);
+  useEffect(() => dataEvents.subscribe(() => {
+    load(filterYear, filterMonth);
+    loadIntel();
+  }), [load, loadIntel, filterYear, filterMonth]);
 
   const periodLabel = useMemo(() => {
     if (filterMonth > 0) return `${MONTH_NAMES[filterMonth - 1]} ${filterYear}`;
@@ -702,56 +322,49 @@ export default function DashboardPage() {
     return `${filterYear - 1}`;
   }, [filterYear, filterMonth]);
 
-  const openDrillDown = useCallback((category) => {
-    // Spending categories → dedicated Expenses sub-page
-    if (category === 'raw_materials') { navigate('/expenses/raw-materials'); return; }
-    if (category === 'salaries')      { navigate('/expenses/salaries');      return; }
-    if (category === 'other')         { navigate('/expenses/other');         return; }
-    // Sales → drill-down sheet
-    setDrillDown(category);
-  }, [navigate]);
-  const closeDrillDown = useCallback(() => setDrillDown(null), []);
+  if (loading) {
+    return (
+      <div className="space-y-5 max-w-[1100px]" data-testid="dashboard-loading">
+        <div><Skeleton className="h-8 w-48 mb-2" /><Skeleton className="h-4 w-72" /></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Skeleton className="h-24 rounded-xl" /><Skeleton className="h-24 rounded-xl" />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Skeleton className="h-20 rounded-xl" /><Skeleton className="h-20 rounded-xl" /><Skeleton className="h-20 rounded-xl" />
+        </div>
+      </div>
+    );
+  }
 
-  if (loading) return <LoadingSkeleton />;
-
-  const hasData = data && (
-    (data.month_raw_materials || 0) > 0 ||
-    (data.month_salaries || 0) > 0 ||
-    (data.month_other_expenses || 0) > 0 ||
-    (data.month_sales || 0) > 0
-  );
+  const salesNow = data?.month_sales || 0;
+  const salesPrev = data?.prev_month_sales || 0;
+  const expensesNow = (data?.month_raw_materials || 0) + (data?.month_salaries || 0) + (data?.month_other_expenses || 0);
+  const expensesPrev = (data?.prev_month_raw_materials || 0) + (data?.prev_month_salaries || 0) + (data?.prev_month_other_expenses || 0);
 
   return (
-    <div className="space-y-5 max-w-[1100px]" data-testid="dashboard-page">
+    <div className="space-y-6 max-w-[1100px]" data-testid="dashboard-page">
+      {/* ── header ── */}
       <div>
-        <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-navy-900 tracking-tight">Dashboard</h1>
-        <p className="text-sm text-slate-400 mt-1">Quick actions and high-level insights.</p>
+        <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Dashboard</h1>
+        <p className="text-sm text-slate-500 mt-1">A calm, focused view of the numbers that matter.</p>
       </div>
 
-      {/* Top actions */}
-      <TopActions navigate={navigate} />
-
-      {/* Secondary nav — navigation only, no data preview */}
-      <SecondaryNav navigate={navigate} />
-
-      {/* Period filter + freshness */}
+      {/* ── Period filter ── */}
       <div className="flex items-center gap-3 flex-wrap" data-testid="dashboard-period-filters">
         <div className="flex items-center gap-1.5">
-          <Calendar className="w-4 h-4 text-slate-400" />
-          <span className="text-xs font-semibold text-slate-500">Period:</span>
+          <Calendar className="w-4 h-4 text-slate-400" aria-hidden="true" />
+          <span className="text-xs font-semibold text-slate-500">Period</span>
         </div>
         <Select value={String(filterYear)} onValueChange={(v) => setFilterYear(Number(v))}>
-          <SelectTrigger className="w-[100px] h-8 text-xs" data-testid="filter-year">
+          <SelectTrigger className="w-[100px] h-8 text-xs bg-white" data-testid="filter-year">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {YEAR_OPTIONS.map(y => (
-              <SelectItem key={y} value={String(y)} className="text-xs">{y}</SelectItem>
-            ))}
+            {YEAR_OPTIONS.map(y => <SelectItem key={y} value={String(y)} className="text-xs">{y}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={String(filterMonth)} onValueChange={(v) => setFilterMonth(Number(v))}>
-          <SelectTrigger className="w-[140px] h-8 text-xs" data-testid="filter-month">
+          <SelectTrigger className="w-[140px] h-8 text-xs bg-white" data-testid="filter-month">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -762,50 +375,75 @@ export default function DashboardPage() {
           </SelectContent>
         </Select>
         <span className="text-[11px] text-slate-400 hidden sm:inline">{periodLabel}</span>
-        {hasData && <DataFreshness lastUpdate={data.last_data_update} purchaseCount={data.purchase_count} />}
+        <div className="flex-1" />
+        <DataFreshness lastUpdate={data?.last_data_update} purchaseCount={data?.purchase_count} />
       </div>
 
-      {!hasData && (
-        <Card className="border-2 border-dashed border-slate-200 shadow-sm" data-testid="empty-data-banner">
-          <CardContent className="py-8 text-center">
-            <BarChart3 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <h2 className="font-heading text-base font-bold text-navy-900 mb-1">No financial data yet</h2>
-            <p className="text-xs text-slate-400 mb-4 max-w-sm mx-auto">Upload your first invoice or add an expense to see your charts come to life.</p>
-            <Button onClick={seedData} disabled={seeding} variant="outline" size="sm" className="text-xs" data-testid="seed-data-btn">
-              {seeding ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null} Load Demo Data
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+      {/* ── Row 1: Sales + Expenses ── */}
+      <Card className="border-0 shadow-none bg-transparent">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="stats-row-1">
+          <StatCard
+            label="Sales"
+            value={fmtCurrency(salesNow)}
+            pct={pctChange(salesNow, salesPrev)}
+            positiveIsGood
+            Icon={DollarSign}
+            iconTint="text-emerald-300"
+            onClick={() => navigate('/sales')}
+            testId="stat-sales"
+            prevLabel={prevLabel}
+          />
+          <StatCard
+            label="Expenses"
+            value={fmtCurrency(expensesNow)}
+            pct={pctChange(expensesNow, expensesPrev)}
+            positiveIsGood={false}
+            Icon={Receipt}
+            iconTint="text-rose-300"
+            onClick={() => navigate('/expenses')}
+            testId="stat-expenses"
+            prevLabel={prevLabel}
+          />
+        </div>
+      </Card>
 
-      {/* Charts: Spending + Sales */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5" data-testid="dashboard-main-row">
-        <DonutChart
-          raw={data?.month_raw_materials || 0}
-          salaries={data?.month_salaries || 0}
-          other={data?.month_other_expenses || 0}
-          prevRaw={data?.prev_month_raw_materials || 0}
-          prevSalaries={data?.prev_month_salaries || 0}
-          prevOther={data?.prev_month_other_expenses || 0}
-          onCategoryClick={openDrillDown}
-          periodLabel={periodLabel}
-          prevLabel={prevLabel}
+      {/* ── Row 2: Orders / Procurement / Items ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="stats-row-2">
+        <NavCard
+          label="Orders" Icon={ShoppingCart} iconTint="text-sky-300"
+          to="/orders" testId="nav-orders" navigate={navigate}
         />
-        <SalesDonut
-          sales={data?.month_sales || 0}
-          prevSales={data?.prev_month_sales || 0}
-          onCategoryClick={openDrillDown}
-          periodLabel={periodLabel}
-          prevLabel={prevLabel}
+        <NavCard
+          label="Procurement" Icon={ClipboardList} iconTint="text-indigo-300"
+          to="/procurement" testId="nav-procurement" navigate={navigate}
+        />
+        <NavCard
+          label="Items" Icon={Boxes} iconTint="text-teal-300"
+          to="/items" testId="nav-items" navigate={navigate}
         />
       </div>
 
-      <DrillDownSheet
-        open={!!drillDown}
-        onClose={closeDrillDown}
-        category={drillDown}
-        api={api}
-      />
+      {/* ── Insights ── */}
+      <div className="pt-2" data-testid="insights-section">
+        <h2 className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Insights</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <PriceMovement
+            alerts={intel.alerts}
+            loading={intelLoading}
+            onItemClick={() => navigate('/procurement')}
+          />
+          <BestVendor
+            comparison={intel.comparison}
+            loading={intelLoading}
+            onItemClick={() => navigate('/procurement')}
+          />
+          <AlertsCard
+            alerts={intel.alerts}
+            loading={intelLoading}
+            onItemClick={() => navigate('/procurement')}
+          />
+        </div>
+      </div>
     </div>
   );
 }

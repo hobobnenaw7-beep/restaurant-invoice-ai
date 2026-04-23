@@ -3,6 +3,45 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 21: Dashboard Visual Refinement (Minimal Color) — COMPLETE (2026-02-14)
+
+### Goal
+Reduce visual clutter on the dashboard. Color is now reserved for
+meaning (up/down, alerts) — never for decoration.
+
+### Layout (matches spec exactly)
+- **Row 1** — 2 neutral stat cards: **Sales** (green delta when up),
+  **Expenses** (red delta when up). Both clickable → sales / expenses
+  pages.
+- **Row 2** — 3 nav cards with soft-tinted icons: **Orders**,
+  **Procurement**, **Items**. Pure navigation, no data preview.
+- **Insights** (below) — 3 neutral cards:
+  - **Price Movement** — only the delta pill is colored; rows neutral.
+  - **Best Vendor** — completely neutral list (no hierarchy noise).
+  - **Alerts** — red background when severity high / |Δ|≥20%,
+    amber when ≥10%. Only place a colored background appears on the
+    page.
+
+### Color rules enforced
+- Default surface: white + slate-200 border
+- Numbers: slate-900 (black neutral)
+- Icons: pastel tints (`text-emerald-300`, `text-rose-300`,
+  `text-sky-300`, `text-indigo-300`, `text-teal-300`, `text-amber-400`)
+- Meaning only: green up = good (sales), red up = bad (expenses),
+  amber/red for alerts
+
+### Files
+- `/app/frontend/src/pages/DashboardPage.js` — rewritten
+  (~420 lines; stat cards, nav cards, PriceMovement, BestVendor,
+  AlertsCard, DeltaPill). Data sources: `/api/dashboard/summary`,
+  `/api/prices/intelligence`, `/api/prices/vendor-comparison`.
+
+### Verified
+- Smoke test: row_sales/row_expenses rendered; row2 Orders/Procurement/Items
+  rendered; Insights trio rendered; 6 colored delta indicators; prior
+  heavy donut charts removed. ESLint clean.
+
+
 ## Milestone 20: Analytics Migration to Canonical-ID Joins — COMPLETE (2026-02-14)
 
 ### Goal
