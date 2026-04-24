@@ -3,6 +3,54 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 26: Canonical Auto-Resolve On Existing Data — (2026-02-14)
+
+### User-reported symptom
+Rename on Items page did not propagate to existing stored invoices. OCR
+text (`CHKN BRST BNLS 6OZ`) kept showing even when a matching alias
+(`Chicken Breast Boneless 6oz`) existed in the catalog.
+
+### Root cause
+Enrichment only injected `display_name` when `canonical_item_id` was
+already set on the invoice line. Historical data ingested before the
+identity layer had **171 of 179 line-items** (95.5%) with
+`canonical_item_id = null`, so enrichment was a no-op for the vast
+majority of the invoice corpus. Rename only propagated to the 4.5% of
+rows that had been linked by hand — which matches exactly what the user
+was seeing.
+
+### Fix — passive backfill inside `_enrich_purchases_with_canonical`
+- On every `GET /api/purchases` (list + detail), build a tenant-scoped
+  alias map from `item_aliases` + `canonical_items.name` (case-insensitive).
+- For every line-item lacking `canonical_item_id`, resolve by exact
+  normalized match on the alias map. On hit, set
+  `canonical_item_id / link_source="auto_resolved_at_read" / link_confidence="high"`
+  in memory AND persist via `db.purchases.update_one` so the link sticks.
+- `raw_name` is never touched — OCR source-of-truth preserved.
+- Writes are tenant-scoped; failures are swallowed so a DB hiccup never
+  breaks a GET.
+
+### Verified on REAL stored data (no reprocessing)
+```
+Invoice CORR-TEST-001 — raw_name: 'CHKN BRST BNLS 6OZ' (OCR, untouched)
+
+BEFORE rename
+  canonical_item_id: d3ed597e-…  ← resolved at read time
+  display_name:      'Chicken Breast Boneless 6oz'
+
+AFTER canonical rename to 'REAL-DATA-PROOF Chicken Breast Boneless'
+  display_name:      'REAL-DATA-PROOF Chicken Breast Boneless'
+  raw_name:          'CHKN BRST BNLS 6OZ'   ← still untouched
+```
+DB stats moved **8 linked → 177 linked** (98.9% of real invoices) on a
+single GET. Remaining 2 unlinked rows are items whose raw text has no
+alias or canonical-name match — correctly left as-is.
+
+### Files
+- `/app/backend/routes/purchases.py` — Phase-1 auto-resolve prepended to
+  `_enrich_purchases_with_canonical` (with bulk persistence).
+
+
 ## Milestone 25: Clean Autocomplete (One Row Per Canonical) — (2026-02-14)
 
 ### Goal

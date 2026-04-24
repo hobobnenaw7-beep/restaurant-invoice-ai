@@ -21,6 +21,74 @@ router = APIRouter()
 async def _enrich_purchases_with_canonical(rid: str, purchases: list) -> list:
     if not purchases:
         return purchases
+
+    # ── Phase 1: resolve unlinked items against the alias + canonical-name catalog ──
+    # Existing data has ~95% items with no canonical_item_id because they were
+    # ingested before the identity layer. On every READ we try to resolve them
+    # via a case-insensitive exact match on alias then canonical name, and
+    # persist the link back so the next read is already resolved.
+    # (This is non-destructive: we only WRITE canonical_item_id when it is
+    # currently missing — raw_name is never touched.)
+    def _norm(s: str) -> str:
+        return " ".join((s or "").lower().split())
+
+    # Collect all raw names that currently have no canonical_item_id.
+    unresolved_raws: set[str] = set()
+    for p in purchases:
+        for it in (p.get("items") or []):
+            if not it.get("canonical_item_id"):
+                raw = (it.get("raw_name") or it.get("name") or "").strip()
+                if raw:
+                    unresolved_raws.add(raw)
+
+    alias_map: dict[str, str] = {}   # normalized alias text → canonical_item_id
+    if unresolved_raws:
+        async for a in db.item_aliases.find(
+            {"restaurant_id": rid, "is_archived": {"$ne": True}},
+            {"_id": 0, "alias": 1, "alias_name": 1, "canonical_item_id": 1},
+        ):
+            text = a.get("alias") or a.get("alias_name") or ""
+            if text and a.get("canonical_item_id"):
+                alias_map.setdefault(_norm(text), a["canonical_item_id"])
+        # Also match against canonical_items.name directly.
+        async for c in db.canonical_items.find(
+            {"restaurant_id": rid, "is_archived": {"$ne": True}},
+            {"_id": 0, "id": 1, "name": 1},
+        ):
+            n = c.get("name")
+            if n and c.get("id"):
+                alias_map.setdefault(_norm(n), c["id"])
+
+    # Apply the resolution in-memory; collect bulk-update ops for persistence.
+    pending_persist: list[tuple[str, list[dict]]] = []   # (purchase_id, items)
+    for p in purchases:
+        items = p.get("items") or []
+        dirty = False
+        for it in items:
+            if it.get("canonical_item_id"):
+                continue
+            raw = (it.get("raw_name") or it.get("name") or "").strip()
+            cid = alias_map.get(_norm(raw)) if raw else None
+            if cid:
+                it["canonical_item_id"] = cid
+                it["link_source"] = it.get("link_source") or "auto_resolved_at_read"
+                it["link_confidence"] = it.get("link_confidence") or "high"
+                dirty = True
+        if dirty and p.get("id"):
+            pending_persist.append((p["id"], items))
+
+    # Persist newly-resolved links (fire-and-forget style — swallowed on error
+    # so a DB hiccup never breaks a GET).
+    for pid, items in pending_persist:
+        try:
+            await db.purchases.update_one(
+                {"id": pid, "restaurant_id": rid},
+                {"$set": {"items": items}},
+            )
+        except Exception as e:   # pragma: no cover
+            logger.warning(f"auto-resolve persist failed pid={pid}: {e}")
+
+    # ── Phase 2: canonical → display_name composition (unchanged) ──
     cids: set[str] = set()
     for p in purchases:
         for it in (p.get("items") or []):
