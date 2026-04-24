@@ -61,17 +61,28 @@ async def _enrich_purchases_with_canonical(rid: str, purchases: list) -> list:
                 tgt = canon_map.get(c["merged_into_item_id"])
                 if tgt:
                     c = tgt
-            variant_label = None
-            vkey = it.get("variant_key")
-            if vkey:
-                for v in (c.get("variants") or []):
-                    if (v.get("key") or "").lower() == vkey.lower():
-                        variant_label = v.get("label") or vkey
+            # Collect variants — prefer multi (variant_keys), fall back to legacy single (variant_key).
+            vkeys_raw = it.get("variant_keys")
+            if not vkeys_raw:
+                lone = it.get("variant_key")
+                vkeys_raw = [lone] if lone else []
+            vkeys = [str(k).strip().lower() for k in (vkeys_raw or []) if k]
+            variant_labels: list[str] = []
+            variants_decl = c.get("variants") or []
+            for vk in vkeys:
+                label = vk
+                for v in variants_decl:
+                    if (v.get("key") or "").lower() == vk:
+                        label = v.get("label") or vk
                         break
+                variant_labels.append(label)
             it["canonical_name"] = c.get("name")
-            it["variant_label"] = variant_label
+            it["variant_keys"] = vkeys
+            it["variant_labels"] = variant_labels
+            it["variant_label"] = variant_labels[0] if variant_labels else None  # legacy field
             base = c.get("name") or it.get("raw_name") or ""
-            it["display_name"] = f"{base} ({variant_label})" if variant_label else base
+            # Final display: "[Canonical Name] — v1 — v2"
+            it["display_name"] = " — ".join([base, *variant_labels]) if variant_labels else base
     return purchases
 
 

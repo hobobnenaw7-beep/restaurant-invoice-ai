@@ -2227,9 +2227,9 @@ Rules:
         # If the fallback identifies a known vendor that the initial multi-signal
         # detection missed, update detected_vendor and log the override.
         supplier_name = (extracted.get("supplier_name") or "").strip()
+        dv_lower = (detected_vendor or "").lower()   # always available downstream
         if supplier_name:
             sn_lower = supplier_name.lower()
-            dv_lower = (detected_vendor or "").lower()
 
             # Check if vendor detection missed a known vendor
             vendor_keywords = {

@@ -35,7 +35,8 @@ from dataclasses import dataclass, asdict, field
 from typing import Iterable, List, Optional
 
 from services.item_identity import (
-    normalize_name, jaccard, fuzzy_ratio, split_base_and_variant,
+    normalize_name, jaccard, fuzzy_ratio,
+    split_base_and_variants,
 )
 
 
@@ -53,10 +54,11 @@ MARGIN = 0.10  # gap required between best and 2nd-best for HIGH
 class Candidate:
     canonical_item_id: str
     canonical_name: str
-    variant_key: Optional[str]
+    variant_key: Optional[str]            # legacy single
+    variant_keys: list                    # NEW: multi-variant list
     token_score: float
     fuzzy_score: float
-    tier_reason: str  # e.g. "exact", "alias", "normalized", "token", "fuzzy", "memory"
+    tier_reason: str
 
     @property
     def composite(self) -> float:
@@ -67,9 +69,10 @@ class Candidate:
 class MatchResult:
     canonical_item_id: Optional[str]
     canonical_name: Optional[str]
-    variant_key: Optional[str]
-    confidence: str  # "high" | "medium" | "low"
-    tier: str        # which rule produced the winning match
+    variant_key: Optional[str]            # legacy single
+    variant_keys: list                    # NEW: multi-variant
+    confidence: str
+    tier: str
     token_score: float
     fuzzy_score: float
     candidates: List[dict] = field(default_factory=list)
@@ -77,20 +80,25 @@ class MatchResult:
     auto_linked: bool = False
 
     def to_dict(self) -> dict:
-        d = asdict(self)
-        return d
+        return asdict(self)
 
 
 def _score_pair(raw: str, target: str) -> tuple[float, float]:
     return (jaccard(raw, target), fuzzy_ratio(raw, target))
 
 
-def _find_variant_in_raw(raw: str, canonical_variants: list) -> Optional[str]:
-    """Extract the variant key from the raw name if the canonical defines it."""
+def _find_variants_in_raw(raw: str, canonical_variants: list) -> list:
+    """Extract ALL variant keys present in the raw name (multi-variant)."""
     if not canonical_variants:
-        return None
-    _, v = split_base_and_variant(raw, canonical_variants)
-    return v
+        return []
+    _, vs = split_base_and_variants(raw, canonical_variants)
+    return vs
+
+
+def _find_variant_in_raw(raw: str, canonical_variants: list) -> Optional[str]:
+    """Back-compat single-variant helper."""
+    vs = _find_variants_in_raw(raw, canonical_variants)
+    return vs[0] if vs else None
 
 
 def match_item(
@@ -110,7 +118,7 @@ def match_item(
     """
     raw = (raw_name or "").strip()
     if not raw:
-        return MatchResult(None, None, None, "low", "empty", 0.0, 0.0, [], False, False)
+        return MatchResult(None, None, None, [], "low", "empty", 0.0, 0.0, [], False, False)
 
     raw_norm = normalize_name(raw)
     canonicals = [c for c in canonical_items if not c.get("is_suggested") and not c.get("is_archived")]
@@ -146,15 +154,17 @@ def match_item(
         """Exact/alias/normalized/memory tiers: still honor the variant
         guardrail — if the canonical defines variants but the raw doesn't
         contain one, downgrade to MEDIUM (needs_review)."""
-        variant = _find_variant_in_raw(raw, c.get("variants") or [])
-        canon_has_variants = bool(c.get("variants"))
-        if canon_has_variants and variant is None:
+        variants_decl = c.get("variants") or []
+        vkeys = _find_variants_in_raw(raw, variants_decl)
+        variant = vkeys[0] if vkeys else None
+        canon_has_variants = bool(variants_decl)
+        if canon_has_variants and not vkeys:
             return MatchResult(
-                c["id"], c.get("name"), None, "medium", tier,
+                c["id"], c.get("name"), None, [], "medium", tier,
                 1.0, 1.0, [], True, False,
             )
         return MatchResult(
-            c["id"], c.get("name"), variant, "high", tier,
+            c["id"], c.get("name"), variant, vkeys, "high", tier,
             1.0, 1.0, [], False, True,
         )
 
@@ -201,12 +211,15 @@ def match_item(
             if fr > best_f:
                 best_f = fr
         if best_t >= LOW_FLOOR or best_f >= LOW_FLOOR:
-            variant = _find_variant_in_raw(raw, c.get("variants") or [])
+            variants_decl = c.get("variants") or []
+            vkeys = _find_variants_in_raw(raw, variants_decl)
+            variant = vkeys[0] if vkeys else None
             reason = "token" if best_t >= best_f else "fuzzy"
             scored.append(Candidate(
                 canonical_item_id=c["id"],
                 canonical_name=c.get("name"),
                 variant_key=variant,
+                variant_keys=vkeys,
                 token_score=best_t,
                 fuzzy_score=best_f,
                 tier_reason=reason,
@@ -214,7 +227,7 @@ def match_item(
 
     scored.sort(key=lambda c: c.composite, reverse=True)
     if not scored:
-        return MatchResult(None, None, None, "low", "no_match", 0.0, 0.0, [], False, False)
+        return MatchResult(None, None, None, [], "low", "no_match", 0.0, 0.0, [], False, False)
 
     top = scored[0]
     runner_up = scored[1].composite if len(scored) > 1 else 0.0
@@ -235,7 +248,7 @@ def match_item(
         and variant_ok
     ):
         return MatchResult(
-            top.canonical_item_id, top.canonical_name, top.variant_key,
+            top.canonical_item_id, top.canonical_name, top.variant_key, top.variant_keys,
             "high", top.tier_reason, top.token_score, top.fuzzy_score,
             candidate_dicts, False, True,
         )
@@ -248,13 +261,13 @@ def match_item(
         or top.fuzzy_score >= FUZZY_STRONG
     ):
         return MatchResult(
-            top.canonical_item_id, top.canonical_name, top.variant_key,
+            top.canonical_item_id, top.canonical_name, top.variant_key, top.variant_keys,
             "medium", top.tier_reason, top.token_score, top.fuzzy_score,
             candidate_dicts, True, False,
         )
 
     # ── LOW / suggested (keep candidates for UI) ──
     return MatchResult(
-        None, None, None, "low", "below_threshold",
+        None, None, None, [], "low", "below_threshold",
         top.token_score, top.fuzzy_score, candidate_dicts, False, False,
     )

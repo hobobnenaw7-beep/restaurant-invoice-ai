@@ -34,7 +34,8 @@ router = APIRouter()
 
 class LinkBody(BaseModel):
     canonical_item_id: str
-    variant_key: Optional[str] = None
+    variant_key: Optional[str] = None                # legacy single
+    variant_keys: Optional[List[str]] = None         # preferred multi
 
 
 class VariantIn(BaseModel):
@@ -65,32 +66,71 @@ async def _get_purchase_item(pid: str, idx: int, rid: str) -> tuple[dict, dict]:
 
 
 async def _upsert_alias(*, rid: str, canonical_item_id: str, alias_text: str,
-                        user_id: Optional[str]) -> None:
+                        user_id: Optional[str], variant_keys: Optional[list[str]] = None) -> None:
     alias_text = (alias_text or "").strip()
     if not alias_text:
         return
+    variant_keys = list(variant_keys or [])
     existing = await db.item_aliases.find_one(
         {"restaurant_id": rid, "canonical_item_id": canonical_item_id,
          "alias": alias_text}, {"_id": 0},
     )
     now = _utcnow()
     if existing:
-        await db.item_aliases.update_one(
-            {"id": existing["id"]},
-            {"$set": {"last_used_at": now}, "$inc": {"usage_count": 1}},
-        )
+        update = {"$set": {"last_used_at": now, "variant_keys": variant_keys},
+                  "$inc": {"usage_count": 1}}
+        await db.item_aliases.update_one({"id": existing["id"]}, update)
         return
     await db.item_aliases.insert_one({
         "id": str(uuid.uuid4()),
         "restaurant_id": rid,
         "canonical_item_id": canonical_item_id,
         "alias": alias_text,
+        "variant_keys": variant_keys,
         "source": "invoice_item_link",
         "created_by_user_id": user_id,
         "created_at": now,
         "last_used_at": now,
         "usage_count": 1,
     })
+
+
+async def _save_correction_memory(*, rid: str, raw_name: str, canonical_name: str,
+                                  canonical_item_id: str,
+                                  variant_keys: Optional[list[str]] = None,
+                                  user_id: Optional[str] = None,
+                                  user_name: str = "") -> None:
+    """Persist the correction so it's reusable in autocomplete + traceability UI."""
+    raw_name = (raw_name or "").strip()
+    canonical_name = (canonical_name or "").strip()
+    if not raw_name or not canonical_name:
+        return
+    now = _utcnow()
+    existing = await db.correction_memory.find_one(
+        {"restaurant_id": rid, "original_raw_name": raw_name}, {"_id": 0},
+    )
+    payload = {
+        "restaurant_id": rid,
+        "original_raw_name": raw_name,
+        "corrected_name": canonical_name,
+        "canonical_item_id": canonical_item_id,
+        "variant_keys": list(variant_keys or []),
+        "source": "invoice_item_link",
+        "enabled": True,
+        "updated_at": now,
+        "created_by_user_id": user_id,
+        "created_by_name": user_name,
+    }
+    if existing:
+        payload["usage_count"] = int(existing.get("usage_count", 0)) + 1
+        await db.correction_memory.update_one(
+            {"id": existing["id"]}, {"$set": payload},
+        )
+        return
+    payload["id"] = str(uuid.uuid4())
+    payload["created_at"] = now
+    payload["usage_count"] = 1
+    await db.correction_memory.insert_one(payload)
 
 
 @router.post("/purchases/{pid}/items/{idx}/link")
@@ -106,18 +146,30 @@ async def link_invoice_item(pid: str, idx: int, body: LinkBody, user=Depends(get
     if target.get("is_archived"):
         raise HTTPException(400, "canonical_item_archived")
 
-    variant_key = (body.variant_key or "").strip() or None
-    if variant_key:
-        declared = {(v.get("key") or "").strip() for v in (target.get("variants") or [])}
-        if variant_key not in declared:
-            raise HTTPException(400, "variant_not_declared_on_canonical")
+    # Collect variants: prefer multi, fallback to legacy single.
+    raw_vkeys: list[str] = []
+    if body.variant_keys:
+        raw_vkeys.extend(body.variant_keys)
+    if body.variant_key:
+        raw_vkeys.append(body.variant_key)
+    vkeys: list[str] = []
+    for vk in raw_vkeys:
+        k = (vk or "").strip().lower()
+        if k and k not in vkeys:
+            vkeys.append(k)
+
+    declared = {(v.get("key") or "").strip().lower() for v in (target.get("variants") or [])}
+    for vk in vkeys:
+        if vk not in declared:
+            raise HTTPException(400, f"variant_not_declared_on_canonical:{vk}")
 
     items = purchase.get("items") or []
     raw_name = (item.get("raw_name") or item.get("name") or "").strip()
     items[idx] = {
         **item,
         "canonical_item_id": target["id"],
-        "variant_key": variant_key,
+        "variant_keys": vkeys,
+        "variant_key": vkeys[0] if vkeys else None,   # back-compat
         "link_confidence": "high",
         "link_source": "manual",
         "linked_at": _utcnow(),
@@ -125,23 +177,42 @@ async def link_invoice_item(pid: str, idx: int, body: LinkBody, user=Depends(get
     }
     await db.purchases.update_one({"id": pid, "restaurant_id": rid}, {"$set": {"items": items}})
 
-    # Learn the alias so future identical raw names auto-link.
+    # ── Learning loop ── persist alias + correction memory so the pairing
+    # is remembered forever and surfaces in autocomplete.
     await _upsert_alias(rid=rid, canonical_item_id=target["id"], alias_text=raw_name,
-                        user_id=user.get("id"))
+                        user_id=user.get("id"), variant_keys=vkeys)
+    await _save_correction_memory(rid=rid, raw_name=raw_name, canonical_name=target.get("name"),
+                                  canonical_item_id=target["id"], variant_keys=vkeys,
+                                  user_id=user.get("id"), user_name=user.get("name", ""))
+
+    variant_labels: list[str] = []
+    for vk in vkeys:
+        for v in (target.get("variants") or []):
+            if (v.get("key") or "").lower() == vk:
+                variant_labels.append(v.get("label") or vk)
+                break
 
     await audit_log(
         user, "LINK_INVOICE_ITEM", "Purchase", pid,
         f'{user["name"]} linked "{raw_name}" → {target.get("name")}'
-        + (f' ({variant_key})' if variant_key else ""),
-        new_value={"canonical_item_id": target["id"], "variant_key": variant_key,
+        + (f' ({", ".join(variant_labels)})' if variant_labels else ""),
+        new_value={"canonical_item_id": target["id"], "variant_keys": vkeys,
                    "raw_name": raw_name},
     )
+
+    display_name = target.get("name") or ""
+    if variant_labels:
+        display_name = " — ".join([display_name, *variant_labels])
 
     return {
         "status": "linked",
         "canonical_item_id": target["id"],
         "canonical_name": target.get("name"),
-        "variant_key": variant_key,
+        "variant_keys": vkeys,
+        "variant_labels": variant_labels,
+        "display_name": display_name,
+        # legacy fields for old clients
+        "variant_key": vkeys[0] if vkeys else None,
     }
 
 
@@ -185,6 +256,7 @@ async def promote_invoice_item(pid: str, idx: int, body: PromoteBody, user=Depen
     items[idx] = {
         **item,
         "canonical_item_id": new_id,
+        "variant_keys": [],
         "variant_key": None,
         "link_confidence": "high",
         "link_source": "promoted",
@@ -192,7 +264,10 @@ async def promote_invoice_item(pid: str, idx: int, body: PromoteBody, user=Depen
     }
     await db.purchases.update_one({"id": pid, "restaurant_id": rid}, {"$set": {"items": items}})
     await _upsert_alias(rid=rid, canonical_item_id=new_id, alias_text=raw_name,
-                        user_id=user.get("id"))
+                        user_id=user.get("id"), variant_keys=[])
+    await _save_correction_memory(rid=rid, raw_name=raw_name, canonical_name=name,
+                                  canonical_item_id=new_id, variant_keys=[],
+                                  user_id=user.get("id"), user_name=user.get("name", ""))
 
     await audit_log(
         user, "PROMOTE_INVOICE_ITEM", "Item", new_id,

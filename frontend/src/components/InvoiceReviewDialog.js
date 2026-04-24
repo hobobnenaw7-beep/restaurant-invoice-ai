@@ -156,7 +156,7 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, a
     setSaving(true);
     try {
       // Separate identity fields from the text patch payload.
-      const { canonical_item_id, variant_key, _picked_label, ...patchPayload } = editValues;  // eslint-disable-line no-unused-vars
+      const { canonical_item_id, variant_key, variant_keys, _picked_label, ...patchPayload } = editValues;  // eslint-disable-line no-unused-vars
       const res = await api.patch(`/purchases/${purchase.id}/items/${idx}`, patchPayload);
       const data = res.data;
 
@@ -166,9 +166,12 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, a
       let identityBody = null;
       if (canonical_item_id) {
         try {
+          const vkeys = Array.isArray(variant_keys) && variant_keys.length
+            ? variant_keys
+            : (variant_key ? [variant_key] : []);
           const lr = await api.post(
             `/purchases/${purchase.id}/items/${idx}/link`,
-            { canonical_item_id, variant_key: variant_key || null },
+            { canonical_item_id, variant_keys: vkeys },
           );
           identityBody = lr.data;
         } catch (err) {
@@ -182,8 +185,10 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, a
         const merged = { ...data.item, _idx: idx };
         if (identityBody) {
           merged.canonical_item_id = identityBody.canonical_item_id;
+          merged.variant_keys = identityBody.variant_keys || [];
           merged.variant_key = identityBody.variant_key;
           merged.canonical_name = identityBody.canonical_name;
+          merged.display_name = identityBody.display_name;
         }
         updated[idx] = merged;
         return updated;
@@ -398,7 +403,8 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, a
                                 ...prev,
                                 raw_name: sel.label,
                                 canonical_item_id: sel.canonical_item_id,
-                                variant_key: sel.variant_key || null,
+                                variant_key: (sel.variant_keys?.[0]) || sel.variant_key || null,
+                                variant_keys: Array.isArray(sel.variant_keys) ? sel.variant_keys : (sel.variant_key ? [sel.variant_key] : []),
                                 _picked_label: sel.label,
                               }))}
                               inputClassName={`text-xs h-7 ${fieldBorder('raw_name')}`}
@@ -407,13 +413,24 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, a
                             />
                           ) : (
                             <div>
-                              <span className={`text-sm font-medium ${problemFields.has('raw_name') ? 'text-red-700' : ''}`}>{it.display_name || it.raw_name || '—'}</span>
+                              <span className={`text-sm font-medium ${problemFields.has('raw_name') ? 'text-red-700' : ''}`} data-testid={`display-name-${i}`}>
+                                {it.display_name || it.raw_name || '—'}
+                              </span>
                               {it.canonical_name && it.canonical_name !== (it.raw_name || '') && (
                                 <Badge className="ml-1.5 bg-teal-50 text-teal-700 border border-teal-200 text-[9px] h-4 px-1.5" data-testid={`linked-badge-${i}`}>
                                   linked
                                 </Badge>
                               )}
-                              {it.variant_label && (
+                              {Array.isArray(it.variant_labels) && it.variant_labels.map((vl, vi) => (
+                                <Badge
+                                  key={vi}
+                                  className="ml-1 bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px] h-4 px-1.5"
+                                  data-testid={`variant-badge-${i}-${vi}`}
+                                >
+                                  {vl}
+                                </Badge>
+                              ))}
+                              {(!Array.isArray(it.variant_labels) || it.variant_labels.length === 0) && it.variant_label && (
                                 <Badge className="ml-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px] h-4 px-1.5" data-testid={`variant-badge-${i}`}>
                                   {it.variant_label}
                                 </Badge>

@@ -242,14 +242,27 @@ export default function VendorDetailPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {(selected.items || []).map((it, idx) => (
-                        <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'}>
-                          <td className="px-3 py-1.5 font-medium text-navy-900">{it.raw_name}</td>
+                      {(selected.items || []).map((it, idx) => {
+                        const nav = it.canonical_item_id
+                          ? () => window.location.assign(`/items?highlight=${encodeURIComponent(it.canonical_item_id)}`)
+                          : null;
+                        return (
+                        <tr
+                          key={idx}
+                          className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'} ${nav ? 'cursor-pointer hover:bg-teal-50/40' : ''}`}
+                          onClick={nav || undefined}
+                          data-testid={`invoice-item-row-${idx}`}
+                          data-canonical-id={it.canonical_item_id || ''}
+                        >
+                          <td className="px-3 py-1.5 font-medium text-navy-900" data-testid={`invoice-item-name-${idx}`}>
+                            {it.display_name || it.canonical_name || it.raw_name}
+                          </td>
                           <td className="px-3 py-1.5 text-right text-slate-500 tabular-nums">{it.quantity} {it.unit}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500 tabular-nums">{fmt(it.unit_price)}</td>
                           <td className="px-3 py-1.5 text-right font-semibold text-navy-900 tabular-nums">{fmt(it.total)}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

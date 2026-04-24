@@ -164,7 +164,7 @@ def test_invoice_link_and_canonical_propagation(token: str):
         assert fresh_item["canonical_item_id"] == canon_id
         assert fresh_item["variant_key"] == "male"
         assert fresh_item.get("canonical_name") == display_name
-        assert "(Male)" in fresh_item["display_name"]
+        assert "— Male" in fresh_item["display_name"]
 
         # ── CANONICAL → INVOICE propagation: edit canonical name ──
         new_name = f"Canon After {uuid.uuid4().hex[:6]}"

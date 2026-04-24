@@ -84,7 +84,7 @@ async def item_autocomplete(
                 "canonical_item_id": {"$in": list(approved_ids)},
                 "is_archived": {"$ne": True},
             },
-            {"_id": 0, "alias": 1, "alias_name": 1, "canonical_item_id": 1},
+            {"_id": 0, "alias": 1, "alias_name": 1, "canonical_item_id": 1, "variant_keys": 1},
         ).to_list(5000)
 
     q_norm = normalize_name(query)
@@ -125,7 +125,7 @@ async def item_autocomplete(
                     "unit": c.get("unit"),
                 })
 
-    # 2) aliases
+    # 2) aliases — may carry learned variants → expose as full "Canon — v1 — v2" suggestion.
     by_id = {c["id"]: c for c in canonicals if c.get("id")}
     for a in aliases:
         text = (a.get("alias") or a.get("alias_name") or "").strip()
@@ -133,23 +133,42 @@ async def item_autocomplete(
         c = by_id.get(cid)
         if not text or not c:
             continue
-        a_score = _score(query, text) + _prefix_boost(q_norm, normalize_name(text))
+        # Score against alias text AND the canonical name for generous recall
+        a_score = max(
+            _score(query, text),
+            _score(query, c.get("name") or ""),
+        ) + _prefix_boost(q_norm, normalize_name(text))
+        # Compose a labelled suggestion using learned variants (if any).
+        learned_vkeys = list(a.get("variant_keys") or [])
+        variant_labels = []
+        for vk in learned_vkeys:
+            for v in (c.get("variants") or []):
+                if (v.get("key") or "").lower() == vk:
+                    variant_labels.append(v.get("label") or vk)
+                    break
+        label = c.get("name") or text
+        if variant_labels:
+            label = " — ".join([label, *variant_labels])
         if a_score > 0.30:
             suggestions.append({
-                "label": f'{c.get("name")}  —  "{text}"',
+                "label": label,
                 "canonical_item_id": cid,
-                "variant_key": None,
-                "source": "alias",
+                "variant_key": learned_vkeys[0] if learned_vkeys else None,
+                "variant_keys": learned_vkeys,
+                "source": "alias" if not learned_vkeys else "learned",
                 "score": round(min(1.0, a_score), 4),
                 "category": c.get("category"),
                 "unit": c.get("unit"),
+                "alias_text": text,
             })
 
-    # Deduplicate by (canonical_item_id, variant_key) — keep highest-scoring.
+    # Deduplicate by (canonical_item_id, variant_keys tuple) — keep highest-scoring.
     dedup: dict[tuple, dict] = {}
     for s in suggestions:
-        key = (s["canonical_item_id"], s.get("variant_key"))
+        vks = tuple(s.get("variant_keys") or ([s.get("variant_key")] if s.get("variant_key") else []))
+        key = (s["canonical_item_id"], vks)
         if key not in dedup or s["score"] > dedup[key]["score"]:
             dedup[key] = s
     ranked = sorted(dedup.values(), key=lambda x: x["score"], reverse=True)[: max(1, int(limit))]
     return {"query": query, "suggestions": ranked}
+

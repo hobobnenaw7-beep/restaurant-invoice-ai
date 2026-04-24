@@ -83,27 +83,45 @@ def split_base_and_variant(
     variants: Iterable[dict],
 ) -> tuple[str, Optional[str]]:
     """
-    Given a display name and a canonical's variants list
-    (e.g. [{"key":"male","label":"Male"}]), return
-    (base_after_variant_stripped, variant_key | None).
+    Back-compat helper — returns a SINGLE variant (first found).
+    For multi-variant use `split_base_and_variants()` instead.
+    """
+    base, keys = split_base_and_variants(name, variants)
+    return base, (keys[0] if keys else None)
 
-    Conservative: strips only if the variant key or label appears as a
-    standalone token in the normalized name.
+
+def split_base_and_variants(
+    name: str,
+    variants: Iterable[dict],
+) -> tuple[str, list[str]]:
+    """
+    Multi-variant splitter.  Given a name and the canonical's variants
+    list, return (base_after_stripping_all_variant_tokens, [variant_keys]).
+
+    A canonical may declare several variants (type + gender + size); this
+    strips every token that matches a declared key / label so multiple
+    tags can be extracted at once.
     """
     n = normalize_name(name)
+    variants = list(variants or [])
     if not n or not variants:
-        return (n, None)
+        return (n, [])
     tokens = n.split(" ")
     token_set = set(tokens)
+    hit_keys: list[str] = []
+    strip_tokens: set[str] = set()
     for v in variants:
         key = (v.get("key") or "").strip().lower()
         label = (v.get("label") or "").strip().lower()
-        hit = None
-        if key and key in token_set:
-            hit = key
+        if key and key in token_set and key not in hit_keys:
+            hit_keys.append(key)
+            strip_tokens.add(key)
         elif label and label in token_set:
-            hit = label
-        if hit is not None:
-            base_tokens = [t for t in tokens if t != hit]
-            return (" ".join(base_tokens).strip(), key or label or None)
-    return (n, None)
+            # label matched but not the key — persist the key, strip the label
+            if key and key not in hit_keys:
+                hit_keys.append(key)
+            elif label not in hit_keys:
+                hit_keys.append(label)
+            strip_tokens.add(label)
+    base_tokens = [t for t in tokens if t not in strip_tokens]
+    return (" ".join(base_tokens).strip(), hit_keys)
