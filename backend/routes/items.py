@@ -58,9 +58,32 @@ async def create_item(data: CanonicalItemCreate, user=Depends(get_user)):
 @router.put("/items/{iid}")
 async def update_item(iid: str, data: CanonicalItemCreate, user=Depends(get_user)):
     old = await db.canonical_items.find_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
-    update_data = data.model_dump()
+    # Only update fields explicitly provided by the caller. Pydantic v2:
+    # exclude_unset captures that. Plus drop None for fields the client
+    # sends as null to avoid wiping persisted state unintentionally.
+    update_data = data.model_dump(exclude_unset=True)
+    update_data = {k: v for k, v in update_data.items() if v is not None}
+    # Normalise variants (key → lowercase, dedupe) when provided.
+    if "variants" in update_data:
+        seen = set()
+        cleaned = []
+        for v in (update_data.get("variants") or []):
+            if isinstance(v, dict):
+                key = (v.get("key") or "").strip().lower()
+                label = (v.get("label") or key).strip() or key
+            else:
+                key = (getattr(v, "key", "") or "").strip().lower()
+                label = (getattr(v, "label", "") or key).strip() or key
+            if key and key not in seen:
+                seen.add(key)
+                cleaned.append({"key": key, "label": label})
+        update_data["variants"] = cleaned
     old_vals = {k: old.get(k) for k in update_data} if old else {}
-    await db.canonical_items.update_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    if update_data:
+        await db.canonical_items.update_one(
+            {"id": iid, "restaurant_id": user["restaurant_id"]},
+            {"$set": update_data},
+        )
     await audit_log(user, "UPDATE", "Item", iid, f'{user["name"]} updated item {old.get("name", "") if old else ""}', old_value=old_vals, new_value=update_data)
     return await db.canonical_items.find_one({"id": iid}, {"_id": 0})
 
