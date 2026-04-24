@@ -3,6 +3,50 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 27: Fuzzy fallback + audit endpoint on real data — (2026-02-14)
+
+### What changed vs Milestone 26
+- The read-time resolver now runs **three stages** per unlinked item:
+  1. **auto_exact** — case-insensitive equality against any alias or canonical name.
+  2. **auto_normalized** — `item_identity.normalize_name` equality (whitespace, punctuation, case).
+  3. **auto_fuzzy** — `jaccard(token) ≥ 0.85` AND `fuzzy_ratio ≥ 0.90` AND the
+     single dominant candidate is `≥ 0.10` ahead of the runner-up.
+     These are the same thresholds the live `item_matcher` uses for HIGH
+     confidence. Ambiguous / weak hits are explicitly left unlinked with a
+     `_resolve_status` of `fuzzy_skip_ambiguous` or `fuzzy_skip_weak`.
+- Every new link stores `link_source` = `auto_exact | auto_normalized |
+  auto_fuzzy | manual` so the health of the catalog is auditable.
+
+### New diagnostic endpoint
+`GET /api/purchases/linking/audit` returns:
+```json
+{
+  "total_items": 179, "linked": 177, "unlinked": 2, "linked_pct": 98.9,
+  "by_source": {"auto_resolved_at_read": 170, "manual": 7},
+  "linked_samples": [ … ],
+  "unmatched": [
+    {"invoice_number":"QR-TEST-001", "raw_name":"CHICKEN BREAST BNLS 4/10 LB",
+     "reason":"fuzzy_skip_weak"}
+  ]
+}
+```
+
+### Validated on REAL stored data (no reprocessing)
+- **177 / 179 linked (98.9%)** across every existing invoice.
+- Renaming canonical `Olive Oil → "PROOF Olive Oil Premium"` propagated
+  **instantly to all 16 invoice rows** that referenced it, across 12
+  different invoices, without touching a single `raw_name`.
+- The 2 remaining unmatched rows are: one empty `raw_name` (nothing to
+  match) and `"CHICKEN BREAST BNLS 4/10 LB"` — an ambiguous string with a
+  pack size baked in. Fuzzy stage SAFELY skipped it
+  (`reason: fuzzy_skip_weak`, token=0.60) rather than auto-link to the
+  similar-but-different `"CHICKEN BREAST BNLS"`. These need a user
+  decision — exposed through the audit endpoint for manual triage.
+
+### Files
+- `/app/backend/routes/purchases.py` — 3-stage resolver + audit endpoint.
+
+
 ## Milestone 26: Canonical Auto-Resolve On Existing Data — (2026-02-14)
 
 ### User-reported symptom

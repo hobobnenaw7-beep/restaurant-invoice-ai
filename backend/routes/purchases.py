@@ -29,6 +29,8 @@ async def _enrich_purchases_with_canonical(rid: str, purchases: list) -> list:
     # persist the link back so the next read is already resolved.
     # (This is non-destructive: we only WRITE canonical_item_id when it is
     # currently missing — raw_name is never touched.)
+    from services.item_identity import normalize_name as _normalize, jaccard as _jac, fuzzy_ratio as _fuz
+
     def _norm(s: str) -> str:
         return " ".join((s or "").lower().split())
 
@@ -41,26 +43,70 @@ async def _enrich_purchases_with_canonical(rid: str, purchases: list) -> list:
                 if raw:
                     unresolved_raws.add(raw)
 
-    alias_map: dict[str, str] = {}   # normalized alias text → canonical_item_id
+    alias_map: dict[str, str] = {}   # case-insensitive exact → canonical_item_id
+    normalized_map: dict[str, str] = {}   # services.item_identity.normalize_name → cid
+    # For fuzzy: parallel arrays of (alias_text, canonical_item_id)
+    fuzzy_targets: list[tuple[str, str]] = []
     if unresolved_raws:
         async for a in db.item_aliases.find(
             {"restaurant_id": rid, "is_archived": {"$ne": True}},
             {"_id": 0, "alias": 1, "alias_name": 1, "canonical_item_id": 1},
         ):
             text = a.get("alias") or a.get("alias_name") or ""
-            if text and a.get("canonical_item_id"):
-                alias_map.setdefault(_norm(text), a["canonical_item_id"])
-        # Also match against canonical_items.name directly.
+            cid = a.get("canonical_item_id")
+            if text and cid:
+                alias_map.setdefault(_norm(text), cid)
+                nk = _normalize(text)
+                if nk:
+                    normalized_map.setdefault(nk, cid)
+                fuzzy_targets.append((text, cid))
         async for c in db.canonical_items.find(
-            {"restaurant_id": rid, "is_archived": {"$ne": True}},
+            {"restaurant_id": rid, "is_archived": {"$ne": True},
+             "is_suggested": {"$ne": True}},
             {"_id": 0, "id": 1, "name": 1},
         ):
             n = c.get("name")
-            if n and c.get("id"):
-                alias_map.setdefault(_norm(n), c["id"])
+            cid = c.get("id")
+            if n and cid:
+                alias_map.setdefault(_norm(n), cid)
+                nk = _normalize(n)
+                if nk:
+                    normalized_map.setdefault(nk, cid)
+                fuzzy_targets.append((n, cid))
 
-    # Apply the resolution in-memory; collect bulk-update ops for persistence.
-    pending_persist: list[tuple[str, list[dict]]] = []   # (purchase_id, items)
+    # Fuzzy resolution thresholds — strict to avoid false positives.
+    # We require BOTH token ≥ 0.85 AND fuzzy ≥ 0.90 for a single dominant
+    # candidate (second-best at least 0.10 behind). This matches the
+    # item_matcher service's HIGH confidence gate.
+    FUZZY_TOKEN_GATE = 0.85
+    FUZZY_RATIO_GATE = 0.90
+    FUZZY_MARGIN = 0.10
+
+    def _fuzzy_resolve(raw: str) -> tuple[str | None, str]:
+        """
+        Returns (canonical_item_id, reason) where reason is one of:
+          'fuzzy_auto' — confident unique match
+          'fuzzy_skip_ambiguous' — two good matches, skip
+          'fuzzy_skip_weak' — best score below gate
+        """
+        if not raw or not fuzzy_targets:
+            return None, "fuzzy_skip_weak"
+        scored = []
+        for text, cid in fuzzy_targets:
+            t = _jac(raw, text)
+            f = _fuz(raw, text)
+            scored.append((max(t, f), t, f, cid, text))
+        scored.sort(reverse=True, key=lambda x: x[0])
+        top = scored[0]
+        if top[1] < FUZZY_TOKEN_GATE or top[2] < FUZZY_RATIO_GATE:
+            return None, "fuzzy_skip_weak"
+        # Ambiguity check — second-best must be behind by MARGIN.
+        if len(scored) >= 2 and (top[0] - scored[1][0]) < FUZZY_MARGIN and scored[1][3] != top[3]:
+            return None, "fuzzy_skip_ambiguous"
+        return top[3], "fuzzy_auto"
+
+    # Apply resolution — exact first (Phase 1a), normalized (1b), then fuzzy (1c).
+    pending_persist: list[tuple[str, list[dict]]] = []
     for p in purchases:
         items = p.get("items") or []
         dirty = False
@@ -68,17 +114,28 @@ async def _enrich_purchases_with_canonical(rid: str, purchases: list) -> list:
             if it.get("canonical_item_id"):
                 continue
             raw = (it.get("raw_name") or it.get("name") or "").strip()
-            cid = alias_map.get(_norm(raw)) if raw else None
+            if not raw:
+                continue
+            cid = alias_map.get(_norm(raw))
+            link_source = "auto_exact" if cid else None
+            if not cid:
+                cid = normalized_map.get(_normalize(raw))
+                if cid:
+                    link_source = "auto_normalized"
+            if not cid:
+                cid, reason = _fuzzy_resolve(raw)
+                if cid:
+                    link_source = "auto_fuzzy"
+                else:
+                    it["_resolve_status"] = reason
             if cid:
                 it["canonical_item_id"] = cid
-                it["link_source"] = it.get("link_source") or "auto_resolved_at_read"
+                it["link_source"] = it.get("link_source") or link_source
                 it["link_confidence"] = it.get("link_confidence") or "high"
                 dirty = True
         if dirty and p.get("id"):
             pending_persist.append((p["id"], items))
 
-    # Persist newly-resolved links (fire-and-forget style — swallowed on error
-    # so a DB hiccup never breaks a GET).
     for pid, items in pending_persist:
         try:
             await db.purchases.update_one(
@@ -152,6 +209,60 @@ async def _enrich_purchases_with_canonical(rid: str, purchases: list) -> list:
             # Final display: "[Canonical Name] — v1 — v2"
             it["display_name"] = " — ".join([base, *variant_labels]) if variant_labels else base
     return purchases
+
+@router.get("/purchases/linking/audit")
+async def linking_audit(user=Depends(get_user)):
+    """
+    Diagnostic endpoint — reports the current canonical-linking health of all
+    stored invoices for this tenant. Use this to confirm that renames propagate
+    and to review any remaining unmatched items.
+    """
+    rid = user["restaurant_id"]
+    # Run enrichment first so any newly-resolvable items get linked right now.
+    cursor = db.purchases.find({"restaurant_id": rid}, {"_id": 0})
+    rows = await cursor.to_list(5000)
+    await _enrich_purchases_with_canonical(rid, rows)
+
+    total = 0
+    linked = 0
+    by_source: dict[str, int] = {}
+    unmatched: list[dict] = []
+    linked_samples: list[dict] = []
+    for p in rows:
+        for it in (p.get("items") or []):
+            total += 1
+            if it.get("canonical_item_id"):
+                linked += 1
+                src = it.get("link_source") or "unknown"
+                by_source[src] = by_source.get(src, 0) + 1
+                if len(linked_samples) < 10:
+                    linked_samples.append({
+                        "invoice_number": p.get("invoice_number"),
+                        "raw_name": it.get("raw_name"),
+                        "canonical_name": it.get("canonical_name"),
+                        "display_name": it.get("display_name"),
+                        "link_source": src,
+                    })
+            else:
+                raw = (it.get("raw_name") or "").strip()
+                if raw:
+                    unmatched.append({
+                        "invoice_number": p.get("invoice_number"),
+                        "supplier_name": p.get("supplier_name"),
+                        "raw_name": raw,
+                        "reason": it.get("_resolve_status") or "no_match",
+                    })
+    return {
+        "total_items": total,
+        "linked": linked,
+        "unlinked": total - linked,
+        "linked_pct": round(100 * linked / total, 1) if total else 0.0,
+        "by_source": by_source,
+        "linked_samples": linked_samples,
+        "unmatched": unmatched,
+    }
+
+
 
 
 @router.get("/purchases")
