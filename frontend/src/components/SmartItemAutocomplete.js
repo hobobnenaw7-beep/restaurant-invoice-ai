@@ -20,8 +20,13 @@ import { Loader2, Sparkles, Tag, Package } from 'lucide-react';
 const SOURCE_ICON = {
   canonical: Package,
   variant: Tag,
-  alias: Sparkles,
   learned: Sparkles,
+};
+
+const SOURCE_BADGE = {
+  canonical: { label: 'canonical', cls: 'bg-teal-50 text-teal-700 border-teal-200' },
+  variant:   { label: 'variant',   cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  learned:   { label: 'learned',   cls: 'bg-amber-50 text-amber-700 border-amber-200' },
 };
 
 export default function SmartItemAutocomplete({
@@ -139,21 +144,24 @@ export default function SmartItemAutocomplete({
           {!loading && suggestions.map((s, i) => {
             const Icon = SOURCE_ICON[s.source] || Package;
             const active = i === activeIndex;
+            const badge = SOURCE_BADGE[s.source] || SOURCE_BADGE.canonical;
             return (
               <button
                 type="button"
-                key={`${s.canonical_item_id}-${s.variant_key || ''}-${i}`}
+                key={`${s.canonical_item_id}-${(s.variant_keys || []).join(',')}-${i}`}
                 onMouseEnter={() => setActiveIndex(i)}
                 onClick={() => pick(s)}
-                className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs border-b border-slate-50 last:border-0 transition-colors ${active ? 'bg-teal-50' : 'hover:bg-slate-50'}`}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs border-b border-slate-50 last:border-0 transition-colors ${active ? 'bg-teal-50' : 'hover:bg-slate-50'}`}
                 data-testid={`${testId}-option-${i}`}
                 data-source={s.source}
                 data-canonical-id={s.canonical_item_id}
                 data-variant-key={s.variant_key || ''}
               >
-                <Icon className={`w-3 h-3 flex-shrink-0 ${s.source === 'variant' ? 'text-indigo-500' : (s.source === 'alias' || s.source === 'learned') ? 'text-amber-500' : 'text-teal-600'}`} />
+                <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${s.source === 'variant' ? 'text-indigo-500' : s.source === 'learned' ? 'text-amber-500' : 'text-teal-600'}`} />
                 <span className="flex-1 font-medium text-slate-800 truncate">{s.label}</span>
-                <span className="text-[9px] uppercase tracking-wider text-slate-400">{s.source}</span>
+                <span className={`text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded border font-semibold ${badge.cls}`}>
+                  {badge.label}
+                </span>
               </button>
             );
           })}

@@ -91,93 +91,138 @@ async def item_autocomplete(
         ).to_list(5000)
 
     q_norm = normalize_name(query)
-    suggestions: list[dict] = []
 
-    # 1) canonical names + their variants
-    for c in canonicals:
-        name = c.get("name") or ""
-        is_suggested = bool(c.get("is_suggested"))
-        base_source = "learned" if is_suggested else "canonical"
-        base_score = _score(query, name) + _prefix_boost(q_norm, normalize_name(name))
-        if base_score > 0.25:
-            suggestions.append({
-                "label": name,
-                "canonical_item_id": c["id"],
-                "variant_key": None,
-                "source": base_source,
-                "score": round(min(1.0, base_score), 4),
-                "category": c.get("category"),
-                "unit": c.get("unit"),
-                "is_suggested": is_suggested,
-            })
-        # Variants (approved items only declare variants; suggested rarely do).
-        for v in (c.get("variants") or []):
-            key = (v.get("key") or "").strip()
-            label = (v.get("label") or key).strip()
-            if not key:
-                continue
-            variant_label = f"{name} ({label})"
-            v_score = _score(query, variant_label) + _prefix_boost(q_norm, normalize_name(variant_label))
-            # Also consider match against just the variant word (e.g. "male").
-            v_score = max(v_score, _score(query, label))
-            if v_score > 0.25:
-                suggestions.append({
-                    "label": variant_label,
-                    "canonical_item_id": c["id"],
-                    "variant_key": key,
-                    "source": "variant",
-                    "score": round(min(1.0, v_score), 4),
-                    "category": c.get("category"),
-                    "unit": c.get("unit"),
-                    "is_suggested": is_suggested,
-                })
-
-    # 2) aliases — may carry learned variants → expose as full "Canon — v1 — v2" suggestion.
-    by_id = {c["id"]: c for c in canonicals if c.get("id")}
+    # Build an alias lookup: {canonical_id: [(alias_text, variant_keys)]}.
+    # Aliases are MATCHING SIGNALS only — they never produce their own row.
+    alias_index: dict[str, list[tuple[str, list[str]]]] = {}
     for a in aliases:
         text = (a.get("alias") or a.get("alias_name") or "").strip()
         cid = a.get("canonical_item_id")
-        c = by_id.get(cid)
-        if not text or not c:
+        if not text or not cid:
             continue
-        # Score against alias text AND the canonical name for generous recall
-        a_score = max(
-            _score(query, text),
-            _score(query, c.get("name") or ""),
-        ) + _prefix_boost(q_norm, normalize_name(text))
-        # Compose a labelled suggestion using learned variants (if any).
-        learned_vkeys = list(a.get("variant_keys") or [])
-        variant_labels = []
-        for vk in learned_vkeys:
-            for v in (c.get("variants") or []):
-                if (v.get("key") or "").lower() == vk:
-                    variant_labels.append(v.get("label") or vk)
-                    break
-        label = c.get("name") or text
-        if variant_labels:
-            label = " — ".join([label, *variant_labels])
-        if a_score > 0.30:
-            is_suggested_canon = bool(c.get("is_suggested"))
-            suggestions.append({
-                "label": label,
-                "canonical_item_id": cid,
-                "variant_key": learned_vkeys[0] if learned_vkeys else None,
-                "variant_keys": learned_vkeys,
-                "source": "learned" if (learned_vkeys or is_suggested_canon) else "alias",
-                "score": round(min(1.0, a_score), 4),
-                "category": c.get("category"),
-                "unit": c.get("unit"),
-                "alias_text": text,
-                "is_suggested": is_suggested_canon,
-            })
+        alias_index.setdefault(cid, []).append(
+            (text, [str(v).strip().lower() for v in (a.get("variant_keys") or []) if v]),
+        )
 
-    # Deduplicate by (canonical_item_id, variant_keys tuple) — keep highest-scoring.
-    dedup: dict[tuple, dict] = {}
-    for s in suggestions:
-        vks = tuple(s.get("variant_keys") or ([s.get("variant_key")] if s.get("variant_key") else []))
-        key = (s["canonical_item_id"], vks)
-        if key not in dedup or s["score"] > dedup[key]["score"]:
-            dedup[key] = s
-    ranked = sorted(dedup.values(), key=lambda x: x["score"], reverse=True)[: max(1, int(limit))]
+    def alias_boost(cid: str) -> tuple[float, list[str]]:
+        """
+        Return (best_alias_score, variant_keys_from_best_matching_alias).
+        This lets alias text contribute recall (e.g. the user types the OCR'd
+        form) while still emitting a row labelled with the canonical name.
+        """
+        best = 0.0
+        best_vkeys: list[str] = []
+        for text, vkeys in alias_index.get(cid, []):
+            s = _score(query, text) + _prefix_boost(q_norm, normalize_name(text))
+            if s > best:
+                best = s
+                best_vkeys = vkeys
+        return best, best_vkeys
+
+    # Emit ONE row per (canonical_item_id, variant_key).
+    #   • approved canonical → source "canonical" (variants → "variant")
+    #   • suggested canonical → source "learned" (no variants)
+    # Aliases never become rows — they only boost matching recall and, when
+    # they carry variant_keys, can attach the best learned variant to the
+    # canonical base row so it still lands on the correct target.
+    buckets: dict[tuple, dict] = {}
+
+    def upsert(key: tuple, candidate: dict) -> None:
+        prev = buckets.get(key)
+        if prev is None or candidate["score"] > prev["score"]:
+            buckets[key] = candidate
+
+    for c in canonicals:
+        cid = c.get("id")
+        name = c.get("name") or ""
+        if not cid or not name:
+            continue
+        is_suggested = bool(c.get("is_suggested"))
+
+        # Alias contribution for this canonical.
+        a_score, a_vkeys = alias_boost(cid)
+
+        # ── 1. Base (no variant) row ──
+        name_score = _score(query, name) + _prefix_boost(q_norm, normalize_name(name))
+        base_score = max(name_score, a_score)
+        if base_score > 0.25:
+            # If alias carries learned variant_keys, promote to a variant row
+            # (see "learned variant attachment" below) instead of a bare base row.
+            if not a_vkeys:
+                upsert(
+                    (cid, ()),
+                    {
+                        "label": name,
+                        "canonical_item_id": cid,
+                        "variant_key": None,
+                        "variant_keys": [],
+                        "source": "learned" if is_suggested else "canonical",
+                        "score": round(min(1.0, base_score), 4),
+                        "category": c.get("category"),
+                        "unit": c.get("unit"),
+                        "is_suggested": is_suggested,
+                    },
+                )
+
+        # ── 2. Declared variant rows (approved canonicals only typically) ──
+        declared = c.get("variants") or []
+        declared_keys = [(v.get("key") or "").strip().lower() for v in declared]
+        for v in declared:
+            key = (v.get("key") or "").strip().lower()
+            label = (v.get("label") or key).strip()
+            if not key:
+                continue
+            full = " — ".join([name, label])
+            vs = _score(query, full) + _prefix_boost(q_norm, normalize_name(full))
+            vs = max(vs, _score(query, label))
+            # If aliases learned this specific variant, include their score too.
+            if key in a_vkeys:
+                vs = max(vs, a_score)
+            if vs > 0.25:
+                upsert(
+                    (cid, (key,)),
+                    {
+                        "label": full,
+                        "canonical_item_id": cid,
+                        "variant_key": key,
+                        "variant_keys": [key],
+                        "source": "variant",
+                        "score": round(min(1.0, vs), 4),
+                        "category": c.get("category"),
+                        "unit": c.get("unit"),
+                        "is_suggested": is_suggested,
+                    },
+                )
+
+        # ── 3. Learned-variant attachment ──
+        # If an alias carries variant_keys that match DECLARED variants but
+        # didn't already land above (because user query matched the alias
+        # text, not the variant word), emit the combined canonical+variant row.
+        if a_vkeys and a_score > 0.30:
+            keys_tuple = tuple(k for k in a_vkeys if k in declared_keys)
+            if keys_tuple:
+                labels_parts = []
+                for k in keys_tuple:
+                    for v in declared:
+                        if (v.get("key") or "").lower() == k:
+                            labels_parts.append(v.get("label") or k)
+                            break
+                full = " — ".join([name, *labels_parts])
+                upsert(
+                    (cid, keys_tuple),
+                    {
+                        "label": full,
+                        "canonical_item_id": cid,
+                        "variant_key": keys_tuple[0],
+                        "variant_keys": list(keys_tuple),
+                        "source": "variant",
+                        "score": round(min(1.0, a_score), 4),
+                        "category": c.get("category"),
+                        "unit": c.get("unit"),
+                        "is_suggested": is_suggested,
+                    },
+                )
+
+    ranked = sorted(buckets.values(), key=lambda x: x["score"], reverse=True)[: max(1, int(limit))]
     return {"query": query, "suggestions": ranked}
 

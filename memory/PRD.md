@@ -3,6 +3,42 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 25: Clean Autocomplete (One Row Per Canonical) — (2026-02-14)
+
+### Goal
+Autocomplete dropdown returns exactly ONE row per `(canonical_item_id, variant_key)` — no alias rows, no raw OCR duplicates, always labelled with the canonical name.
+
+### Behavior
+- **Approved canonical** → `source: "canonical"` (base row) / `source: "variant"` (declared variants).
+- **Suggested canonical** (created by a user correction) → `source: "learned"`.
+- **Aliases** never become their own row — they only **boost matching recall**
+  for the canonical they point to, and can attach a declared `variant_key` to
+  the canonical row if the alias learned one.
+- When a suggested canonical is promoted, the same row flips to
+  `source: "canonical"` (`is_suggested: false`) automatically — verified live.
+
+### UI
+- `SmartItemAutocomplete` renders a compact vertical dropdown, one row per
+  suggestion, with keyboard up/down/enter + escape to close.
+- Each row: icon (package / tag / sparkles) · canonical label · coloured
+  source badge (`canonical` teal, `variant` indigo, `learned` amber).
+
+### Example (after fix)
+```
+Live Blue Crab              [canonical]
+Live Blue Crab — Male       [variant]
+Live Blue Crab — Female     [variant]
+LearnLoopProofZqx42         [learned]      ← was corrected, not yet promoted
+```
+No more rows like `Live Blue Crabs 436 # males [alias]`.
+
+### Files
+- `/app/backend/routes/item_autocomplete.py` — rewritten emission:
+  alias-as-signal only, bucket-dedup on `(cid, variant_keys)`.
+- `/app/frontend/src/components/SmartItemAutocomplete.js` — dropped `alias`
+  source, added coloured badge per source, tighter row padding.
+
+
 ## Milestone 24: Edit Propagation + Learning Loop — E2E FIX (2026-02-14)
 
 ### User-reported failures (fixed)
