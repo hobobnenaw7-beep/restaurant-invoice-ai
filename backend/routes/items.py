@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 import uuid
 from datetime import datetime, timezone
+from pydantic import BaseModel
 
 from core.database import db
 from core.auth import get_user
@@ -11,15 +12,34 @@ router = APIRouter()
 
 
 @router.get("/items")
-async def list_items(user=Depends(get_user), search: str = "", storage_category: str = ""):
+async def list_items(
+    user=Depends(get_user),
+    search: str = "",
+    storage_category: str = "",
+    status: str = "",   # "" | "suggested" | "approved" | "archived"
+):
     query = {"restaurant_id": user["restaurant_id"]}
     if search:
         query["name"] = {"$regex": search, "$options": "i"}
     if storage_category and storage_category in ("dry", "chilled", "frozen", "uncategorized"):
         query["storage_category"] = storage_category
+    if status == "suggested":
+        query["is_suggested"] = True
+        query["is_archived"] = {"$ne": True}
+    elif status == "approved":
+        query["is_suggested"] = {"$ne": True}
+        query["is_archived"] = {"$ne": True}
+    elif status == "archived":
+        query["is_archived"] = True
+    else:
+        # default list: exclude archived items (keeps history intact but hides noise)
+        query["is_archived"] = {"$ne": True}
     items = await db.canonical_items.find(query, {"_id": 0}).to_list(1000)
     for item in items:
-        item["aliases"] = await db.item_aliases.find({"canonical_item_id": item["id"], "restaurant_id": user["restaurant_id"]}, {"_id": 0}).to_list(100)
+        item["aliases"] = await db.item_aliases.find(
+            {"canonical_item_id": item["id"], "restaurant_id": user["restaurant_id"], "is_archived": {"$ne": True}},
+            {"_id": 0},
+        ).to_list(100)
     return items
 
 
@@ -38,9 +58,32 @@ async def create_item(data: CanonicalItemCreate, user=Depends(get_user)):
 @router.put("/items/{iid}")
 async def update_item(iid: str, data: CanonicalItemCreate, user=Depends(get_user)):
     old = await db.canonical_items.find_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
-    update_data = data.model_dump()
+    # Only update fields explicitly provided by the caller. Pydantic v2:
+    # exclude_unset captures that. Plus drop None for fields the client
+    # sends as null to avoid wiping persisted state unintentionally.
+    update_data = data.model_dump(exclude_unset=True)
+    update_data = {k: v for k, v in update_data.items() if v is not None}
+    # Normalise variants (key → lowercase, dedupe) when provided.
+    if "variants" in update_data:
+        seen = set()
+        cleaned = []
+        for v in (update_data.get("variants") or []):
+            if isinstance(v, dict):
+                key = (v.get("key") or "").strip().lower()
+                label = (v.get("label") or key).strip() or key
+            else:
+                key = (getattr(v, "key", "") or "").strip().lower()
+                label = (getattr(v, "label", "") or key).strip() or key
+            if key and key not in seen:
+                seen.add(key)
+                cleaned.append({"key": key, "label": label})
+        update_data["variants"] = cleaned
     old_vals = {k: old.get(k) for k in update_data} if old else {}
-    await db.canonical_items.update_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"$set": update_data})
+    if update_data:
+        await db.canonical_items.update_one(
+            {"id": iid, "restaurant_id": user["restaurant_id"]},
+            {"$set": update_data},
+        )
     await audit_log(user, "UPDATE", "Item", iid, f'{user["name"]} updated item {old.get("name", "") if old else ""}', old_value=old_vals, new_value=update_data)
     return await db.canonical_items.find_one({"id": iid}, {"_id": 0})
 
@@ -94,6 +137,226 @@ async def delete_item(iid: str, user=Depends(get_user)):
     return {"status": "deleted"}
 
 
+# ─── Suggested catalog governance (review layer) ────────────────────
+@router.post("/items/{iid}/promote")
+async def promote_suggested_item(iid: str, user=Depends(get_user)):
+    """
+    Promote a suggested canonical item to an approved catalog entry.
+    Preserves aliases and correction_memory history — only clears the
+    suggestion markers so the item is treated as fully approved.
+    """
+    existing = await db.canonical_items.find_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(404, "item_not_found")
+    if not existing.get("is_suggested"):
+        raise HTTPException(400, "not_a_suggested_item")
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.canonical_items.update_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]},
+        {"$set": {
+            "is_suggested": False,
+            "promoted_at": now,
+            "promoted_by_user_id": user.get("id"),
+            "promoted_by_name": user.get("name", ""),
+        }},
+    )
+    await audit_log(
+        user, "PROMOTE", "Item", iid,
+        f'{user["name"]} promoted suggested item "{existing.get("name", "")}"',
+        new_value={"name": existing.get("name"), "is_suggested": False},
+    )
+    updated = await db.canonical_items.find_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
+    )
+    return {"status": "promoted", "item": updated}
+
+
+@router.post("/items/{iid}/dismiss")
+async def dismiss_suggested_item(iid: str, user=Depends(get_user)):
+    """
+    Dismiss a suggested item safely.
+    NON-DESTRUCTIVE: soft-archive via is_archived=true (hidden from default listing).
+    Aliases are also archived rather than deleted so past correction_memory records
+    stay readable and re-linkable.
+    """
+    existing = await db.canonical_items.find_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(404, "item_not_found")
+    if not existing.get("is_suggested"):
+        raise HTTPException(400, "not_a_suggested_item")
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.canonical_items.update_one(
+        {"id": iid, "restaurant_id": user["restaurant_id"]},
+        {"$set": {
+            "is_archived": True,
+            "archived_at": now,
+            "archived_by_user_id": user.get("id"),
+            "archived_by_name": user.get("name", ""),
+        }},
+    )
+    await db.item_aliases.update_many(
+        {"canonical_item_id": iid, "restaurant_id": user["restaurant_id"]},
+        {"$set": {"is_archived": True, "archived_at": now}},
+    )
+    await audit_log(
+        user, "DISMISS", "Item", iid,
+        f'{user["name"]} dismissed suggested item "{existing.get("name", "")}"',
+        old_value={"name": existing.get("name"), "is_suggested": True},
+    )
+    return {"status": "dismissed", "id": iid}
+
+
+class MergeSuggestedBody(BaseModel):
+    target_item_id: str
+
+
+@router.post("/items/{iid}/merge")
+async def merge_suggested_item(
+    iid: str,
+    body: MergeSuggestedBody,
+    user=Depends(get_user),
+):
+    """
+    Merge a suggested canonical item into an existing approved canonical item.
+
+    Non-destructive:
+      - Transfer all of the suggested item's aliases to the target (via update_many
+        of canonical_item_id). If a (target, alias) pair already exists, increment
+        usage_count on the existing alias and drop the duplicate alias row.
+      - Add the suggested item's own `name` as an alias on the target (if not
+        already present).
+      - Mark suggested item as `is_merged=True`, `is_archived=True`, record
+        `merged_into_item_id`, `merged_at`, `merged_by_user_id/name`.
+      - correction_memory is NOT touched — rows remain readable; future writes
+        will find the existing target via catalog_linkage contains/exact match.
+    """
+    rid = user["restaurant_id"]
+
+    suggested = await db.canonical_items.find_one(
+        {"id": iid, "restaurant_id": rid}, {"_id": 0}
+    )
+    if not suggested:
+        raise HTTPException(404, "item_not_found")
+    if not suggested.get("is_suggested"):
+        raise HTTPException(400, "not_a_suggested_item")
+
+    target = await db.canonical_items.find_one(
+        {"id": body.target_item_id, "restaurant_id": rid}, {"_id": 0}
+    )
+    if not target:
+        raise HTTPException(404, "target_item_not_found")
+    if target.get("is_archived"):
+        raise HTTPException(400, "target_is_archived")
+    if target.get("is_suggested"):
+        raise HTTPException(400, "target_must_be_approved")
+    if target["id"] == iid:
+        raise HTTPException(400, "cannot_merge_into_self")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # 1) Transfer aliases from suggested → target, de-duping.
+    suggested_aliases = await db.item_aliases.find(
+        {"canonical_item_id": iid, "restaurant_id": rid},
+        {"_id": 0},
+    ).to_list(500)
+    transferred, deduped = 0, 0
+    for a in suggested_aliases:
+        alias_text = (a.get("alias") or "").strip()
+        if not alias_text:
+            continue
+        existing_target_alias = await db.item_aliases.find_one(
+            {
+                "canonical_item_id": target["id"],
+                "restaurant_id": rid,
+                "alias": alias_text,
+            },
+            {"_id": 0},
+        )
+        if existing_target_alias:
+            await db.item_aliases.update_one(
+                {"id": existing_target_alias["id"]},
+                {"$set": {"last_used_at": now},
+                 "$inc": {"usage_count": int(a.get("usage_count") or 1)}},
+            )
+            await db.item_aliases.delete_one({"id": a["id"]})
+            deduped += 1
+        else:
+            await db.item_aliases.update_one(
+                {"id": a["id"]},
+                {"$set": {"canonical_item_id": target["id"], "last_used_at": now}},
+            )
+            transferred += 1
+
+    # 2) Add the suggested item's own `name` as an alias on the target (if new).
+    suggested_name = (suggested.get("name") or "").strip()
+    if suggested_name:
+        exists = await db.item_aliases.find_one(
+            {
+                "canonical_item_id": target["id"],
+                "restaurant_id": rid,
+                "alias": suggested_name,
+            },
+            {"_id": 0},
+        )
+        if not exists:
+            await db.item_aliases.insert_one({
+                "id": str(uuid.uuid4()),
+                "restaurant_id": rid,
+                "canonical_item_id": target["id"],
+                "alias": suggested_name,
+                "source": "merge",
+                "created_by_user_id": user.get("id"),
+                "created_at": now,
+                "last_used_at": now,
+                "usage_count": 1,
+            })
+
+    # 3) Mark suggested as merged + archived (non-destructive).
+    await db.canonical_items.update_one(
+        {"id": iid, "restaurant_id": rid},
+        {"$set": {
+            "is_merged": True,
+            "is_archived": True,
+            "merged_into_item_id": target["id"],
+            "merged_at": now,
+            "merged_by_user_id": user.get("id"),
+            "merged_by_name": user.get("name", ""),
+        }},
+    )
+
+    await audit_log(
+        user, "MERGE", "Item", iid,
+        f'{user["name"]} merged suggested "{suggested.get("name", "")}" into "{target.get("name", "")}"',
+        new_value={"merged_into_item_id": target["id"],
+                   "target_name": target.get("name"),
+                   "aliases_transferred": transferred,
+                   "aliases_deduped": deduped},
+    )
+
+    # Return refreshed target so the UI can update inline.
+    refreshed_target = await db.canonical_items.find_one(
+        {"id": target["id"], "restaurant_id": rid}, {"_id": 0}
+    )
+    refreshed_target["aliases"] = await db.item_aliases.find(
+        {"canonical_item_id": target["id"], "restaurant_id": rid, "is_archived": {"$ne": True}},
+        {"_id": 0},
+    ).to_list(200)
+
+    return {
+        "status": "merged",
+        "suggested_id": iid,
+        "target": refreshed_target,
+        "aliases_transferred": transferred,
+        "aliases_deduped": deduped,
+    }
+
+
 @router.post("/aliases")
 async def create_alias(data: ItemAliasCreate, user=Depends(get_user)):
     doc = data.model_dump()
@@ -113,32 +376,63 @@ async def delete_alias(aid: str, user=Depends(get_user)):
 
 @router.get("/items/{item_id}/price-history")
 async def item_price_history(item_id: str, user=Depends(get_user)):
-    """Get price history for a canonical item by scanning all purchases matching its name + aliases."""
+    """Price history for a canonical item.
+
+    Milestone 20 — identity-based join: any purchase-line whose
+    `canonical_item_id` points at this item (directly or via one merge
+    hop) contributes. Falls back to name + alias matching for legacy
+    rows that have not yet been linked.
+    """
+    from services.identity_resolver import build_canonical_index, GROUP_PREFIX_CANON
     rid = user["restaurant_id"]
     item = await db.canonical_items.find_one({"id": item_id, "restaurant_id": rid}, {"_id": 0})
     if not item:
         raise HTTPException(404, "Item not found")
 
-    names = {item["name"].lower()}
-    aliases = await db.item_aliases.find({"canonical_item_id": item_id, "restaurant_id": rid}, {"_id": 0}).to_list(200)
-    for a in aliases:
-        names.add(a["alias_name"].lower())
+    idx = await build_canonical_index(rid)
+    # Target group_key(s) for this canonical (variant lines roll up by
+    # prefix match on `canon::<id>`).
+    target_prefix = f"{GROUP_PREFIX_CANON}{item_id}"
 
-    purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0, "supplier_name": 1, "invoice_date": 1, "items": 1}).to_list(10000)
+    # Back-compat name/alias fallback set — covers legacy rows without
+    # canonical_item_id that resolve via the canonical index anyway.
+    names_fallback = {item["name"].lower()}
+    aliases = await db.item_aliases.find(
+        {"canonical_item_id": item_id, "restaurant_id": rid, "is_archived": {"$ne": True}},
+        {"_id": 0},
+    ).to_list(200)
+    for a in aliases:
+        nm = a.get("alias_name") or a.get("alias") or ""
+        if nm:
+            names_fallback.add(nm.lower())
+
+    purchases = await db.purchases.find(
+        {"restaurant_id": rid},
+        {"_id": 0, "supplier_name": 1, "invoice_date": 1, "items": 1},
+    ).to_list(10000)
 
     records = []
     for p in purchases:
         vendor = p.get("supplier_name", "Unknown")
         date = p.get("invoice_date", "")
         for it in p.get("items", []):
-            raw = it.get("raw_name", "").lower()
-            if raw in names:
-                records.append({
-                    "vendor": vendor, "date": date,
-                    "unit_price": round(float(it.get("unit_price", 0)), 2),
-                    "quantity": float(it.get("quantity", 0)),
-                    "unit": it.get("unit", ""), "raw_name": it.get("raw_name", ""),
-                })
+            gkey, _, _ = idx.resolve(it)
+            matched = False
+            if gkey == target_prefix or gkey.startswith(target_prefix + "::"):
+                matched = True
+            else:
+                # Last-chance backwards compat for rows not covered by idx
+                raw = (it.get("raw_name") or "").lower()
+                if raw and raw in names_fallback:
+                    matched = True
+            if not matched:
+                continue
+            records.append({
+                "vendor": vendor, "date": date,
+                "unit_price": round(float(it.get("unit_price", 0) or 0), 2),
+                "quantity": float(it.get("quantity", 0) or 0),
+                "unit": it.get("unit", ""), "raw_name": it.get("raw_name", ""),
+            })
 
     records.sort(key=lambda x: x["date"])
 

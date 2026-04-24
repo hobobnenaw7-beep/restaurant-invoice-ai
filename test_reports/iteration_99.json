@@ -1,0 +1,65 @@
+{
+  "summary": "Milestone 23 — canonical identity + learning loop. Ran 44 unit pytests (all GREEN) + 9 live integration tests (7 PASS, 2 FAIL). All 2 live failures share ONE root cause: PUT /api/items/{id} silently strips/nulls fields other than `name` — specifically `variants` and `status` are wiped. This cascades into (a) autocomplete 'learned' suggestions losing composed 'Canon — v1 — v2' label and (b) archived-canonical /link guardrail cannot be verified/enforced because the archive state never gets written. Frontend smoke confirmed login, /expenses Raw Materials list, and vendor detail pages render. Deep drill-down into Review dialog + invoice-item-row/name testids was not fully exercised due to non-obvious entry selectors (no `Review` text button present on Raw Materials list — rows use eye-icon drill-in).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "PUT /api/items/{id}",
+        "issue": "Silently wipes `variants` array (→ null) and `status` (→ null) when PUT body contains only a subset of fields. Even sending `{name, status:'archived'}` leaves status=null post-write. Breaks Milestone 23 spec: after canonical rename, variant declarations are lost → autocomplete can no longer compose 'Canon — v1 — v2' learned labels (spec requires composed label). Reproducer: 1) POST /api/items with variants=[{key:'male',...},{key:'large',...}] status='approved' → variants stored. 2) PUT /api/items/{id} {name:'Renamed'} → GET shows variants:null status:null. 3) Autocomplete 'learned' suggestions now emit label=canonical_name only, not 'Canonical — Male — Large'. 4) Items also lose their 'approved' canonical flag, which likely leaks them out of some filters.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "POST /api/purchases/{pid}/items/{idx}/link",
+        "issue": "Does NOT return 400 when linking to an archived canonical (spec requires 400). Currently returns 200 status='linked'. This is partly a downstream of the PUT /api/items bug (archive state can't be persisted via PUT), but the link endpoint itself should also explicitly reject items whose status is 'archived' OR null (treat null as not-approved). Verify by directly archiving an item in the DB and retrying /link — if it still returns 200, the guard is missing in invoice_items.py.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/items",
+        "issue": "`status` field in create payload is ignored — all newly-created items land with status=null regardless of whether client sends `status:'archived'` or `status:'approved'`. Only surfaced via subsequent GET /api/items. Consider validating + persisting status on create."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Raw Materials → Invoice Review dialog",
+        "issue": "On the /expenses Raw Materials list there is no `Review` text button — action column is an eye-icon only. Makes the spec phrase '/expenses → open any invoice → click Review' ambiguous. Frontend test harness needs a stable `data-testid` (e.g. `expense-row-review-{idx}` or `expense-row-open-{idx}`) on the eye/drill-in icon for reliable E2E automation.",
+        "affected_selectors": ["button:has-text('Review')", "[data-testid*='review']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter99_live.py",
+    "/app/test_reports/pytest/iter99_results.xml",
+    "/app/test_reports/pytest/iter99_live_results.xml"
+  ],
+  "action_items": [
+    "HIGHEST: Fix PUT /api/items/{id} to PATCH-semantics — only update supplied fields, never null-out `variants` or `status` when absent from body. This is the single root cause of both failing live tests and silently breaks Milestone 23's canonical rename propagation guarantee in the real world (variants declared once are lost on any subsequent rename).",
+    "HIGH: In routes/invoice_items.py link handler, explicitly reject canonical items with status in {'archived', None} with HTTP 400 body describing the state. Do not rely on filtering elsewhere.",
+    "MEDIUM: POST /api/items should honor and persist `status` from request (today it's always null); otherwise the archived-canonical rejection test can never be exercised via public API.",
+    "LOW: Add data-testid to Raw Materials row action icons so the Review flow is reliably reachable from E2E scripts."
+  ],
+  "critical_code_review_comments": [
+    "routes/items.py PUT handler likely uses dict-replace rather than $set with only-supplied-fields. Convert to explicit updates = {k:v for k,v in body.items() if v is not None}; await coll.update_one({_id:...}, {'$set': updates}).",
+    "routes/invoice_items.py /link handler should load canonical then assert canonical.status == 'approved'; raise HTTPException(400, 'canonical_archived_or_not_approved') otherwise. Current implementation links freely when status is null.",
+    "Autocomplete 'learned' label composition in item_autocomplete.py (lines 141-151) is correct — failure is purely upstream (variants field wiped by PUT). No change needed once PUT is fixed.",
+    "Consider hardening POST /api/items to validate status enum and persist it — current behavior (silent null) will surprise every future integration test."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter99_live.py (new live integration suite)"
+  ],
+  "success_rate": {
+    "backend_unit_pytest": "100% (44/44)",
+    "backend_live_integration": "77.8% (7/9)",
+    "frontend_smoke": "partial — login + list views OK; deep Review/Vendor drill-down not fully exercised"
+  },
+  "test_credentials": "demo@test.com / testpassword (manager, verified working)",
+  "seed_data_creation": "Created a handful of TEST_-prefixed canonical items and TEST_Supplier purchases in the live DB via /api during integration tests. All TEST_-prefixed. No production data touched.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "1) Run: REACT_APP_BACKEND_URL=<from frontend/.env> pytest /app/backend/tests/test_iter99_live.py -v — both currently-failing tests are the canary for the PUT /items fix. 2) The 44 pure-pytest files listed in the request ALL pass (test_item_matcher 21, test_multi_variant 5, test_identity_resolver 9, test_identity_integration_iter97 5, test_analytics_consolidation_iter98 1, test_learning_loop_iter99 3). 3) Purchase-create requires {invoice_date, subtotal, tax, total, items[]} — other naming combos return 422. 4) Autocomplete response key is `suggestions` (not `results`). 5) Vendor detail landing page only shows purchase-rollup rows; invoice-item-row-{idx}/invoice-item-name-{idx} testids require one more drill-in click per vendor purchase — E2E script needs that extra step.",
+  "rca_of_the_issue": "ROOT CAUSE: PUT /api/items/{id} performs a destructive write that nulls unspecified fields (notably `variants` and `status`). REPRODUCTION: (a) POST /api/items {name,status:'approved',variants:[...]}  → 200 with variants persisted; (b) PUT /api/items/{id} {name:'NewName'}  → 200; (c) GET /api/items/{id} → variants:null, status:null. IMPACT: (1) Canonical rename silently destroys variant declarations — future autocomplete learned-suggestions for previously-linked aliases can no longer compose the 'Canonical — Variant' label required by Milestone 23. (2) Archived-canonical rejection on /link cannot be persisted through this endpoint. (3) Any milestone test that creates a canonical + renames it + checks variant-dependent behavior will regress. MITIGATION: Convert PUT to partial-update semantics ({'$set': only_supplied_non_null_fields}) OR introduce PATCH /api/items/{id} and reserve PUT for full replace. Recommend the former — safer and aligned with how FE sends partial edits."
+}

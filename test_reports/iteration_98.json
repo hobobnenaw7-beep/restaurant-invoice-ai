@@ -1,0 +1,44 @@
+{
+  "summary": "Milestone 20 — Analytics Migration to Canonical-ID Joins — FULLY VALIDATED. pytest 18/18 PASS across (a) 9 unit tests in test_identity_resolver.py (canonical_id wins, variant separation, merge-hop rollup, alias fallback, normalized-not-raw fallback, stale canonical_item_id safe fallback, tenant-scoped DB loader mock), (b) 1 end-to-end consolidation proof (test_analytics_consolidation_iter98.py: 3 OCR-noisy raw_names -> 1 consolidated vendor-comparison row with group_key=canon::<id> + all 3 records in price-history), and (c) 8 live-HTTP verification tests I authored (shape of group_key, price-intelligence migration, variant isolation, norm:: back-compat well-formed, tenant scope probe, procurement regression, autocomplete regressions). Milestone 19 regression suite 26/26 green.",
+  "pass_fail_checklist": {
+    "1_identity_resolver_unit_tests": "PASS — 9/9 tests/test_identity_resolver.py (canonical wins, variant split, merge hop, alias fallback, name fallback, normalized-not-raw fallback, empty input safe, stale canonical_item_id safe, build_canonical_index tenant-scoped via mock)",
+    "2_analytics_consolidation_e2e": "PASS — tests/test_analytics_consolidation_iter98.py: 3 OCR-noisy raw_names linked to one canonical -> exactly 1 vendor-comparison row with group_key=canon::<id>, display item = canonical name; price-history returns all 3 seeded records",
+    "3_vendor_comparison_has_group_key": "PASS — every row carries group_key, all prefixed canon:: or norm::; display 'item' is canonical name for canon:: rows (verified live: 'Chicken Breast' -> group_key=canon::016ba722...)",
+    "4_price_intelligence_migrated": "PASS — /api/prices/intelligence returns comparison[] with group_key on every row; price_trends keyed by canonical names; price_alerts use canonical names",
+    "5_price_history_group_key_match": "PASS — /api/items/{cid}/price-history returns 10 records for canonical 016ba722...; includes legacy raw variant 'Chicken Breasts' (back-compat fallback path active)",
+    "6_CRITICAL_variant_isolation": "PASS — created canonical with variants [male,female] + 2 purchases (same canonical_item_id, different variant_key) -> vendor-comparison returns EXACTLY 2 rows: group_key=canon::<id>::male and group_key=canon::<id>::female",
+    "7_CRITICAL_backwards_compat_norm_fallback": "PASS — /api/prices/vendor-comparison includes a norm::chicken breast bnls 4 10 lb row for an unlinked legacy purchase; schema check confirms all rows have group_key starting with canon:: or norm:: (no raw fragmentation); norm:: tail is normalized-lowercase (not raw)",
+    "8_tenant_isolation": "PASS — unit test test_build_canonical_index_scopes_by_tenant verifies restaurant_id filter issued to both canonical_items.find and item_aliases.find; live probe confirms a tenant-specific seeded canonical appears for that tenant as a canon:: row",
+    "9_procurement_regression": "PASS — /api/procurement/recommendations -> 200 OK",
+    "10_milestone19_regression": "PASS — /api/items/autocomplete empty q -> {suggestions: []}; non-empty q returns suggestions with source in {canonical, variant, alias}; 26/26 milestone 19 tests (test_item_matcher.py + test_identity_integration_iter97.py) green"
+  },
+  "before_after_verification": {
+    "before": "Prior to Milestone 20, analytics grouped by raw item_name, so OCR-noisy variants (e.g. 'Chicken Breasts' vs 'Chicken Breast') fragmented into distinct rows.",
+    "after": "Example canonical 'Chicken Breast' (id 016ba722-8b06-4317-82f0-4944bf0a0be5) now returns a SINGLE row in /api/prices/vendor-comparison with group_key='canon::016ba722-8b06-4317-82f0-4944bf0a0be5', vendor_count=7, best_price=5.71 (Fresh Farms Produce). /api/items/016ba722.../price-history returns 10 records including legacy raw-name variants ('Chicken Breasts') — back-compat via name/alias match on the canonical is holding.",
+    "all_prior_fields_preserved": "Yes — row shape now has {item, group_key, vendors[], best_vendor, best_price, savings_pct, vendor_count}. group_key is additive metadata; no prior field was removed or type-changed."
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_identity_resolver.py",
+    "/app/backend/tests/test_analytics_consolidation_iter98.py",
+    "/app/backend/tests/test_iter98_live_verification.py",
+    "/app/test_reports/pytest/pytest_iter98.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/identity_resolver.py (150 LOC) is thin, pure, and correctly tenant-scoped. resolve() correctly: (1) prefers canonical_item_id with merge-hop via merge_targets, (2) gracefully handles stale canonical_item_id by falling through to alias/name lookup, (3) uses normalized raw_name (not raw) for norm:: fallback — all covered by unit tests.",
+    "routes/prices.py vendor_price_comparison + price_intelligence both call build_canonical_index() once per request and resolve() per line — O(1) grouping, no N+1. Both endpoints now emit group_key on every row. Variants correctly suffix the canon:: key with ::<variant_key>.",
+    "routes/items.py item_price_history follows group_key match (canon::<id>[::<variant>]) with legacy name/alias fallback — verified live: 10 records returned including historical rows with raw_name='Chicken Breasts' matching canonical 'Chicken Breast' via name_lookup.",
+    "routes/purchases.py alias_name/alias compatibility handled (identity_resolver reads both a.alias and a.alias_name on lines 138–139 of identity_resolver.py).",
+    "OBSERVATION (not a defect, carry-over from earlier milestones): POST /api/purchases auto-creates a canonical_items row for every new raw_name (including when a normalized-equivalent canonical already exists — verified during testing: 'Zzlegacy  ZzFoo-1555ce' and 'zzlegacy zzfoo 1555ce' create 2 distinct canonicals because normalize_name CamelCase-splits 'ZzFoo' into 'zz foo'). This means in practice new unlinked rows rarely use the norm:: fallback — they immediately get canon:: grouping. Milestone 20 itself is not affected (analytics read path is correct); flagging for future ingest-side consideration if the team wants tighter ingest-time consolidation."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter98_live_verification.py (new)"],
+  "success_rate": {"backend": "100% (18/18 milestone 20 + 26/26 milestone 19 regression = 44/44)"},
+  "test_credentials": "demo@test.com / testpassword",
+  "seed_data_creation": "All seed data is self-cleaning via httpx.delete in finally blocks: test_analytics_consolidation_iter98.py creates 1 canonical + 3 purchases and deletes them; test_iter98_live_verification.py variant-isolation test creates 1 canonical (with male/female variants) + 2 purchases and deletes them; tenant probe test creates 1 canonical + 1 purchase and deletes them.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Milestone 20 analytics migration is green. Tests live at: (1) /app/backend/tests/test_identity_resolver.py (9 unit tests including build_canonical_index tenant-scope mock), (2) /app/backend/tests/test_analytics_consolidation_iter98.py (1 e2e consolidation proof), (3) /app/backend/tests/test_iter98_live_verification.py (8 live verification tests incl. variant isolation CRITICAL, norm:: schema, procurement regression, autocomplete regression). All 3 migrated endpoints verified: GET /api/prices/vendor-comparison rows have group_key; GET /api/prices/intelligence uses 'comparison' key (not 'comparison_items') with group_key on each row; GET /api/items/{cid}/price-history matches canon::<id>[::<variant>] and falls back to name/alias for legacy rows. Variant isolation proven with a live seeded scenario (2 purchases same canonical diff variant_key -> 2 rows canon::<id>::male + canon::<id>::female). For norm:: fallback verification, be aware POST /api/purchases auto-creates a canonical per new raw_name, so simulating legacy unlinked rows via HTTP is unreliable — I verified the schema/shape of existing norm:: rows and the pure-resolver behavior via unit tests instead. Sample live canonical to smoke-test: canonical_id 016ba722-8b06-4317-82f0-4944bf0a0be5 ('Chicken Breast') yields vendor_count=7 row with group_key=canon::016ba722... and 10 price-history records including legacy raw variant 'Chicken Breasts'.",
+  "rca of the issue": "N/A — no defects. Milestone 20 implementation correctly migrates analytics read-path to canonical-id joins with normalized-raw fallback, preserves tenant isolation, preserves variant separation, and preserves all prior response fields while adding group_key additively."
+}

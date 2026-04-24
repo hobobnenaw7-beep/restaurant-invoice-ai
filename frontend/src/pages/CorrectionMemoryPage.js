@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { Brain, Trash2, Pencil, ChevronLeft, Package, ArrowRight, Clock, ToggleRight } from 'lucide-react';
+import { Brain, Trash2, Pencil, ChevronLeft, Package, ArrowRight, Clock, ToggleRight, CheckCircle2, Sparkles, GitMerge, Archive, Link2Off, ExternalLink } from 'lucide-react';
 
 // ── Helpers ──
 
@@ -29,15 +30,81 @@ function describeChanges(c) {
   return changes;
 }
 
+// ── Destination Badge ──
+// Traceability loop closure: show where the correction's learned link
+// currently lives in the item catalog, and let the user click through
+// to the canonical (or merge target) item.
+
+const DEST_STYLES = {
+  approved:  { cls: 'bg-emerald-50 text-emerald-700 border border-emerald-200', label: 'Approved', Icon: CheckCircle2 },
+  suggested: { cls: 'bg-amber-50 text-amber-800 border border-amber-300',       label: 'Suggested', Icon: Sparkles },
+  merged:    { cls: 'bg-indigo-50 text-indigo-700 border border-indigo-200',    label: 'Merged',    Icon: GitMerge },
+  dismissed: { cls: 'bg-slate-100 text-slate-600 border border-slate-300',      label: 'Dismissed', Icon: Archive },
+  archived:  { cls: 'bg-slate-100 text-slate-600 border border-slate-300',      label: 'Archived',  Icon: Archive },
+  unlinked:  { cls: 'bg-rose-50 text-rose-700 border border-rose-200',          label: 'Unlinked',  Icon: Link2Off },
+};
+
+function DestinationCell({ correction, onNavigate, testId }) {
+  const dest = correction?.canonical_destination || { status: 'unlinked' };
+  const style = DEST_STYLES[dest.status] || DEST_STYLES.unlinked;
+  const Icon = style.Icon;
+  const isClickable = !!dest.canonical_item_id && dest.status !== 'unlinked';
+
+  return (
+    <div className="flex flex-col gap-1 min-w-[180px]" data-testid={testId}>
+      <Badge
+        className={`${style.cls} text-[10px] font-bold uppercase gap-1 h-5 w-fit`}
+        data-testid={`${testId}-badge`}
+        data-status={dest.status}
+      >
+        <Icon className="w-2.5 h-2.5" />
+        {style.label}
+      </Badge>
+      {dest.status === 'merged' && dest.canonical_name ? (
+        <button
+          type="button"
+          onClick={() => isClickable && onNavigate(dest.canonical_item_id)}
+          className="flex items-center gap-1 text-[10px] text-indigo-700 hover:text-indigo-900 hover:underline font-medium text-left"
+          data-testid={`${testId}-merged-link`}
+          title={`Open "${dest.canonical_name}" in Items`}
+        >
+          Merged into: <span className="font-semibold truncate max-w-[140px]">{dest.canonical_name}</span>
+          <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
+        </button>
+      ) : dest.canonical_name ? (
+        <button
+          type="button"
+          onClick={() => isClickable && onNavigate(dest.canonical_item_id)}
+          disabled={!isClickable}
+          className="flex items-center gap-1 text-[10px] text-slate-600 hover:text-teal-700 hover:underline font-medium text-left disabled:hover:no-underline disabled:cursor-default"
+          data-testid={`${testId}-canonical-link`}
+          title={isClickable ? `Open "${dest.canonical_name}" in Items` : undefined}
+        >
+          <span className="truncate max-w-[160px]">{dest.canonical_name}</span>
+          {isClickable && <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />}
+        </button>
+      ) : (
+        <span className="text-[10px] text-slate-400 italic">Not in catalog yet</span>
+      )}
+    </div>
+  );
+}
+
 // ── Main Page ──
 
 export default function CorrectionMemoryPage() {
   const { api } = useAuth();
+  const navigate = useNavigate();
   const [vendors, setVendors] = useState([]);
   const [selectedVendor, setSelectedVendor] = useState(null);
   const [corrections, setCorrections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editDialog, setEditDialog] = useState(null);
+
+  const navigateToItem = useCallback((itemId) => {
+    if (!itemId) return;
+    navigate(`/items?highlight=${encodeURIComponent(itemId)}`);
+  }, [navigate]);
 
   // Fetch vendor list
   const fetchVendors = useCallback(async () => {
@@ -205,6 +272,7 @@ export default function CorrectionMemoryPage() {
                 </TableHead>
                 <TableHead className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Item</TableHead>
                 <TableHead className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Changes</TableHead>
+                <TableHead className="text-[10px] font-bold text-slate-600 uppercase tracking-wider w-48">Destination</TableHead>
                 <TableHead className="text-[10px] font-bold text-slate-600 uppercase tracking-wider text-center w-20">Used</TableHead>
                 <TableHead className="text-[10px] font-bold text-slate-600 uppercase tracking-wider w-28">Last Used</TableHead>
                 <TableHead className="text-[10px] font-bold text-slate-600 uppercase tracking-wider w-28">Saved</TableHead>
@@ -251,6 +319,13 @@ export default function CorrectionMemoryPage() {
                           </div>
                         ))}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      <DestinationCell
+                        correction={c}
+                        onNavigate={navigateToItem}
+                        testId={`destination-${i}`}
+                      />
                     </TableCell>
                     <TableCell className="text-center">
                       <span className="text-xs font-medium text-slate-600" data-testid={`usage-count-${i}`}>

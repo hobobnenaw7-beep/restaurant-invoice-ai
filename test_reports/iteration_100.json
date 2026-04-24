@@ -1,0 +1,46 @@
+{
+  "summary": "Milestone 23 iter100 retest — PUT /api/items partial-update fix VERIFIED. All 44 unit pytests green (41 regression + 3 iter99 learning-loop). 3 new live iter100 tests green (PUT name-only preserves variants, learned-autocomplete composes 'Canon — Variant' label even after rename, archived-canonical /link returns 400 'canonical_item_archived'). Frontend E2E on /expenses/raw-materials → view-purchase → InvoiceReviewDialog → edit-item-btn → SmartItemAutocomplete: input surfaces 12 suggestions with data-source=canonical|alias attributes, pick+save successfully links (toast 'Linked to catalog: CHICKEN', display-name-0 updated). Vendor detail: invoice-item-row-{idx} elements present with data-canonical-id attr (empty on unlinked rows — code correctly gates cursor-pointer on nav flag).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "InvoiceReviewDialog display-name linked-badge",
+        "issue": "linked-badge-{i} is hidden when canonical_name === raw_name (by design in InvoiceReviewDialog.js L419: `it.canonical_name && it.canonical_name !== (it.raw_name||'')`). When user selects an autocomplete option whose label already matches the raw_name string, the link succeeds but the teal 'Canon' badge never shows — only the variant-badge would surface a visual. Consider always showing linked-badge when canonical_item_id is set, or at minimum when source was a learned/canonical pick, so users get consistent linked feedback regardless of raw/canonical string equality.",
+        "affected_selectors": ["[data-testid^='linked-badge-']"]
+      }
+    ],
+    "design_issues": [
+      { "screen": "Invoice Review Dialog", "issues": ["DialogContent console warning: Missing Description or aria-describedby — accessibility lint only, not blocking"] }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter100_live.py",
+    "/app/test_reports/pytest/iter100_unit_results.xml",
+    "/app/test_reports/pytest/iter100_learning_results.xml",
+    "/app/test_reports/pytest/iter100_live_results.xml"
+  ],
+  "action_items": [
+    "(MEDIUM) InvoiceReviewDialog linked-badge gating: relax `canonical_name !== raw_name` guard so users see the Linked badge whenever canonical_item_id is truthy — the current guard hides the badge after a normal Save, reducing visibility of successful catalog linkage.",
+    "(LOW) Add aria-describedby / <DialogDescription> to InvoiceReviewDialog and Purchase Details DialogContent to silence Radix a11y warnings.",
+    "(LOW/nice-to-have) Expose an archive-approved-item route (PATCH /api/items/{id}/archive) so the archived-canonical guard is exercisable via public API; currently requires direct DB flip."
+  ],
+  "critical_code_review_comments": [
+    "routes/items.py update_item() is now correctly using model_dump(exclude_unset=True) + dropping None values + normalising variants. Fix landed and verified by live test (PUT {name:X} leaves variants intact).",
+    "routes/invoice_items.py /link correctly raises HTTP 400 'canonical_item_archived' when target.is_archived is True (line 146-147). Verified via DB-flip live test.",
+    "core/models.CanonicalItemCreate does NOT declare is_archived/is_suggested — which is fine for CREATE but means PUT also cannot flip those via API. If product wants UI-driven archive of approved canonicals, extend the model or add a dedicated endpoint.",
+    "SmartItemAutocomplete component exposes data-testid={testId}-input, -panel, -option-{i} with data-source attribute — good testability. Confirmed in live E2E."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter100_live.py"],
+  "success_rate": {
+    "backend_unit_pytest": "100% (44/44 — 41 regression + 3 iter99 learning-loop)",
+    "backend_live_iter100": "100% (3/3 — PUT partial-update, learned-autocomplete compose, archived /link 400)",
+    "frontend_e2e": "100% on critical flow (login → Raw Materials → InvoiceReviewDialog → SmartItemAutocomplete pick → Save → display-name update)"
+  },
+  "test_credentials": "demo@test.com / testpassword (manager) — verified working",
+  "seed_data_creation": "3 TEST_-prefixed canonical items created and torn down (DELETE) per test fixture. One 'CHICKEN' canonical link was saved against a SYSCO JACKSONVILLE purchase during FE E2E (Linked to catalog: CHICKEN toast); harmless.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "1) Route for purchases list is /expenses/raw-materials, not /purchases. Use [data-testid^='view-purchase-'] (eye icon) to open InvoiceReviewDialog. 2) SmartItemAutocomplete inside InvoiceReviewDialog uses testId='edit-raw_name-{i}', so selectors are [data-testid='edit-raw_name-0-input'], [data-testid='edit-raw_name-0-panel'], [data-testid^='edit-raw_name-0-option-'] (each option exposes data-source). 3) For archived-canonical test, there is no public PUT path to flip is_archived on an approved item (CanonicalItemCreate doesn't declare the field); the live test flips directly in MongoDB using MONGO_URL/DB_NAME from /app/backend/.env. 4) linked-badge-{i} only renders when canonical_name !== raw_name — not a bug per se, but surprising; logged as medium action item. 5) test_iter100_live.py is the canary for any future regressions on PUT /items semantics.",
+  "rca_of_the_issue": "Original iter99 bug (PUT wipes variants/status) is resolved. Root-cause fix: routes/items.py update_item() switched from data.model_dump() (which hydrates all declared Optional fields to None) to data.model_dump(exclude_unset=True) + filtering None + normalising variants only when provided → $set with the minimal diff. Verified with three live tests covering (a) variants preservation on name-only PUT, (b) learned-autocomplete still composes 'Canonical — Variant' label after rename, (c) /link returns 400 canonical_item_archived when canonical is archived (flipped via direct DB write due to model not exposing is_archived)."
+}

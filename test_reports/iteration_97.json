@@ -1,0 +1,49 @@
+{
+  "summary": "Milestone 19 — Robust Identity, Canonical Linking & Smart Input System — FULLY VALIDATED. Backend pytest 26/26 PASS (21 test_item_matcher.py + 5 test_identity_integration_iter97.py live HTTP). Frontend: /items Variants editor persists and renders variant chips correctly; InvoiceReviewDialog SmartItemAutocomplete fetches /api/items/autocomplete with source=canonical|variant|alias, click-select+Save invokes PATCH item then POST /link, and the enriched GET /api/purchases/{pid} returns canonical_name/display_name at read time. Advisory-only guardrail HOLDS: zero /promote /merge /dismiss /link calls during typing, arrow navigation, or picking a suggestion — /link fires ONLY on explicit Save. Autocomplete empty q returns []; all suggestions carry source ∈ {canonical,variant,alias}.",
+  "pass_fail_checklist": {
+    "1_backend_unit_tests_item_matcher": "PASS — 21/21 (normalization 5 params, jaccard, fuzzy, variant split, 6-tier matcher, guardrails, suggested/archived exclusion, competing candidates, correction memory)",
+    "2_backend_integration_tests_iter97": "PASS — 5/5 (autocomplete approved scope, link+propagation, match-preview read-only, variant-required medium)",
+    "3_autocomplete_empty_q_returns_empty": "PASS — GET /api/items/autocomplete?q= → {\"query\":\"\",\"suggestions\":[]}",
+    "4_autocomplete_source_shape": "PASS — all suggestions carry source ∈ {canonical, variant, alias} and canonical_item_id",
+    "5_link_endpoint_sets_identity": "PASS — POST /api/purchases/{pid}/items/0/link body {canonical_item_id, variant_key} → 200; enriched GET shows canonical_item_id, canonical_name, display_name",
+    "6_canonical_to_invoice_propagation": "PASS — integration test verifies PUT /api/items/{iid} with new name updates display_name on subsequent GET /api/purchases/{pid} while raw_name is unchanged",
+    "7_invoice_to_canonical_isolation": "PASS — raw_name persisted untouched after PATCH; canonical doc not mutated (verified via integration test + live API response)",
+    "8_normalization_resolves_all_cases": "PASS — 5 parametrized cases: spacing, tab/dash, CamelCase split, alpha↔digit boundary, punctuation",
+    "9_handwritten_variant_mapping": "PASS — 'male live blue crab' → variant_key='male'; 'liv blue carb' → same canonical, NOT auto-linked (medium)",
+    "10_frontend_variants_editor_persists": "PASS — Add Item dialog Variants editor (testids: variants-editor, variant-add, variant-key-{i}, variant-label-{i}, variant-remove-{i}); saved item with {male, female} variants; re-open edit dialog shows both rows with key='male','female'",
+    "11_frontend_variants_chips_render": "PASS — variants-chips-{id} wrapper + variant-chip-{id}-male + variant-chip-{id}-female both rendered on the saved row",
+    "12_frontend_smart_autocomplete_panel": "PASS — typing 'cra' in edit-raw_name-0-input shows edit-raw_name-0-panel with 12 suggestions; each option has data-source and data-canonical-id attributes",
+    "13_frontend_pick_then_save_calls_link": "PASS — click option → PATCH /api/purchases/{pid}/items/0 → POST /api/purchases/{pid}/items/0/link (in order); success toast 'Linked to catalog: CRAB LEGS' shown",
+    "14_advisory_only_guardrail": "PASS (CRITICAL) — ZERO /promote /merge /dismiss /link network calls during: (a) typing the query, (b) panel open, (c) ArrowDown navigation, (d) clicking a suggestion. /link fires only after clicking Save.",
+    "15_enriched_read_after_link": "PASS — GET /api/purchases/{pid} returns item with canonical_item_id='281deaa1…', canonical_name='CRAB LEGS', display_name='CRAB LEGS', raw_name preserved"
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_item_matcher.py",
+    "/app/backend/tests/test_identity_integration_iter97.py",
+    "/app/test_reports/pytest/pytest_iter97.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/item_matcher.py 6-tier pipeline correctly enforces STRICT HIGH guardrails: token_jaccard≥0.85 AND fuzzy≥0.90 AND margin≥0.10 AND variant_ok. Verified by test_variant_required_when_canonical_declares_them: canonical with variants + raw lacking variant token → medium (needs_review=True, auto_linked=False).",
+    "services/item_identity.normalize_name handles all normalization categories (punctuation, CamelCase, alpha↔digit, whitespace collapse). Parametrized tests pass across 5 representative inputs.",
+    "routes/item_autocomplete.py filter correctly excludes is_suggested and is_archived at the DB query level, per unit tests and live API check.",
+    "routes/invoice_items.py link/promote/match endpoints are the ONLY write paths. match-preview (GET) is read-only — verified by test_match_preview_never_auto_links_on_low_confidence.",
+    "routes/purchases.py _enrich_purchases_with_canonical correctly follows merged_into_item_id chain and injects canonical_name/variant_label/display_name without mutating the purchase document (raw_name unchanged after canonical rename — verified live).",
+    "frontend/SmartItemAutocomplete.js debounces fetch at 180ms and only surfaces /api/items/autocomplete responses (never /merge/promote/dismiss/link). pick() only fires onSelect+onChange callbacks locally — persistence is deferred to the parent component's Save handler. ADVISORY-ONLY guardrail enforced by construction.",
+    "frontend/InvoiceReviewDialog.js save handler correctly does PATCH first (updates raw/qty/price) then POST /link only when canonical_item_id was picked. Non-selected free-typed raw names never trigger /link — matches spec."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (26/26)", "frontend": "100% (15/15 checklist items)"},
+  "test_credentials": "demo@test.com / testpassword",
+  "seed_data_creation": "Created one approved canonical item 'TEST Crab <ts>' with male+female variants via the UI Add Item dialog during the frontend smoke test. No suggested/archived seeds needed. Integration tests self-cleanup via httpx.delete.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "26/26 backend tests green via `pytest /app/backend/tests/test_item_matcher.py /app/backend/tests/test_identity_integration_iter97.py -v`. SmartItemAutocomplete testids: edit-raw_name-{idx}-input / -panel / -option-{i} / -empty, with data-source + data-canonical-id + data-variant-key attributes on each option button. To verify advisory-only guardrail under network inspection, set up page.on('request') and filter for /promote|/merge|/dismiss|/link — count must stay at 0 until user clicks save-edit-{idx}. Backend autocomplete query signature: GET /api/items/autocomplete?q=<term>&limit=12 — tenant-scoped, approved-only, empty q returns empty suggestions array. Linked invoice line enrichment is purely read-time in routes/purchases.py; canonical rename via PUT /api/items/{iid} propagates immediately on next GET without any write to purchase doc.",
+  "rca of the issue": "N/A — no defects found. Milestone 19 implementation is correct and matches spec."
+}

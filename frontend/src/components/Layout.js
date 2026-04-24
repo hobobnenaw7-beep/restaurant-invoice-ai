@@ -7,68 +7,151 @@ import { Badge } from '@/components/ui/badge';
 import FloatingAssistant from '@/components/FloatingAssistant';
 import {
   LayoutDashboard, Receipt, DollarSign, Users,
-  Package, FileText, FolderArchive, MessageCircle, Settings, Bell, Menu, LogOut, ChefHat, UserCog, ClipboardCheck,
-  TrendingUp, ArrowRightLeft, Clock, ChevronDown, ShoppingCart, Shield, Home, Scale, Brain, BarChart3, Sparkles, Inbox
+  Package, FileText, FolderArchive, Settings, Bell, Menu, LogOut, ChefHat, UserCog, ClipboardCheck,
+  TrendingUp, ArrowRightLeft, Clock, ChevronDown, ChevronRight, ShoppingCart, Shield, Home, Sparkles,
 } from 'lucide-react';
 
-const mainNav = [
-  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'view_dashboard' },
-  { path: '/expenses', label: 'Expenses', icon: Receipt, perm: 'view_expenses' },
-  { path: '/sales', label: 'Sales', icon: DollarSign, perm: 'view_sales' },
-  { path: '/vendors', label: 'Vendors', icon: Users, perm: 'view_vendors' },
-  { path: '/items', label: 'Items', icon: Package, perm: 'view_items' },
-  { path: '/reports', label: 'Reports', icon: FileText, perm: 'view_reports' },
-  { path: '/purchase-decisions', label: 'Smart Purchases', icon: ShoppingCart, perm: 'view_reports' },
-  { path: '/vendor-comparison', label: 'Vendor $/LB', icon: Scale, perm: 'view_vendors' },
-  { path: '/price-intelligence', label: 'Price Intelligence', icon: BarChart3, perm: 'view_reports' },
-  { path: '/procurement-decisions', label: 'Procurement', icon: Sparkles, perm: 'view_reports' },
-  { path: '/procurement/inbox', label: 'Suggestions Inbox', icon: Inbox, perm: 'view_reports' },
-  { path: '/records', label: 'Records Library', icon: FolderArchive, perm: 'view_records' },
-  { path: '/correction-memory', label: 'Correction Memory', icon: Brain, perm: 'view_expenses' },
-  { path: '/audit-log', label: 'Audit Log', icon: Shield, perm: 'view_users' },
+// ─────────────────────────────────────────────────────────────────────
+// Navigation tree — groups use `children`, links use `path`.
+// `perm` on a group hides the whole group. Per-child `perm` hides leaves.
+// ─────────────────────────────────────────────────────────────────────
+const navTree = [
+  { type: 'link', path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'view_dashboard' },
+  { type: 'link', path: '/orders',    label: 'Orders',    icon: ShoppingCart,    perm: 'view_expenses' },
+  { type: 'group', key: 'expenses', label: 'Expenses', icon: Receipt, perm: 'view_expenses', matchPrefix: '/expenses',
+    children: [
+      { path: '/expenses/raw-materials', label: 'Raw Materials' },
+      { path: '/expenses/salaries',      label: 'Salaries' },
+      { path: '/expenses/other',         label: 'Other Expenses' },
+    ]},
+  { type: 'link', path: '/sales', label: 'Sales', icon: DollarSign, perm: 'view_sales' },
+  { type: 'group', key: 'items', label: 'Items', icon: Package, perm: 'view_items', matchPrefix: '/items',
+    children: [
+      { path: '/items',             label: 'Item Catalog' },
+      { path: '/correction-memory', label: 'Product Matching Rules', perm: 'view_expenses' },
+    ]},
+  { type: 'group', key: 'vendors', label: 'Vendors', icon: Users, perm: 'view_vendors', matchPrefix: '/vendors',
+    children: [
+      { path: '/vendors',            label: 'Vendor Directory' },
+      { path: '/vendor-comparison',  label: 'Vendor Pricing ($/LB)' },
+    ]},
+  { type: 'link', path: '/reports', label: 'Reports', icon: FileText, perm: 'view_reports' },
+  { type: 'link', path: '/procurement', label: 'Procurement', icon: Sparkles, perm: 'view_reports' },
+  { type: 'link', path: '/records', label: 'Records Library', icon: FolderArchive, perm: 'view_records' },
 ];
 
 const managerNav = [
-  { path: '/users', label: 'User Management', icon: UserCog, perm: 'view_users' },
-  { path: '/approvals', label: 'Approvals', icon: ClipboardCheck, perm: 'view_users' },
+  { path: '/users',     label: 'User Management', icon: UserCog, perm: 'view_users' },
+  { path: '/approvals', label: 'Approvals',       icon: ClipboardCheck, perm: 'view_users' },
+  { path: '/audit-log', label: 'Audit Log',       icon: Shield, perm: 'view_users' },
 ];
 
-// ======================== ALERT CONFIG ========================
+// ──────────────────────────────────────────────────────────────────────
 const ALERT_CONFIG = {
   price_increase: { label: 'Price Increase', icon: TrendingUp, border: 'border-l-red-500', iconBg: 'bg-red-100', iconColor: 'text-red-600', badge: 'bg-red-100 text-red-700' },
   cheaper_vendor: { label: 'Cheaper Vendor', icon: ArrowRightLeft, border: 'border-l-emerald-500', iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', badge: 'bg-emerald-100 text-emerald-700' },
-  not_ordered:    { label: 'Not Ordered', icon: Clock, border: 'border-l-amber-500', iconBg: 'bg-amber-100', iconColor: 'text-amber-600', badge: 'bg-amber-100 text-amber-700' },
+  not_ordered:    { label: 'Not Ordered',    icon: Clock, border: 'border-l-amber-500', iconBg: 'bg-amber-100', iconColor: 'text-amber-600', badge: 'bg-amber-100 text-amber-700' },
 };
-
 const SEV_ORDER = { high: 0, medium: 1, low: 2 };
 const SEV_BADGE = {
   high: 'bg-red-600 text-white',
   medium: 'bg-amber-500 text-white',
   low: 'bg-slate-400 text-white',
 };
-
 function fmtPrice(n) { return `$${Number(n).toFixed(2)}`; }
 
-// ======================== NAV LINK (stable component) ========================
+// ─── Active-match helpers ────────────────────────────────────────────
+function isChildActive(child, pathname, search) {
+  if (child.matchQuery) {
+    if (pathname !== child.path.split('?')[0]) return false;
+    const params = new URLSearchParams(search);
+    return Object.entries(child.matchQuery).every(([k, v]) => params.get(k) === v);
+  }
+  return pathname === child.path;
+}
+function isLinkActive(item, pathname) {
+  return pathname === item.path;
+}
+function isGroupActive(group, pathname, search) {
+  if (group.matchPrefix && pathname.startsWith(group.matchPrefix)) return true;
+  return (group.children || []).some(c => isChildActive(c, pathname, search));
+}
+
+// ─── NavLink (leaf) ──────────────────────────────────────────────────
 const NavLink = memo(function NavLink({ item, isActive, onNavigate }) {
+  const Icon = item.icon;
   return (
     <Link
       to={item.path}
       onClick={onNavigate}
-      data-testid={`nav-${item.path.slice(1)}`}
+      data-testid={`nav-${item.path.replace(/^\//, '').replace(/[/?=&]/g, '-')}`}
       className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 ${
         isActive
           ? 'bg-teal-600/15 text-teal-400'
           : 'text-navy-400 hover:text-white hover:bg-navy-800/60'
       }`}
     >
-      <item.icon className="w-[18px] h-[18px] flex-shrink-0" />
+      {Icon && <Icon className="w-[18px] h-[18px] flex-shrink-0" />}
       <span>{item.label}</span>
     </Link>
   );
 });
 
-// ======================== NOTIFICATION PANEL ========================
+// ─── NavGroup (expandable) ───────────────────────────────────────────
+const NavGroup = memo(function NavGroup({ group, pathname, search, perms, onNavigate, forceOpen }) {
+  const active = isGroupActive(group, pathname, search);
+  const [open, setOpen] = useState(active || !!forceOpen);
+  useEffect(() => { if (active) setOpen(true); }, [active]);
+
+  const children = (group.children || []).filter(c => !c.perm || perms[c.perm]);
+  if (children.length === 0) return null;
+  const Icon = group.icon;
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        data-testid={`nav-group-${group.key}`}
+        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 ${
+          active
+            ? 'bg-teal-600/15 text-teal-400'
+            : 'text-navy-400 hover:text-white hover:bg-navy-800/60'
+        }`}
+      >
+        {Icon && <Icon className="w-[18px] h-[18px] flex-shrink-0" />}
+        <span className="flex-1 text-left">{group.label}</span>
+        {open
+          ? <ChevronDown className="w-4 h-4 flex-shrink-0 opacity-70" />
+          : <ChevronRight className="w-4 h-4 flex-shrink-0 opacity-70" />}
+      </button>
+      {open && (
+        <div className="ml-3 pl-3 border-l border-navy-800 mt-0.5 mb-1 space-y-0.5" data-testid={`nav-group-${group.key}-children`}>
+          {children.map(c => {
+            const activeChild = isChildActive(c, pathname, search);
+            return (
+              <Link
+                key={c.path}
+                to={c.path}
+                onClick={onNavigate}
+                data-testid={`nav-child-${group.key}-${c.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`}
+                className={`block px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors duration-150 ${
+                  activeChild
+                    ? 'bg-teal-600/15 text-teal-400'
+                    : 'text-navy-500 hover:text-white hover:bg-navy-800/60'
+                }`}
+              >
+                {c.label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+});
+
+// ─── NotificationPanel (unchanged) ───────────────────────────────────
 const NotificationPanel = memo(function NotificationPanel({ alerts, open, onClose, containerRef }) {
   const [filter, setFilter] = useState('all');
   const [filterOpen, setFilterOpen] = useState(false);
@@ -84,13 +167,11 @@ const NotificationPanel = memo(function NotificationPanel({ alerts, open, onClos
     };
     const timer = setTimeout(() => document.addEventListener('mousedown', handler), 10);
     return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler); };
-  }, [open, containerRef]); // removed onClose from deps — use ref instead
+  }, [open, containerRef]);
 
   if (!open) return null;
-
   const sorted = [...alerts].sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9));
   const filtered = filter === 'all' ? sorted : sorted.filter(a => a.type === filter);
-
   const filterOptions = [
     { value: 'all', label: 'All Alerts' },
     { value: 'price_increase', label: 'Price Increase' },
@@ -100,14 +181,12 @@ const NotificationPanel = memo(function NotificationPanel({ alerts, open, onClos
 
   return (
     <div className="absolute right-0 top-full mt-2 w-[380px] max-h-[480px] bg-white rounded-xl border border-slate-200 shadow-xl z-50 flex flex-col overflow-hidden" data-testid="notification-panel">
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
         <div className="flex items-center gap-2">
           <Bell className="w-4 h-4 text-navy-900" />
           <span className="text-xs font-bold text-navy-900">Smart Alerts</span>
           <Badge className="text-[9px] bg-slate-100 text-slate-500 h-4 px-1.5">{alerts.length}</Badge>
         </div>
-        {/* Filter dropdown */}
         <div className="relative">
           <button
             className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-navy-900 transition-colors px-2 py-1 rounded-md hover:bg-slate-50"
@@ -133,7 +212,6 @@ const NotificationPanel = memo(function NotificationPanel({ alerts, open, onClos
         </div>
       </div>
 
-      {/* Alert list */}
       <div className="flex-1 overflow-y-auto" data-testid="alert-list">
         {filtered.length === 0 ? (
           <div className="text-center py-10 text-xs text-slate-400">No alerts match this filter</div>
@@ -170,7 +248,6 @@ const NotificationPanel = memo(function NotificationPanel({ alerts, open, onClos
         )}
       </div>
 
-      {/* Footer */}
       <Link to="/dashboard" onClick={onClose} className="block px-4 py-2.5 border-t border-slate-100 text-center text-[11px] font-semibold text-teal-600 hover:bg-teal-50/50 transition-colors" data-testid="view-all-alerts-link">
         View all on Dashboard
       </Link>
@@ -178,11 +255,11 @@ const NotificationPanel = memo(function NotificationPanel({ alerts, open, onClos
   );
 });
 
-// ======================== SIDEBAR CONTENT ========================
-const SidebarContent = memo(function SidebarContent({ user, pathname, onNavigate, onLogout }) {
+// ─── Sidebar ─────────────────────────────────────────────────────────
+const SidebarContent = memo(function SidebarContent({ user, pathname, search, onNavigate, onLogout }) {
   const perms = user?.permissions || {};
-  const filteredMain = mainNav.filter(item => !item.perm || perms[item.perm]);
-  const filteredManager = managerNav.filter(item => !item.perm || perms[item.perm]);
+  const filteredTree = navTree.filter(n => !n.perm || perms[n.perm]);
+  const filteredManager = managerNav.filter(n => !n.perm || perms[n.perm]);
 
   return (
     <div className="flex flex-col h-full bg-navy-950 text-white" data-testid="sidebar">
@@ -199,9 +276,11 @@ const SidebarContent = memo(function SidebarContent({ user, pathname, onNavigate
       </div>
 
       <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-        {filteredMain.map(item => (
-          <NavLink key={item.path} item={item} isActive={pathname === item.path} onNavigate={onNavigate} />
-        ))}
+        {filteredTree.map(n => n.type === 'link'
+          ? <NavLink key={n.path} item={n} isActive={isLinkActive(n, pathname)} onNavigate={onNavigate} />
+          : <NavGroup key={n.key} group={n} pathname={pathname} search={search} perms={perms} onNavigate={onNavigate} />
+        )}
+
         {filteredManager.length > 0 && (
           <>
             <div className="pt-3 pb-1 px-3"><p className="text-[10px] font-bold text-navy-600 uppercase tracking-widest">Management</p></div>
@@ -241,7 +320,7 @@ const SidebarContent = memo(function SidebarContent({ user, pathname, onNavigate
   );
 });
 
-// ======================== LAYOUT ========================
+// ─── Layout ──────────────────────────────────────────────────────────
 export default function Layout({ children }) {
   const { user, api, logout } = useAuth();
   const location = useLocation();
@@ -251,7 +330,6 @@ export default function Layout({ children }) {
   const [alerts, setAlerts] = useState([]);
   const bellContainerRef = useRef(null);
 
-  // Fetch alerts once on mount
   useEffect(() => {
     if (!api) return;
     let mounted = true;
@@ -262,7 +340,6 @@ export default function Layout({ children }) {
   }, [api]);
 
   const highCount = useMemo(() => alerts.filter(a => a.severity === 'high').length, [alerts]);
-
   const handleCloseAlerts = useCallback(() => setAlertsOpen(false), []);
   const handleCloseMobile = useCallback(() => setMobileOpen(false), []);
   const handleToggleAlerts = useCallback(() => setAlertsOpen(prev => !prev), []);
@@ -271,13 +348,13 @@ export default function Layout({ children }) {
     <div className="flex h-screen bg-slate-50/80">
       <aside className="hidden lg:flex w-64 flex-shrink-0 border-r border-navy-800">
         <div className="w-full">
-          <SidebarContent user={user} pathname={location.pathname} onNavigate={handleCloseMobile} onLogout={logout} />
+          <SidebarContent user={user} pathname={location.pathname} search={location.search} onNavigate={handleCloseMobile} onLogout={logout} />
         </div>
       </aside>
 
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent side="left" className="p-0 w-64 bg-navy-950 border-none">
-          <SidebarContent user={user} pathname={location.pathname} onNavigate={handleCloseMobile} onLogout={logout} />
+          <SidebarContent user={user} pathname={location.pathname} search={location.search} onNavigate={handleCloseMobile} onLogout={logout} />
         </SheetContent>
       </Sheet>
 

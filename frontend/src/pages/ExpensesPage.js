@@ -248,7 +248,7 @@ function ItemAutocomplete({ value, onChange, knownItems, index }) {
 }
 
 // ======================== RAW MATERIALS TAB ========================
-function RawMaterialsTab({ api }) {
+export function RawMaterialsTab({ api }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -619,7 +619,7 @@ function RawMaterialsTab({ api }) {
             <SelectItem value="clean" className="text-xs">All Verified</SelectItem>
           </SelectContent>
         </Select>
-        <Button onClick={openAdd} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs" data-testid="add-raw-material-btn"><Plus className="w-3.5 h-3.5 mr-1.5" /> Add</Button>
+        <Button onClick={openAdd} className="bg-teal-600 hover:bg-teal-700 text-white h-9 text-xs" data-testid="add-raw-material-btn"><Plus className="w-3.5 h-3.5 mr-1.5" /> Add Raw Material</Button>
       </div>
 
       {/* Inline Review Panel — shown when Needs Review filter is active */}
@@ -1103,7 +1103,7 @@ function RawMaterialsTab({ api }) {
 }
 
 // ======================== SALARIES TAB ========================
-function SalariesTab({ api }) {
+export function SalariesTab({ api }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -1170,7 +1170,7 @@ function SalariesTab({ api }) {
   return (
     <div className="space-y-4" data-testid="salaries-tab">
       <div className="flex justify-end">
-        <Button onClick={openAdd} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs" data-testid="add-salary-btn"><Plus className="w-3.5 h-3.5 mr-1.5" /> Add Salary</Button>
+        <Button onClick={openAdd} className="bg-blue-600 hover:bg-blue-700 text-white h-9 text-xs" data-testid="add-salary-btn"><Plus className="w-3.5 h-3.5 mr-1.5" /> Add Salary</Button>
       </div>
 
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
@@ -1232,7 +1232,7 @@ function SalariesTab({ api }) {
 }
 
 // ======================== OTHER EXPENSES TAB ========================
-function OtherExpensesTab({ api }) {
+export function OtherExpensesTab({ api }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -1413,7 +1413,7 @@ function OtherExpensesTab({ api }) {
           </Select>
           {filterCat !== 'all' && <Badge className={`text-[10px] border-0 cursor-pointer ${catColor(filterCat)}`} onClick={() => setFilterCat('all')}>{filterCat} &times;</Badge>}
         </div>
-        <Button onClick={openAdd} className="bg-navy-900 hover:bg-navy-800 text-white h-9 text-xs" data-testid="add-other-expense-btn"><Plus className="w-3.5 h-3.5 mr-1.5" /> Add Expense</Button>
+        <Button onClick={openAdd} className="bg-amber-600 hover:bg-amber-700 text-white h-9 text-xs" data-testid="add-other-expense-btn"><Plus className="w-3.5 h-3.5 mr-1.5" /> Add Expense</Button>
       </div>
 
       <Card className="border border-slate-200/80 shadow-sm overflow-hidden">
@@ -1542,57 +1542,14 @@ function OtherExpensesTab({ api }) {
   );
 }
 
-// ======================== MAIN EXPENSES PAGE ========================
+// ======================== MAIN EXPENSES PAGE (legacy — redirects to RM) ========================
+// The page-level UI now lives in dedicated route wrappers:
+//   /expenses/raw-materials  →  pages/expenses/RawMaterialsPage.js
+//   /expenses/salaries       →  pages/expenses/SalariesPage.js
+//   /expenses/other          →  pages/expenses/OtherExpensesPage.js
+// This default export remains so that code still importing `from pages/ExpensesPage`
+// keeps working — it just redirects into the new tree.
+import { Navigate } from 'react-router-dom';
 export default function ExpensesPage() {
-  const { api } = useAuth();
-  const location = useLocation();
-  const [activeTab, setActiveTab] = useState(() => {
-    const tab = location.state?.tab;
-    if (tab === 'raw_materials' || tab === 'salaries' || tab === 'other') return tab;
-    return 'raw_materials';
-  });
-
-  // Update tab when navigating from dashboard with state
-  useEffect(() => {
-    const tab = location.state?.tab;
-    if (tab === 'raw_materials' || tab === 'salaries' || tab === 'other') {
-      setActiveTab(tab);
-      // Clear the state so browser back doesn't re-apply it
-      window.history.replaceState({}, '');
-    }
-  }, [location.state]);
-
-  return (
-    <div className="space-y-6 max-w-[1400px]" data-testid="expenses-page">
-      <div>
-        <h1 className="font-heading text-xl sm:text-2xl font-extrabold text-navy-900 tracking-tight">Expenses</h1>
-        <p className="text-xs text-slate-400 mt-0.5">Manage all restaurant expenses in one place</p>
-      </div>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="bg-slate-100 h-9" data-testid="expense-category-tabs">
-          <TabsTrigger value="raw_materials" className="text-xs font-semibold px-5 gap-1.5" data-testid="tab-raw-materials">
-            <Beef className="w-3.5 h-3.5" /> Raw Materials
-          </TabsTrigger>
-          <TabsTrigger value="salaries" className="text-xs font-semibold px-5 gap-1.5" data-testid="tab-salaries">
-            <Users2 className="w-3.5 h-3.5" /> Salaries
-          </TabsTrigger>
-          <TabsTrigger value="other" className="text-xs font-semibold px-5 gap-1.5" data-testid="tab-other-expenses">
-            <Wrench className="w-3.5 h-3.5" /> Other Expenses
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-
-      {/* Keep all tabs mounted — CSS show/hide prevents unmount/remount DOM conflicts */}
-      <div style={{ display: activeTab === 'raw_materials' ? 'block' : 'none' }}>
-        <RawMaterialsTab api={api} />
-      </div>
-      <div style={{ display: activeTab === 'salaries' ? 'block' : 'none' }}>
-        <SalariesTab api={api} />
-      </div>
-      <div style={{ display: activeTab === 'other' ? 'block' : 'none' }}>
-        <OtherExpensesTab api={api} />
-      </div>
-    </div>
-  );
+  return <Navigate to="/expenses/raw-materials" replace />;
 }

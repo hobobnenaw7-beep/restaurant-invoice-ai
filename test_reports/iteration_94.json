@@ -1,0 +1,45 @@
+{
+  "summary": "Procurement 3-panel Command Center consolidation verified end-to-end. Backend: 76 passed + 1 skipped (pre-existing) across test_procurement_audit.py (11), test_procurement_audit_api.py (13), test_procurement_inbox_outcome.py (9), test_orders_api.py (12), test_procurement_api.py, test_procurement_decisions.py — ZERO regressions; git diff on /app/backend/ is clean (no backend file changed this iter). Frontend (live Playwright on preview URL, demo@test.com/testpassword): (1) Sidebar — nav-procurement single link EXISTS; nav-group-procurement DOES NOT exist ✓. (2) All 8 legacy routes (/purchase-decisions, /procurement/smart-purchases, /price-intelligence, /procurement/price-insights, /procurement-decisions, /procurement/decisions, /procurement/inbox, /procurement/suggestions) redirect to /procurement with CC page visible — no blank flashes, Navigate uses replace ✓. (3) Command Center renders panel-market, panel-decisions, panel-suggestions, cc-refresh-btn, Procurement title + Advisory tagline ✓. (4) Market panel shows 4 market-row-{cpid} with SVG sparklines ✓. (5) Decision Engine: 2 cards rendered (Chicken Breast + Heavy Cream), threshold info bar 'score ≥ 0.80, ≥ 3 observations' present, all 3 action buttons (view-details/dismiss/accept) present per card, cards<=7 ✓. (6) decision-details-modal opens on View details, testid confirmed, has Close button (decision-details-close) that closes it ✓. (7) Dismiss reduces card count immediately AND page reload restores the card (session-only, no server mutation) ✓. (8) Right panel: tabs right-tab-saved (20 saved rows) and right-tab-review functional. right-ignore-btn-{id} opens right-not-pursued-modal; Confirm with note fires PATCH outcome_type=not_pursued and shows toast 'Marked as not pursued' ✓. (9) Orders page: smart-reorder-btn visible (orders exist), click opens CreateOrderModal with 1 preseeded line (most recent order had 1 item), qty starts at 0, no vendor auto-select ✓. orders-procurement-link with href='/procurement' exists in orders-info-banner; text 'Better price available? View Procurement →' present; NO forbidden phrases ('apply recommendation', 'auto-order', 'Create PO') ✓. (10) All 4 /procurement/legacy/* escape hatches render old pages directly (NOT redirected); body_len 1709–4592 — all load real content ✓.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global (pre-existing, NOT caused by this iter)", "issues": [
+        "Recharts ResponsiveContainer width(-1)/height(-1) console warnings on dashboard (same as iter 93).",
+        "A11y: DialogContent missing Description/aria-describedby on one non-CC dialog (likely FloatingAssistant or CreateOrderModal sub-dialog). Non-blocking."
+      ]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_procurement_audit.py",
+    "/app/backend/tests/test_procurement_audit_api.py",
+    "/app/backend/tests/test_procurement_inbox_outcome.py",
+    "/app/backend/tests/test_orders_api.py",
+    "/app/backend/tests/test_procurement_api.py",
+    "/app/backend/tests/test_procurement_decisions.py",
+    "/app/test_reports/pytest/pytest_iter94.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ProcurementCommandCenterPage.js — centerDecisions filter is correctly a 3-predicate chain (recommendation_type in {switch_vendor,renegotiate} AND decision_confidence>=0.80 AND observation_count>=3) capped at 7. Verified live: 2 cards rendered, both meet the gate.",
+    "ProcurementCommandCenterPage.js — Dismiss uses session-local Set state; NO api.patch call in handleDismiss; reload correctly restores. Confirmed via live test (card count 2→1 after dismiss, 2 after reload).",
+    "ProcurementCommandCenterPage.js — Accept routes through existing PurchaseSuggestionModal (reused, not duplicated). onClose refreshes /procurement/suggestions so the +1 saved count appears automatically.",
+    "ProcurementCommandCenterPage.js — reviewDecisions excludes items already in centerDecisions (prevents double-counting). Good dedup guard.",
+    "ProcurementCommandCenterPage.js — NotPursuedModal PATCH URL is /procurement/suggestions/{id}/outcome with outcome_type=not_pursued + outcome_note — matches existing backend contract, no backend change required.",
+    "OrdersPage.js — preseedItemIds prop seeds lines with quantity_ordered: 0 (empty), no vendor, and fires price-history fetch only as background enrichment inside try/catch — spec-compliant.",
+    "App.js — 8 legacy routes consolidated to <Navigate to='/procurement' replace/>; 4 /procurement/legacy/* deep-link escape hatches preserved separately so bookmarks don't break.",
+    "Layout.js — Procurement collapsed from NavGroup to single nav link (line 39). Clean removal of the old group children. nav-group-procurement testid correctly absent.",
+    "ProcurementCommandCenterPage.js — MiniSpark SVG sparklines render inline from p.trend.series without extra API calls (reuses existing price-intelligence payload). Good perf choice.",
+    "No backend file changed this iteration — git diff on /app/backend/ clean. Strict 'UI-only' constraint honored.",
+    "Minor: DecisionDetailsModal uses Tailwind `uppercase` class on small labels (vs avg / vs target / vs alt / Evidence / Uncertainty). Functionally fine; noted as it can confuse text-based assertions."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (76/76 run + 1 pre-existing skip — 46/46 procurement-specific all GREEN)", "frontend": "100% (sidebar single-link, 8/8 redirects, 3/3 panels, 4 market rows w/ sparklines, 2 decision cards within 7-cap + threshold gate, view-details modal, session-only dismiss, saved+review tabs, ignore flow with toast, smart-reorder w/ qty=0 + no vendor, orders-procurement-link, 4/4 legacy escape hatches)"},
+  "test_credentials": "demo@test.com / testpassword (login response key 'token')",
+  "seed_data_creation": "During UI smoke, 1 saved_for_review suggestion was marked 'not_pursued' via the Ignore flow (audit event created). Saved count likely dropped from 20 → 19. Non-destructive, reversible via DB patch if needed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Set REACT_APP_BACKEND_URL in shell env before running pytest (tests import it without default). Backend regression cmd: `export REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) && pytest backend/tests/test_procurement_audit.py backend/tests/test_procurement_audit_api.py backend/tests/test_procurement_inbox_outcome.py backend/tests/test_orders_api.py backend/tests/test_procurement_api.py backend/tests/test_procurement_decisions.py -q`. ProcurementCommandCenterPage.js is the only new file; App.js + Layout.js + OrdersPage.js were the only modified files. Demo tenant currently has ~19 saved_for_review suggestions and 2 high-confidence actionable decisions (Chicken Breast 2c131d7a… + Heavy Cream). /procurement/legacy/* routes still render ProcurementDecisionsPage / ProcurementInboxPage / PriceIntelligencePage / PurchaseDecisionsPage individually — do NOT delete those page files. When asserting decision modal content via Playwright inner_text, remember Tailwind `uppercase` classes transform labels — match case-insensitively.",
+  "rca of the issue": "N/A — no defects found. One Playwright false-negative on modal text check was a test-script casing issue (Tailwind `uppercase` class), not an app bug; testid decision-details-modal itself was verified present and Close button functional."
+}

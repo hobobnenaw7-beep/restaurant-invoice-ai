@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
+import SmartItemAutocomplete from '@/components/SmartItemAutocomplete';
 import {
   AlertTriangle, CheckCircle2, Pencil, X, Save, Loader2,
   History, ChevronDown, ChevronUp, ArrowUpRight, ArrowDownRight, Minus,
@@ -139,6 +140,9 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, a
       unit_price: item.unit_price || 0,
       total: item.total || 0,
       pack_size: item.pack_size_raw || item.pack_size || '',
+      // Identity fields preserved / updated only on explicit selection
+      canonical_item_id: item.canonical_item_id || null,
+      variant_key: item.variant_key || null,
     });
     setLastDelta(null);
   };
@@ -151,12 +155,42 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, a
   const saveEdit = async (idx) => {
     setSaving(true);
     try {
-      const res = await api.patch(`/purchases/${purchase.id}/items/${idx}`, editValues);
+      // Separate identity fields from the text patch payload.
+      const { canonical_item_id, variant_key, variant_keys, _picked_label, ...patchPayload } = editValues;  // eslint-disable-line no-unused-vars
+      const res = await api.patch(`/purchases/${purchase.id}/items/${idx}`, patchPayload);
       const data = res.data;
+
+      // If the user explicitly picked an approved canonical suggestion,
+      // make the identity link EXPLICIT via the guarded endpoint. This
+      // keeps invoice-text edits from auto-mutating canonical items.
+      let identityBody = null;
+      if (canonical_item_id) {
+        try {
+          const vkeys = Array.isArray(variant_keys) && variant_keys.length
+            ? variant_keys
+            : (variant_key ? [variant_key] : []);
+          const lr = await api.post(
+            `/purchases/${purchase.id}/items/${idx}/link`,
+            { canonical_item_id, variant_keys: vkeys },
+          );
+          identityBody = lr.data;
+        } catch (err) {
+          toast.error('Could not link to canonical item: ' + (err.response?.data?.detail || ''));
+        }
+      }
+
       // Update the item in local state
       setItems(prev => {
         const updated = [...prev];
-        updated[idx] = { ...data.item, _idx: idx };
+        const merged = { ...data.item, _idx: idx };
+        if (identityBody) {
+          merged.canonical_item_id = identityBody.canonical_item_id;
+          merged.variant_keys = identityBody.variant_keys || [];
+          merged.variant_key = identityBody.variant_key;
+          merged.canonical_name = identityBody.canonical_name;
+          merged.display_name = identityBody.display_name;
+        }
+        updated[idx] = merged;
         return updated;
       });
       setTotals(data.purchase_totals);
@@ -169,6 +203,13 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, a
       const deltaMsg = data.validation_delta === 'improved' ? ' — validation improved!' :
                         data.validation_delta === 'degraded' ? ' — warning: validation degraded' : '';
       toast.success(`Item updated${deltaMsg}`);
+      // Correction Pipeline v3: surface catalog linkage outcome to the user
+      const link = data.catalog_linkage;
+      if (link && link.action === 'linked' && link.canonical_name) {
+        toast.success(`Linked to catalog: ${link.canonical_name}`, { duration: 3500 });
+      } else if (link && link.action === 'suggested' && link.canonical_name) {
+        toast.info(`Added "${link.canonical_name}" as a suggested item — review in Items`, { duration: 4500 });
+      }
     } catch (err) {
       toast.error('Failed to save: ' + (err.response?.data?.detail || ''));
     } finally {
@@ -346,16 +387,54 @@ export default function InvoiceReviewDialog({ purchase, open, onClose, onOpen, a
                         {/* Item name */}
                         <TableCell>
                           {isEditing ? (
-                            <Input
-                              className={`text-xs h-7 ${fieldBorder('raw_name')}`}
+                            <SmartItemAutocomplete
+                              api={api}
                               value={editValues.raw_name}
-                              onChange={(e) => setEditValues(v => ({ ...v, raw_name: e.target.value }))}
-                              data-testid={`edit-raw_name-${i}`}
+                              onChange={(v) => setEditValues(prev => ({
+                                ...prev,
+                                raw_name: v,
+                                // Free-typing breaks the canonical link —
+                                // user must reselect or save will leave it
+                                // as a suggestion/unlinked per guardrail.
+                                canonical_item_id: v === (prev._picked_label || '') ? prev.canonical_item_id : null,
+                                variant_key: v === (prev._picked_label || '') ? prev.variant_key : null,
+                              }))}
+                              onSelect={(sel) => setEditValues(prev => ({
+                                ...prev,
+                                raw_name: sel.label,
+                                canonical_item_id: sel.canonical_item_id,
+                                variant_key: (sel.variant_keys?.[0]) || sel.variant_key || null,
+                                variant_keys: Array.isArray(sel.variant_keys) ? sel.variant_keys : (sel.variant_key ? [sel.variant_key] : []),
+                                _picked_label: sel.label,
+                              }))}
+                              inputClassName={`text-xs h-7 ${fieldBorder('raw_name')}`}
+                              testId={`edit-raw_name-${i}`}
                               autoFocus={problemFields.has('raw_name')}
                             />
                           ) : (
                             <div>
-                              <span className={`text-sm font-medium ${problemFields.has('raw_name') ? 'text-red-700' : ''}`}>{it.raw_name || '—'}</span>
+                              <span className={`text-sm font-medium ${problemFields.has('raw_name') ? 'text-red-700' : ''}`} data-testid={`display-name-${i}`}>
+                                {it.display_name || it.raw_name || '—'}
+                              </span>
+                              {it.canonical_name && it.canonical_name !== (it.raw_name || '') && (
+                                <Badge className="ml-1.5 bg-teal-50 text-teal-700 border border-teal-200 text-[9px] h-4 px-1.5" data-testid={`linked-badge-${i}`}>
+                                  linked
+                                </Badge>
+                              )}
+                              {Array.isArray(it.variant_labels) && it.variant_labels.map((vl, vi) => (
+                                <Badge
+                                  key={vi}
+                                  className="ml-1 bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px] h-4 px-1.5"
+                                  data-testid={`variant-badge-${i}-${vi}`}
+                                >
+                                  {vl}
+                                </Badge>
+                              ))}
+                              {(!Array.isArray(it.variant_labels) || it.variant_labels.length === 0) && it.variant_label && (
+                                <Badge className="ml-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px] h-4 px-1.5" data-testid={`variant-badge-${i}`}>
+                                  {it.variant_label}
+                                </Badge>
+                              )}
                               {flagged && issue && (
                                 <div className="mt-0.5">
                                   <Badge className={`text-[9px] border ${issue.bg}`} data-testid={`issue-badge-${i}`}>

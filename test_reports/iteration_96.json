@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 96 — Traceability Loop Closure (Correction → Canonical). Backend: 8/8 pytest PASS (test_correction_destination_iter96.py) validating canonical_destination enrichment on GET /api/correction-memory, GET /api/corrections/by-vendor/{supplier_id}, and PATCH /api/corrections/{id}. _id never leaks; 4 distinct statuses observed in seeded data (merged, dismissed, approved, unlinked). Frontend: Destination column renders with Badge + merged/canonical-link as spec; /items?highlight=<id> produces teal ring (ring-2 ring-teal-500) on matching row with data-highlighted=true, scrolls into view, and fades after ~3.5s. Smart Duplicate Hint verified end-to-end with seeded suggested item 'Beef Ground' → rendered 'Possible duplicate of \"Beef\" (100% match)' (data-testid=duplicate-hint-<id>); matched an approved item only; clicking the hint triggered ZERO /merge, /promote, or /dismiss API calls — ADVISORY-ONLY guardrail HOLDS. Regression flows (login, items list, suggested filter, correction-memory vendor drilldown, toggle on corrections) unaffected.",
+  "pass_fail_checklist": {
+    "1_correction_memory_enriched": "PASS — 5 rows, every row has canonical_destination with {status, canonical_item_id, canonical_name, merged_from_name, merged_from_item_id}. Observed statuses: merged, dismissed, approved, unlinked. No _id on any row.",
+    "2_corrections_by_vendor_enriched": "PASS — /corrections/by-vendor/{sid} returns canonical_destination on every row; no _id leak.",
+    "3_patch_keeps_enrichment": "PASS — PATCH /api/corrections/{id} returns updated doc with canonical_destination populated and no _id.",
+    "4_destination_column_ui": "PASS — Destination column present with data-testid=destination-{i} wrapper + -badge child. Badge text 'Dismissed' rendered correctly for Sysco Jacksonville vendor row.",
+    "5_merged_link_navigates_to_items": "PASS (code-verified + runtime-verified) — DestinationCell renders merged-link when status==merged; clicking drives /items?highlight=<canonical_item_id>. Verified directly via /items?highlight=f5054880-00c9-4b5e-941d-93973f3a6f8a — matching Shrimp 16-20 IQF row got ring-2 ring-teal-500 + data-highlighted=true.",
+    "6_ring_fades": "PASS — after 4.2s, data-highlighted='true' count drops to 0 (ring cleared).",
+    "7_duplicate_hint_renders": "PASS — seeded Beef Ground (is_suggested=true), reloaded /items → Suggested filter → hint displayed exactly: 'Possible duplicate of \"Beef\" (100% match)' with data-testid=duplicate-hint-<id>.",
+    "8_hint_threshold_70": "PASS — hint only appears when token-Jaccard >=0.70 (0.67 case of 'Beef Ground Fresh' initially did NOT render any hint, confirming the threshold gate).",
+    "9_hint_approved_only": "PASS — matched item was 'Beef' (approved). Not suggesting against other suggestions. Code review of findClosestApproved() confirms `if (it.is_suggested || it.is_archived) continue;` gate.",
+    "10_hint_is_advisory_only": "PASS — 0 /merge, /promote, or /dismiss API calls after clicking the hint (network tap). Guardrail respected."
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_correction_destination_iter96.py",
+    "/app/test_reports/pytest/pytest_iter96.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "correction_memory.py _status_from_canonical() precedence order is correct: is_merged beats is_suggested+is_archived(dismissed) beats is_archived(archived) beats is_suggested beats approved. Verified across 4 live statuses.",
+    "correction_memory.py _enrich_corrections_with_destination() projects {_id:0} on all Mongo queries → _id never leaks. Batch alias fetch ($in raw_names) is O(1) per call, efficient.",
+    "correction_memory.py PATCH endpoint re-enriches the single updated doc before returning — consistent API shape between list and PATCH response.",
+    "ItemsPage.js findClosestApproved() correctly filters `it.is_suggested || it.is_archived` out of candidates (approved-only requirement met). Threshold constant DUPLICATE_HINT_THRESHOLD=0.70 matches spec.",
+    "ItemsPage.js duplicateHints useMemo is purely derived state — no side effects, no network calls. The hint element is a <span> with informational text only (no onClick handler that calls merge/promote/dismiss). ADVISORY-ONLY guardrail is enforced by construction.",
+    "ItemsPage.js highlight effect correctly uses useLocation().search to read ?highlight=, sets highlightId state, scrolls rowRefs.current[highlightId] into view, then clears highlightId after ~3.5s so the ring class is removed. data-highlighted='true' flips to 'false' after fade.",
+    "CorrectionMemoryPage.js DestinationCell renders the appropriate testids (destination-{i}, destination-{i}-badge, destination-{i}-merged-link, destination-{i}-canonical-link). navigateToItem(canonical_item_id) uses react-router navigate(`/items?highlight=${id}`) — clean integration.",
+    "No backend or frontend issues discovered; no code changes required."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (8/8 PASS)", "frontend": "100% (10/10 checklist items PASS)"},
+  "test_credentials": "demo@test.com / testpassword",
+  "seed_data_creation": "Created 1 suggested canonical item ('Beef Ground', is_suggested=true) in canonical_items for demo tenant to reproducibly trigger the duplicate-hint rendering path, then DELETED it at end of test. DB state restored to pre-test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Seeded correction-memory demo tenant currently has 5 rows spanning 4 statuses (merged/dismissed/approved/unlinked); only 1 row (Sysco Jacksonville) has a supplier_id, so the CorrectionMemoryPage vendor drilldown shows just that one. To visually inspect a 'Merged into: [name]' clickable link inside the Destination column in that page, a correction record whose status==merged AND has a supplier_id would be needed. The enrichment logic itself is confirmed working via the global /api/correction-memory endpoint. For duplicate-hint re-verification, seed a suggested item whose tokens fully overlap an approved item's name or alias (e.g., 'Beef Ground' overlaps alias 'Ground Beef' on {beef,ground} giving 100% Jaccard). A partial overlap like 'Beef Ground Fresh' vs {ground,beef} is 2/3=0.667 < 0.70 and correctly produces NO hint.",
+  "rca of the issue": "N/A — no defects found."
+}

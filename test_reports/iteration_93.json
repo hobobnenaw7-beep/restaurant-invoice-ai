@@ -1,0 +1,43 @@
+{
+  "summary": "Navigation Restructure (Phase 1-5) + new Orders backend/UI fully verified. Backend: 12/12 NEW Orders API tests pass (auth, CREATE enrichment, GET list/shape, DELETE, bogus item_id→400 with 'unknown_item_ids:', invalid status executed/weirdo→400, submitted OK, 404 on unknown id, no _id leakage, tenant-scoped). Regression: 34/34 existing procurement tests pass (test_procurement_inbox_outcome.py 9/9, test_procurement_audit_api.py 13/13, test_procurement_audit.py 11/11, +1 skipped unrelated). Total 46/46 green in combined run. Frontend (live Playwright on https://invoice-ai-35.preview.emergentagent.com): Sidebar top-level order EXACTLY matches spec (Dashboard→Orders→Expenses→Sales→Items→Vendors→Reports→Procurement→Records Library + Management section + Settings pinned bottom). All 4 expandable groups render correct children with correct hrefs and data-testids. All 4 legacy redirects work (/purchase-decisions→smart-purchases, /price-intelligence→price-insights, /procurement-decisions→decisions, /procurement/inbox→suggestions). All 4 procurement sub-pages load with real content. Procurement group header shows active teal class on /procurement/decisions. OrdersPage: testid='orders-page' renders, New Order btn visible, guardrail banner explicitly says Orders are Item-driven and 'Procurement recommendations are not auto-applied here', NO forbidden phrases (apply recommendation/order now/create PO/auto-order) found anywhere on Orders page. New Order modal: item-picker populated with 60 items from /api/items, search input works, clicking an item adds line-{id} + line-qty-{id}, save-draft-order persists order (visible in list after save). All 5 regression pages (dashboard/sales/items/reports/records) render. Mobile sidebar sheet opens via mobile-menu-btn (verified by screenshot).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global (pre-existing)", "issues": [
+        "Recharts ResponsiveContainer prints repeated width(-1)/height(-1) console warnings on dashboard/sales. Pre-existing, NOT caused by this iter.",
+        "A11y warning: DialogContent (appears to be a non-Orders dialog — possibly FloatingAssistant or a command palette) is missing DialogTitle/aria-describedby. OrdersPage CreateOrderModal itself has DialogTitle. Worth a follow-up but non-blocking."
+      ]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_orders_api.py",
+    "/app/test_reports/pytest/pytest_orders_iter93.xml",
+    "/app/test_reports/pytest/pytest_iter93_full.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/orders.py — _enrich_items correctly tenant-scopes the canonical_items lookup by restaurant_id AND id in list, so a cross-tenant item_id would also raise 'unknown_item_ids' (tested indirectly via bogus-id test). Enrichment denormalizes item_name/category onto the order line which is the right tradeoff for a lightweight preview surface.",
+    "routes/orders.py — ALLOWED_STATUSES = {'draft','submitted'} is the strictest possible guard vs. the spec: 'executed' and any arbitrary string are rejected with 400. Verified live.",
+    "routes/orders.py — response uses {k: v for k, v in doc.items() if k != '_id'} to strip ObjectId. list_orders uses {'_id': 0} projection. Both confirmed — no _id in API surface.",
+    "routes/orders.py — DELETE uses composite filter {id, restaurant_id} so cross-tenant delete returns 404 (not 500). Verified 'no-such-id-xyz'→404.",
+    "Layout.js — navTree is declarative; NavGroup.open is seeded by isGroupActive so that deep-linking to /procurement/decisions auto-expands the Procurement group. isChildActive uses URLSearchParams for matchQuery so /expenses?tab=salaries correctly highlights the Salaries child (verified).",
+    "Layout.js — data-testid generation for children uses label slugified via [^a-z0-9]+ regex — produces clean ids like nav-child-procurement-suggestions-inbox. Stable for test selectors.",
+    "App.js — legacy routes use <Navigate replace/> so browser history is not polluted. All 4 redirects verified live (no blank flash, destination loads cleanly).",
+    "OrdersPage.js — ItemPicker search debounces only via useMemo (no setTimeout debounce); with 123 items slice(0,60) is fine, but if catalog grows to 1000+ the every-keystroke re-filter could become sluggish. Flag for future — NOT blocking.",
+    "OrdersPage.js — price-history enrichment uses try/catch swallowing errors (non-fatal) as the spec requires. Loading state shown inline via loadingHistory map.",
+    "OrdersPage.js — ZERO references to 'recommendation'/'Create PO'/'auto-order' in the component source. Item-driven constraint is fully enforced at UI level (only ItemPicker can add lines; no free-text input).",
+    "OBSERVATION: /api/procurement/price-intelligence/summary returned 404 (graceful). The actual Price Intelligence page uses a different endpoint name — page itself loads with content (body_len=1772). Not a regression; UI doesn't hit a bad URL."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_orders_api.py (new — 12 tests for /api/orders lifecycle + 3 regression probes for procurement stack)"
+  ],
+  "success_rate": {"backend": "100% (12/12 new Orders + 34/34 procurement regression = 46/46)", "frontend": "100% (sidebar structure, 4 groups, 4 redirects, group-active, orders page, modal item-pick + save-draft, 5 regression pages, mobile sheet all verified)"},
+  "test_credentials": "demo@test.com / testpassword (login response key = 'token')",
+  "seed_data_creation": "During Playwright flow, 1 draft order was created under demo tenant via save-draft-order. One additional TEST_VendorX draft order in backend pytest was created then deleted in-test. Net: +1 draft order remains from UI smoke test (non-destructive, easily deletable from UI).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite for Phase 4 lives in /app/backend/tests/test_orders_api.py — re-runnable, uses TEST_VendorX vendor_name and self-cleans via DELETE. Orders collection: `orders`, keyed by restaurant_id+id. Note that ingress returns frontend SPA HTML for any non-/api path, so never test /api/purchase-decisions style paths — those are frontend-only redirects handled by React Router <Navigate replace/>. The 4 pre-existing test_procurement_suggestions.py failures (missing canonical_name/current_vendor kwargs) are still present — unrelated to this iter per main-agent note. CreateOrderModal auto-opens the Expenses/Items/Vendors/Procurement groups based on current URL via isGroupActive helper; data-testid for children follows nav-child-{groupkey}-{label-slug} pattern.",
+  "rca of the issue": "N/A — no defects. One cosmetic a11y warning on a non-Orders DialogContent is pre-existing and non-blocking."
+}
