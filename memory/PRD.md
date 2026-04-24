@@ -3,6 +3,81 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 23: Final System Consolidation — Canonical Identity & Learning Loop — COMPLETE (2026-02-14)
+
+### Goal
+Close the full loop: **OCR → canonical linking → manual correction →
+learning → autocomplete reuse → edit propagation**, working on
+real-world messy data (not ideal inputs).
+
+### 1. Single-Source-of-Truth Display
+- `_enrich_purchases_with_canonical` composes `display_name` as
+  `"[Canonical] — v1 — v2"` at read time.
+- Surfaces `canonical_name`, `variant_keys[]`, `variant_labels[]`.
+- Follows one merge hop so renames/merges propagate instantly.
+
+### 2. Mandatory Edit Propagation
+- PUT `/api/items/{id}` uses `exclude_unset=True` + drops `None` values
+  → partial-update semantics (**critical fix** for iter_99 regression
+  where PUT silently wiped `variants`).
+- Variants normalised on write (key lowercased, dedupe, label fallback).
+- Invoice list, Invoice Review dialog, and Vendor Detail invoice-item
+  table all read `display_name` → canonical rename reflected INSTANTLY
+  everywhere with zero writes to purchase docs.
+
+### 3. Multi-Variant Support (NEW)
+- `split_base_and_variants()` strips **every** declared variant token
+  from a raw name (e.g. `"male live blue crab large"` → base `"live
+  blue crab"`, `variants=["male","large"]`).
+- `LinkBody` now accepts `variant_keys: list[str]` (legacy single
+  `variant_key` preserved).
+- Matcher returns both `variant_key` (legacy) and `variant_keys[]`.
+- Enrichment composes `"Live Blue Crab — Male — Large"`.
+
+### 4. Learning Memory Loop (CRITICAL)
+- Every explicit `/link` + `/promote` now calls BOTH
+  `_upsert_alias(..., variant_keys=...)` and
+  `_save_correction_memory(..., variant_keys=...)`.
+- Autocomplete query projects `variant_keys` and composes learned
+  suggestion labels as `"Canonical — Variant"` with
+  `source: "learned"`.
+- Typing a short prefix of a previously-corrected messy OCR string
+  now surfaces the learned canonical + variant forever.
+
+### 5. Raw Materials / Vendor Detail Rows Clickable
+- `VendorDetailPage.js` — invoice-item rows render `display_name ||
+  canonical_name || raw_name`, become clickable when
+  `canonical_item_id` is set, and navigate to
+  `/items?highlight=<cid>` (reuses M17 highlight ring).
+
+### 6. Robustness / dv_lower Fix
+- `routes/upload.py` — `dv_lower` hoisted out of the `if
+  supplier_name` block (was causing `UnboundLocalError` on invoices
+  without an extracted supplier name).
+- Matcher still returns `needs_review=True` / `confidence=medium`
+  when the raw lacks any variant that the canonical declares.
+- Invalid link body (unknown canonical, archived canonical,
+  undeclared variant) returns precise 4xx errors.
+
+### 7. UI Consistency
+- No layout changes to Dashboard / Insights / Donut panels.
+- Invoice Review dialog: SmartItemAutocomplete, per-variant chips
+  (`variant-badge-{i}-{vi}`), linked badge, composed display.
+
+### Tests — iteration_100.json (47 green total, 0 fail)
+- Unit: 44/44 (matcher + multi-variant + identity-resolver + integration + analytics + learning-loop)
+- Live iter_100: 3/3 (PUT preserves variants, learned autocomplete after rename, archived-canonical rejected)
+- Frontend E2E: login → /expenses → view-purchase → InvoiceReviewDialog edit-item-btn → SmartItemAutocomplete 12 suggestions → pick+save → linked OK. Vendor detail rows wired.
+
+### Files touched
+- Backend: `services/item_identity.py`, `services/item_matcher.py`,
+  `routes/invoice_items.py`, `routes/item_autocomplete.py`,
+  `routes/purchases.py`, `routes/items.py`, `routes/upload.py`.
+- Frontend: `components/InvoiceReviewDialog.js`,
+  `pages/VendorDetailPage.js`.
+- Tests: `tests/test_multi_variant.py`, `tests/test_learning_loop_iter99.py`.
+
+
 ## Milestone 22: Dashboard — Circular Navigation Cards — COMPLETE (2026-02-14)
 
 ### Goal
