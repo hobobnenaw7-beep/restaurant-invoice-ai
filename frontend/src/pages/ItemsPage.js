@@ -400,6 +400,7 @@ export default function ItemsPage() {
       toast.success(`Promoted "${item.name}" to your catalog`);
       load();
       loadApprovedItems();
+      dataEvents.emit();
     } catch (err) {
       toast.error('Could not promote: ' + (err.response?.data?.detail || ''));
     } finally { setGoverning(null); }
@@ -448,6 +449,7 @@ export default function ItemsPage() {
       setMergeDialog(null);
       load();
       loadApprovedItems();
+      dataEvents.emit();
     } catch (err) {
       toast.error('Could not merge: ' + (err.response?.data?.detail || ''));
     } finally {
@@ -487,7 +489,10 @@ export default function ItemsPage() {
       if (editing) await api.put(`/items/${editing.id}`, payload);
       else await api.post('/items', payload);
       toast.success(editing ? 'Updated' : 'Created');
-      setDialogOpen(false); load();
+      setDialogOpen(false); load(); loadApprovedItems();
+      // Notify every other page (Raw Materials, Expenses, Dashboard…) so they re-fetch
+      // and render the new canonical name instantly via display_name enrichment.
+      dataEvents.emit();
     } catch { toast.error('Save failed'); }
     finally { setSaving(false); }
   };

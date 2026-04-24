@@ -343,6 +343,20 @@ export function RawMaterialsTab({ api }) {
   }, [api, search, dateFrom, dateTo, sortBy, sortOrder]);
   useEffect(() => { load(true); }, [load]);
 
+  // Live cross-page sync: when any other page mutates the catalog (rename,
+  // promote, merge, correction link), re-fetch so the invoice list renders
+  // fresh display_names from the backend canonical enrichment.
+  useEffect(() => dataEvents.subscribe(() => { load(false); }), [load]);
+
+  // Keep the Invoice Review dialog in sync with the freshly-fetched list:
+  // if the user has a purchase open and the items state has a newer copy,
+  // swap it in so display_name / canonical_name reflect the rename instantly.
+  useEffect(() => {
+    if (!selected) return;
+    const fresh = items.find(p => p.id === selected.id);
+    if (fresh && fresh !== selected) setSelected(fresh);
+  }, [items, selected]);
+
   const toggleSort = (f) => { if (sortBy === f) setSortOrder(o => o === 'desc' ? 'asc' : 'desc'); else { setSortBy(f); setSortOrder('desc'); } };
   const requestDeleteRecord = (id) => setDeleteConfirm({ open: true, id, message: 'Are you sure you want to delete this purchase record?', type: 'record', idx: null });
   const requestDeleteItem = (idx) => setDeleteConfirm({ open: true, id: null, message: 'Are you sure you want to delete this item?', type: 'item', idx });

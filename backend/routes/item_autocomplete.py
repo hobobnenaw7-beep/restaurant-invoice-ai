@@ -64,17 +64,20 @@ async def item_autocomplete(
     if not query:
         return {"query": "", "suggestions": []}
 
-    # Load approved, non-archived canonical items only.
+    # Load ALL non-archived canonical items — both APPROVED and SUGGESTED.
+    # Suggested items exist because the user corrected an invoice to that
+    # name; they ARE learned memory and must surface in autocomplete so
+    # the next time the user types the same correction they see it.
     canonicals = await db.canonical_items.find(
         {
             "restaurant_id": rid,
-            "is_suggested": {"$ne": True},
             "is_archived": {"$ne": True},
         },
-        {"_id": 0, "id": 1, "name": 1, "variants": 1, "category": 1, "unit": 1},
+        {"_id": 0, "id": 1, "name": 1, "variants": 1, "category": 1, "unit": 1,
+         "is_suggested": 1},
     ).to_list(2000)
 
-    # Load aliases for those canonicals only (still tenant-scoped).
+    # Load aliases for ALL non-archived canonicals (approved + suggested).
     approved_ids = {c["id"] for c in canonicals if c.get("id")}
     aliases = []
     if approved_ids:
@@ -93,18 +96,21 @@ async def item_autocomplete(
     # 1) canonical names + their variants
     for c in canonicals:
         name = c.get("name") or ""
+        is_suggested = bool(c.get("is_suggested"))
+        base_source = "learned" if is_suggested else "canonical"
         base_score = _score(query, name) + _prefix_boost(q_norm, normalize_name(name))
         if base_score > 0.25:
             suggestions.append({
                 "label": name,
                 "canonical_item_id": c["id"],
                 "variant_key": None,
-                "source": "canonical",
+                "source": base_source,
                 "score": round(min(1.0, base_score), 4),
                 "category": c.get("category"),
                 "unit": c.get("unit"),
+                "is_suggested": is_suggested,
             })
-        # Variants
+        # Variants (approved items only declare variants; suggested rarely do).
         for v in (c.get("variants") or []):
             key = (v.get("key") or "").strip()
             label = (v.get("label") or key).strip()
@@ -123,6 +129,7 @@ async def item_autocomplete(
                     "score": round(min(1.0, v_score), 4),
                     "category": c.get("category"),
                     "unit": c.get("unit"),
+                    "is_suggested": is_suggested,
                 })
 
     # 2) aliases — may carry learned variants → expose as full "Canon — v1 — v2" suggestion.
@@ -150,16 +157,18 @@ async def item_autocomplete(
         if variant_labels:
             label = " — ".join([label, *variant_labels])
         if a_score > 0.30:
+            is_suggested_canon = bool(c.get("is_suggested"))
             suggestions.append({
                 "label": label,
                 "canonical_item_id": cid,
                 "variant_key": learned_vkeys[0] if learned_vkeys else None,
                 "variant_keys": learned_vkeys,
-                "source": "alias" if not learned_vkeys else "learned",
+                "source": "learned" if (learned_vkeys or is_suggested_canon) else "alias",
                 "score": round(min(1.0, a_score), 4),
                 "category": c.get("category"),
                 "unit": c.get("unit"),
                 "alias_text": text,
+                "is_suggested": is_suggested_canon,
             })
 
     # Deduplicate by (canonical_item_id, variant_keys tuple) — keep highest-scoring.

@@ -21,6 +21,7 @@ const SOURCE_ICON = {
   canonical: Package,
   variant: Tag,
   alias: Sparkles,
+  learned: Sparkles,
 };
 
 export default function SmartItemAutocomplete({
@@ -150,7 +151,7 @@ export default function SmartItemAutocomplete({
                 data-canonical-id={s.canonical_item_id}
                 data-variant-key={s.variant_key || ''}
               >
-                <Icon className={`w-3 h-3 flex-shrink-0 ${s.source === 'variant' ? 'text-indigo-500' : s.source === 'alias' ? 'text-amber-500' : 'text-teal-600'}`} />
+                <Icon className={`w-3 h-3 flex-shrink-0 ${s.source === 'variant' ? 'text-indigo-500' : (s.source === 'alias' || s.source === 'learned') ? 'text-amber-500' : 'text-teal-600'}`} />
                 <span className="flex-1 font-medium text-slate-800 truncate">{s.label}</span>
                 <span className="text-[9px] uppercase tracking-wider text-slate-400">{s.source}</span>
               </button>

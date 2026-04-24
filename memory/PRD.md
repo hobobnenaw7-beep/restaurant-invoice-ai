@@ -3,6 +3,41 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 24: Edit Propagation + Learning Loop — E2E FIX (2026-02-14)
+
+### User-reported failures (fixed)
+1. **Edit propagation broken** — rename on Items page didn't update Raw Materials.
+2. **Learning loop broken** — a manual correction didn't resurface in autocomplete.
+
+### Fixes
+**Frontend — cross-page sync via `dataEvents`:**
+- `ItemsPage.handleSave / promoteSuggested / confirmMerge` now emit `dataEvents.emit()` after any catalog mutation.
+- `RawMaterialsTab` subscribes to `dataEvents` and calls `load(false)` on every event.
+- When the Invoice Review dialog is open during a sync, a new effect swaps the
+  `selected` purchase with the fresh copy from the reloaded list, so the dialog
+  re-renders with the new `display_name` without user interaction.
+
+**Backend — autocomplete now surfaces learned corrections:**
+- `GET /api/items/autocomplete` previously excluded `is_suggested=True` canonicals
+  and their aliases. It now includes them labelled `source: "learned"` with
+  `is_suggested: true` on the payload. Approved items still surface as
+  `"canonical" / "variant" / "alias"`.
+- `SmartItemAutocomplete.js` registered the new `learned` source icon + colour.
+
+### Verified E2E (2026-02-14)
+- Rename CHICKEN → `CHICKEN-PROPAGATION-PROOF` on Items page.
+  - Open Raw Materials → view first purchase → row displays `CHICKEN-PROPAGATION-PROOF` with `linked` badge. No refresh, no re-login.
+- Correct an invoice line to `LearnLoopProofZqx42` and save.
+  - Reopen same line, type `LearnLoop` — autocomplete returns
+    `LearnLoopProofZqx42 [learned]` as the top suggestion.
+
+### Files touched
+- `/app/frontend/src/pages/ItemsPage.js` — `handleSave` / `promoteSuggested` / `confirmMerge` emit `dataEvents`.
+- `/app/frontend/src/pages/ExpensesPage.js` — `RawMaterialsTab` subscribes + selected-purchase sync.
+- `/app/backend/routes/item_autocomplete.py` — include non-archived suggested canonicals + their aliases with `source: "learned"`.
+- `/app/frontend/src/components/SmartItemAutocomplete.js` — render `learned` source icon.
+
+
 ## Milestone 23: Final System Consolidation — Canonical Identity & Learning Loop — COMPLETE (2026-02-14)
 
 ### Goal
