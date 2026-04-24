@@ -82,15 +82,60 @@ async def _enrich_purchases_with_canonical(rid: str, purchases: list) -> list:
     FUZZY_RATIO_GATE = 0.90
     FUZZY_MARGIN = 0.10
 
+    def _tokens(s: str) -> list[str]:
+        """Lowercase alpha-numeric tokens, length ≥ 1. (Unlike
+        `services.item_identity.tokenize` which drops len<2.)"""
+        return [t for t in _normalize(s).split(" ") if t]
+
+    def _token_prefix_subset(canon_toks: list[str], raw_toks: list[str]) -> bool:
+        """
+        True iff every canonical token is a prefix of some raw token (or equal).
+        Lets "m" match "males", "crab" match "crabs", etc. Requires canonical
+        to have ≥2 tokens (else rule is too permissive) and at least one token
+        length ≥3 (guards against "m f" matching anything).
+        """
+        if len(canon_toks) < 2:
+            return False
+        if not any(len(t) >= 3 for t in canon_toks):
+            return False
+        raw_set = raw_toks
+        for ct in canon_toks:
+            if not any(rt.startswith(ct) or ct.startswith(rt) for rt in raw_set):
+                return False
+        return True
+
     def _fuzzy_resolve(raw: str) -> tuple[str | None, str]:
         """
-        Returns (canonical_item_id, reason) where reason is one of:
-          'fuzzy_auto' — confident unique match
-          'fuzzy_skip_ambiguous' — two good matches, skip
-          'fuzzy_skip_weak' — best score below gate
+        Returns (canonical_item_id, reason). Runs in stages:
+          1. token-prefix-subset — canonical tokens each prefix-match a raw token
+             (unambiguous winner required: most specific canonical or tie-break
+             via last-token equality).
+          2. fuzzy ratio — legacy strict gate.
         """
         if not raw or not fuzzy_targets:
             return None, "fuzzy_skip_weak"
+        raw_tokens = _tokens(raw)
+
+        # Stage 1 — token-prefix-subset
+        subset_hits: list[tuple[int, int, str, str]] = []  # (canon_token_count, specificity, cid, text)
+        for text, cid in fuzzy_targets:
+            ct = _tokens(text)
+            if _token_prefix_subset(ct, raw_tokens):
+                specificity = sum(len(t) for t in ct)
+                subset_hits.append((len(ct), specificity, cid, text))
+        if subset_hits:
+            subset_hits.sort(reverse=True)  # most tokens / most specific first
+            top = subset_hits[0]
+            # Ambiguity guard — if two hits have identical token-count, they
+            # must share cid OR tie-break on last canonical token being present
+            # in raw verbatim (distinguishes 'Live Blue Crabs m' from 'f').
+            if len(subset_hits) >= 2 and subset_hits[1][0] == top[0] and subset_hits[1][2] != top[2]:
+                last_t = _tokens(top[3])[-1]
+                if last_t not in raw_tokens and not any(rt.startswith(last_t) for rt in raw_tokens):
+                    return None, "subset_ambiguous"
+            return top[2], "auto_subset"
+
+        # Stage 2 — fuzzy ratio
         scored = []
         for text, cid in fuzzy_targets:
             t = _jac(raw, text)
@@ -100,10 +145,9 @@ async def _enrich_purchases_with_canonical(rid: str, purchases: list) -> list:
         top = scored[0]
         if top[1] < FUZZY_TOKEN_GATE or top[2] < FUZZY_RATIO_GATE:
             return None, "fuzzy_skip_weak"
-        # Ambiguity check — second-best must be behind by MARGIN.
         if len(scored) >= 2 and (top[0] - scored[1][0]) < FUZZY_MARGIN and scored[1][3] != top[3]:
             return None, "fuzzy_skip_ambiguous"
-        return top[3], "fuzzy_auto"
+        return top[3], "auto_fuzzy"
 
     # Apply resolution — exact first (Phase 1a), normalized (1b), then fuzzy (1c).
     pending_persist: list[tuple[str, list[dict]]] = []
@@ -125,7 +169,7 @@ async def _enrich_purchases_with_canonical(rid: str, purchases: list) -> list:
             if not cid:
                 cid, reason = _fuzzy_resolve(raw)
                 if cid:
-                    link_source = "auto_fuzzy"
+                    link_source = reason  # "auto_subset" or "auto_fuzzy"
                 else:
                     it["_resolve_status"] = reason
             if cid:

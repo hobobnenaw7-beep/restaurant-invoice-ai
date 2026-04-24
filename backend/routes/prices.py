@@ -156,6 +156,13 @@ async def vendor_price_comparison(user=Depends(get_user)):
     whenever canonical linkage exists.
     """
     rid = user["restaurant_id"]
+    # Run the read-time auto-resolver first so any unlinked items get
+    # linked + persisted before we aggregate. This keeps Vendor Comparison,
+    # Raw Materials, and Invoice Review grouped by the same canonical ids.
+    from routes.purchases import _enrich_purchases_with_canonical
+    _pre_rows = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    await _enrich_purchases_with_canonical(rid, _pre_rows)
+
     purchases = await db.purchases.find({"restaurant_id": rid}, {"_id": 0, "supplier_name": 1, "invoice_date": 1, "items": 1}).to_list(10000)
 
     idx = await build_canonical_index(rid)

@@ -3,6 +3,64 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 28: Token-prefix-subset resolver — handles real OCR + variant noise (2026-02-14)
+
+### Case that broke the previous fix
+Tenant `abc143b7`, TM Crab invoice:
+```
+raw_name: "Live Blue Crabs 169# males"
+raw_name: "Live Blue Crabs 165# female"
+canonical: "Live Blue Crabs m"   (no variants declared)
+canonical: "Live Blue Crabs f"   (no variants declared)
+aliases:   (none)
+```
+Exact / normalized / fuzzy-ratio all failed because the pack-weight
+tokens (`169#`, `165#`, `males`, `female`) push all scores below the
+strict HIGH-confidence gate. User saw three different labels across
+Raw Materials / Invoice Review / Vendor Comparison.
+
+### Fix — new resolver tier: token-prefix-subset
+Added BEFORE the fuzzy-ratio stage inside the read-time resolver:
+
+```
+canonical tokens = [live, blue, crabs, m]
+raw tokens       = [live, blue, crabs, 169, males]
+
+rule: every canonical token must be a prefix (or equal) of some raw token
+      (safe "m ⊂ males", "f ⊂ female", "crab ⊂ crabs" semantics)
+      canonical must have ≥2 tokens AND at least one token length ≥3
+      (blocks pathological "m f" matching everything)
+      ambiguity tie-break: last canonical token must appear in the raw
+```
+Stages per unlinked line are now:
+`auto_exact → auto_normalized → auto_subset → auto_fuzzy` (strictest last).
+Each new link records its `link_source` so the audit remains transparent.
+
+### Vendor Comparison consistency guarantee
+`GET /api/prices/vendor-comparison` now runs the same read-time resolver
+BEFORE aggregating, so the comparison groups by `canon::<id>` for every
+resolvable line — no more raw OCR group rows when a canonical exists.
+
+### Verified
+```
+TM Crab tenant (abc143b7):
+  Live Blue Crabs 169# males  → Live Blue Crabs m    [auto_subset]
+  Live Blue Crabs 165# female → Live Blue Crabs f    [auto_subset]
+  Rename "Live Blue Crabs m" → "Live Blue Crabs - Male"
+    display_name on raw invoice line flips instantly.
+  Vendor Comparison groups under canon::<id> with canonical label.
+
+Demo tenant:
+  178/179 linked = 99.4%   (0 unmatched; the 1 empty-raw row excluded)
+  by_source: {auto_resolved_at_read:170, auto_subset:1, manual:7}
+```
+
+### Files
+- `/app/backend/routes/purchases.py` — token-prefix-subset stage.
+- `/app/backend/routes/prices.py` — Vendor Comparison calls
+  `_enrich_purchases_with_canonical` before aggregating.
+
+
 ## Milestone 27: Fuzzy fallback + audit endpoint on real data — (2026-02-14)
 
 ### What changed vs Milestone 26
