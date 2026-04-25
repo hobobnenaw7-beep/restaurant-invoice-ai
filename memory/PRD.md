@@ -3,6 +3,66 @@
 ## Problem Statement
 Build a deterministic, rule-based Invoice Review and Correction Pipeline with a strict "zero false trusted rows" math-first trust gate, multi-user permissions, self-improving product memory, and universal product identity.
 
+## Milestone 29: Linkage Audit & Delete Guardrails — REAL-DATA VALIDATION (2026-02-14)
+
+### Endpoints
+- `GET /api/items/{iid}/linkage-audit` — runs the read-time auto-resolver
+  first, then reports `total_linked_rows`, `total_linked_invoices`,
+  `vendors`, `date_range`, plus 5 invoice samples (each with
+  `invoice_id`, `vendor`, `date`, `raw_name`, `display_name`).
+- `DELETE /api/items/{iid}` — refuses with HTTP 400 when any invoice row
+  still references the canonical:
+  ```json
+  {"error":"ITEM_IN_USE","linked_invoices":12,"linked_rows":16,
+   "canonical_name":"Olive Oil","actions":["archive","merge","cancel"]}
+  ```
+- `POST /api/items/{iid}/archive` — soft-archives an approved canonical
+  (sets `is_archived/archived_at/archived_by_*`), archives its aliases,
+  emits an audit log. Existing invoice canonical pointers stay valid so
+  the display follows the catalog.
+- `POST /api/items/{iid}/merge` — relaxed to allow merging an APPROVED
+  canonical into another (formerly suggested-only). The merged-from item
+  is archived; existing invoice rows follow one merge hop via the
+  enrichment layer's `merge_targets`.
+
+### Frontend
+- `ItemsPage.handleDeleteConfirm` catches `ITEM_IN_USE` and opens a new
+  `[data-testid="item-in-use-dialog"]` modal with linked-invoices and
+  linked-rows counters and three actions: **Cancel**, **Archive item**,
+  **Merge into another**.
+
+### Real-data validation (Thm Crab, demo, TM Crab)
+**Audit on `Live Blue Crabs - 470# males` (existing invoice 8340319, 2026-01-30, vendor Thm Crab):**
+```json
+{"canonical_item_id":"6956bd0b-…","canonical_name":"Live Blue Crabs - 470# males",
+ "total_linked_rows":1,"total_linked_invoices":1,
+ "vendors":["Thm Crab"],"date_range":{"first":"2026-01-30","last":"2026-01-30"},
+ "samples":[{"invoice_number":"8340319","vendor":"Thm Crab","date":"2026-01-30",
+             "raw_name":"Live Blue Crabs - 470# males",
+             "display_name":"Live Blue Crabs - 470# males",
+             "canonical_name":"Live Blue Crabs - 470# males"}]}
+```
+
+**Delete guardrail on the same item → HTTP 400 ITEM_IN_USE.**
+
+**Rename `Live Blue Crabs - 470# males` → `Blue Crab (Live)`:**
+- Existing invoice 8340319 (2026-01-30, NOT reprocessed) re-fetched →
+  `display_name: "Blue Crab (Live)"`, `canonical_name: "Blue Crab (Live)"`,
+  `raw_name` untouched at `"Live Blue Crabs - 470# males"`.
+- Vendor Comparison group key stays `canon::6956bd0b-…` and
+  `canonical_name` flips to `"Blue Crab (Live)"`.
+
+**UI proof (demo tenant `Olive Oil`):**
+Click delete → AlertDialog → confirm Delete → in-use modal appears with
+`Linked invoices: 12`, `Linked rows: 16`, [Cancel | Archive item |
+Merge into another]. Delete blocked.
+
+### Files
+- `/app/backend/routes/items.py` — audit endpoint, delete guardrail,
+  archive endpoint, merge relaxed for approved sources.
+- `/app/frontend/src/pages/ItemsPage.js` — in-use modal + handlers.
+
+
 ## Milestone 28: Token-prefix-subset resolver — handles real OCR + variant noise (2026-02-14)
 
 ### Case that broke the previous fix

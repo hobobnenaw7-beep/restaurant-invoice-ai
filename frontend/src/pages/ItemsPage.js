@@ -497,13 +497,55 @@ export default function ItemsPage() {
     finally { setSaving(false); }
   };
 
+  const [itemInUse, setItemInUse] = useState(null);  // {id, name, linked_invoices, linked_rows}
   const requestDelete = (id) => setDeleteConfirm({ open: true, id });
   const handleDeleteConfirm = async () => {
     const { id } = deleteConfirm;
     setDeleteConfirm({ open: false, id: null });
-    try { await api.delete(`/items/${id}`); toast.success('Deleted'); load(); } catch { toast.error('Failed'); }
+    try {
+      await api.delete(`/items/${id}`);
+      toast.success('Deleted');
+      load();
+      loadApprovedItems();
+      dataEvents.emit();
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      if (detail && typeof detail === 'object' && detail.error === 'ITEM_IN_USE') {
+        // Open the in-use modal instead of a generic toast
+        setItemInUse({
+          id,
+          name: detail.canonical_name || 'this item',
+          linked_invoices: detail.linked_invoices || 0,
+          linked_rows: detail.linked_rows || 0,
+        });
+      } else {
+        toast.error('Delete failed');
+      }
+    }
   };
   const cancelDelete = () => setDeleteConfirm({ open: false, id: null });
+
+  const archiveInUseItem = async () => {
+    if (!itemInUse) return;
+    try {
+      await api.post(`/items/${itemInUse.id}/archive`);
+      toast.success(`Archived "${itemInUse.name}"`);
+      setItemInUse(null);
+      load();
+      loadApprovedItems();
+      dataEvents.emit();
+    } catch (err) {
+      toast.error('Archive failed: ' + (err.response?.data?.detail || ''));
+    }
+  };
+
+  const mergeInUseItem = () => {
+    if (!itemInUse) return;
+    // Find the in-use item in our list and open the existing merge dialog flow.
+    const target = items.find(it => it.id === itemInUse.id) || { id: itemInUse.id, name: itemInUse.name };
+    setItemInUse(null);
+    openMergeDialog(target);
+  };
 
   const addAlias = async () => {
     if (!aliasName.trim() || !aliasDialog) return;
@@ -842,6 +884,57 @@ export default function ItemsPage() {
       {/* Price History Dialog */}
       <PriceHistoryDialog item={priceItem} api={api} onClose={() => setPriceItem(null)} />
       <ConfirmDeleteDialog open={deleteConfirm.open} onClose={cancelDelete} onConfirm={handleDeleteConfirm} message="Are you sure you want to delete this item and all its aliases?" />
+
+      {/* Item In-Use blocker — fired when DELETE returns ITEM_IN_USE */}
+      <Dialog open={!!itemInUse} onOpenChange={(o) => !o && setItemInUse(null)}>
+        <DialogContent className="max-w-md" data-testid="item-in-use-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-lg flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600" />
+              Item is in use
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-slate-700">
+              <span className="font-semibold">"{itemInUse?.name}"</span> is used in
+              existing invoices and cannot be deleted.
+            </p>
+            <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-slate-50 border border-slate-200">
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Linked invoices</p>
+                <p className="text-2xl font-bold text-navy-900 tabular-nums" data-testid="in-use-linked-invoices">{itemInUse?.linked_invoices ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Linked rows</p>
+                <p className="text-2xl font-bold text-navy-900 tabular-nums" data-testid="in-use-linked-rows">{itemInUse?.linked_rows ?? 0}</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500">
+              Deleting it would orphan those invoice rows. Choose a safe action below.
+            </p>
+          </div>
+          <DialogFooter className="flex-col-reverse sm:flex-row sm:justify-between sm:gap-2">
+            <Button variant="ghost" onClick={() => setItemInUse(null)} data-testid="in-use-cancel">Cancel</Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={archiveInUseItem}
+                className="border-slate-300 gap-1"
+                data-testid="in-use-archive"
+              >
+                Archive item
+              </Button>
+              <Button
+                onClick={mergeInUseItem}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1"
+                data-testid="in-use-merge"
+              >
+                <GitMerge className="w-3.5 h-3.5" /> Merge into another
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Merge Suggested → Existing Item Dialog */}
       <Dialog open={!!mergeDialog} onOpenChange={(o) => !o && setMergeDialog(null)}>

@@ -128,12 +128,105 @@ async def update_storage_category(iid: str, body: dict, user=Depends(get_user)):
 
 
 
+@router.get("/items/{iid}/linkage-audit")
+async def item_linkage_audit(iid: str, user=Depends(get_user)):
+    """
+    Returns how many existing invoices reference this canonical item.
+    Used by the Items page to (a) prove a rename has propagated, and
+    (b) safely block deletion when linked rows still exist.
+    """
+    rid = user["restaurant_id"]
+    item = await db.canonical_items.find_one({"id": iid, "restaurant_id": rid}, {"_id": 0})
+    if not item:
+        raise HTTPException(404, "item_not_found")
+    # Run the read-time auto-resolver first so audit reflects the latest
+    # link state (newly-resolvable rows get linked + persisted now).
+    from routes.purchases import _enrich_purchases_with_canonical
+    rows = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    await _enrich_purchases_with_canonical(rid, rows)
+
+    linked_invoices: set[str] = set()
+    vendors: set[str] = set()
+    dates: list[str] = []
+    samples: list[dict] = []
+    total_rows = 0
+    for p in rows:
+        invoice_id = p.get("id")
+        invoice_no = p.get("invoice_number")
+        vendor = p.get("supplier_name")
+        d = p.get("invoice_date")
+        for it in (p.get("items") or []):
+            if it.get("canonical_item_id") == iid:
+                total_rows += 1
+                if invoice_id:
+                    linked_invoices.add(invoice_id)
+                if vendor:
+                    vendors.add(vendor)
+                if d:
+                    dates.append(d)
+                if len(samples) < 5:
+                    samples.append({
+                        "invoice_id": invoice_id,
+                        "invoice_number": invoice_no,
+                        "vendor": vendor,
+                        "date": d,
+                        "raw_name": it.get("raw_name"),
+                        "display_name": it.get("display_name"),
+                        "canonical_name": it.get("canonical_name"),
+                    })
+    dates_sorted = sorted([d for d in dates if d])
+    return {
+        "canonical_item_id": iid,
+        "canonical_name": item.get("name"),
+        "is_archived": bool(item.get("is_archived")),
+        "is_suggested": bool(item.get("is_suggested")),
+        "total_linked_rows": total_rows,
+        "total_linked_invoices": len(linked_invoices),
+        "vendors": sorted(vendors),
+        "date_range": {
+            "first": dates_sorted[0] if dates_sorted else None,
+            "last": dates_sorted[-1] if dates_sorted else None,
+        },
+        "samples": samples,
+    }
+
+
 @router.delete("/items/{iid}")
 async def delete_item(iid: str, user=Depends(get_user)):
-    old = await db.canonical_items.find_one({"id": iid, "restaurant_id": user["restaurant_id"]}, {"_id": 0})
-    await db.canonical_items.delete_one({"id": iid, "restaurant_id": user["restaurant_id"]})
+    rid = user["restaurant_id"]
+    old = await db.canonical_items.find_one({"id": iid, "restaurant_id": rid}, {"_id": 0})
+    if not old:
+        raise HTTPException(404, "item_not_found")
+
+    # Refuse delete when this canonical is linked to existing invoice rows.
+    # We run the auto-resolver first so the count reflects current reality,
+    # then count linked rows / invoices for the error payload.
+    from routes.purchases import _enrich_purchases_with_canonical
+    rows = await db.purchases.find({"restaurant_id": rid}, {"_id": 0}).to_list(10000)
+    await _enrich_purchases_with_canonical(rid, rows)
+    linked_rows = 0
+    linked_invoices: set[str] = set()
+    for p in rows:
+        for it in (p.get("items") or []):
+            if it.get("canonical_item_id") == iid:
+                linked_rows += 1
+                if p.get("id"):
+                    linked_invoices.add(p["id"])
+    if linked_rows > 0:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "ITEM_IN_USE",
+                "linked_invoices": len(linked_invoices),
+                "linked_rows": linked_rows,
+                "canonical_name": old.get("name"),
+                "actions": ["archive", "merge", "cancel"],
+            },
+        )
+
+    await db.canonical_items.delete_one({"id": iid, "restaurant_id": rid})
     await db.item_aliases.delete_many({"canonical_item_id": iid})
-    await audit_log(user, "DELETE", "Item", iid, f'{user["name"]} deleted item {old.get("name", "") if old else ""}', old_value={"name": old.get("name")} if old else None)
+    await audit_log(user, "DELETE", "Item", iid, f'{user["name"]} deleted item {old.get("name", "")}', old_value={"name": old.get("name")})
     return {"status": "deleted"}
 
 
@@ -212,6 +305,46 @@ async def dismiss_suggested_item(iid: str, user=Depends(get_user)):
     return {"status": "dismissed", "id": iid}
 
 
+@router.post("/items/{iid}/archive")
+async def archive_item(iid: str, user=Depends(get_user)):
+    """
+    Soft-archive an APPROVED canonical item. Used as the safe alternative
+    when DELETE is blocked because invoice rows still reference it.
+    Aliases are archived (not deleted) so past correction memory remains
+    readable. Existing invoices keep their canonical link intact, so the
+    display follows the catalog: rows continue to show the (archived)
+    canonical name until the user merges them into another item.
+    """
+    rid = user["restaurant_id"]
+    existing = await db.canonical_items.find_one({"id": iid, "restaurant_id": rid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "item_not_found")
+    if existing.get("is_archived"):
+        return {"status": "already_archived", "id": iid}
+    now = datetime.now(timezone.utc).isoformat()
+    await db.canonical_items.update_one(
+        {"id": iid, "restaurant_id": rid},
+        {"$set": {
+            "is_archived": True,
+            "archived_at": now,
+            "archived_by_user_id": user.get("id"),
+            "archived_by_name": user.get("name", ""),
+        }},
+    )
+    await db.item_aliases.update_many(
+        {"canonical_item_id": iid, "restaurant_id": rid},
+        {"$set": {"is_archived": True, "archived_at": now}},
+    )
+    await audit_log(
+        user, "ARCHIVE", "Item", iid,
+        f'{user["name"]} archived item "{existing.get("name", "")}"',
+        old_value={"name": existing.get("name"), "is_archived": False},
+    )
+    return {"status": "archived", "id": iid}
+
+
+
+
 class MergeSuggestedBody(BaseModel):
     target_item_id: str
 
@@ -243,8 +376,13 @@ async def merge_suggested_item(
     )
     if not suggested:
         raise HTTPException(404, "item_not_found")
-    if not suggested.get("is_suggested"):
-        raise HTTPException(400, "not_a_suggested_item")
+    # Allow merging suggested OR approved canonicals — merging an approved
+    # canonical into another is the safe alternative when DELETE is blocked
+    # by linked invoice rows. The merged-from item is archived (not deleted)
+    # and existing invoice canonical_item_id pointers follow one merge hop
+    # via the enrichment layer.
+    if suggested.get("is_archived"):
+        raise HTTPException(400, "source_is_archived")
 
     target = await db.canonical_items.find_one(
         {"id": body.target_item_id, "restaurant_id": rid}, {"_id": 0}
