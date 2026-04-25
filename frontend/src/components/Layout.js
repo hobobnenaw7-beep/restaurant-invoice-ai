@@ -371,11 +371,12 @@ export default function Layout({ children }) {
           </div>
           <button
             onClick={() => navigate('/dashboard')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors group"
+            className="flex items-center gap-2 px-4 py-2 rounded-full bg-amber-50 border border-amber-200 text-amber-800 hover:bg-amber-100 hover:border-amber-300 hover:shadow-sm transition-all group"
             data-testid="header-home-btn"
+            title="Return to Dashboard"
           >
-            <Home className="w-4 h-4 text-slate-400 group-hover:text-slate-600 transition-colors" />
-            <span className="text-xs font-medium text-slate-400 group-hover:text-slate-600 transition-colors hidden sm:inline">Dashboard</span>
+            <Home className="w-[18px] h-[18px] text-amber-600 group-hover:text-amber-700 transition-colors" />
+            <span className="text-sm font-semibold tracking-tight hidden sm:inline">Dashboard</span>
           </button>
           <div className="flex items-center justify-end w-20">
             <div className="relative" ref={bellContainerRef}>
